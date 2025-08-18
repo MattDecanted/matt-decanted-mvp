@@ -10,11 +10,15 @@
   },
   "dependencies": {
     "@netlify/functions": "^2.7.0",
+    "@radix-ui/react-slot": "^1.0.2",
+    "class-variance-authority": "^0.7.0",
+    "clsx": "^2.1.1",
+    "lucide-react": "*",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-router-dom": "^6.26.2",
     "sonner": "^1.5.0",
-    "lucide-react": "*"
+    "tailwind-merge": "^2.5.2"
   },
   "devDependencies": {
     "@types/node": "^20.12.12",
