@@ -32,7 +32,11 @@ export const handler: Handler = async (event) => {
     if (error || !data) {
       return {
         statusCode: 404,
-        headers: { "content-type": "application/json", "access-control-allow-origin": "*" },
+        headers: {
+          "content-type": "application/json",
+          "access-control-allow-origin": "*",
+          "x-md-api-version": "v3"
+        },
         body: JSON.stringify({ error: "Quiz not found for today", locale, for_date }),
       };
     }
@@ -45,21 +49,29 @@ export const handler: Handler = async (event) => {
 
     return {
       statusCode: 200,
-      headers: { "content-type": "application/json", "access-control-allow-origin": "*" },
+      headers: {
+        "content-type": "application/json",
+        "access-control-allow-origin": "*",
+        "x-md-api-version": "v3"  // <— fingerprint header
+      },
       body: JSON.stringify({
         id: data.id,
         locale,
         for_date,
         title: data.title,
         questions: safeQuestions,
-        points_award: data.points_award,
+        points_award: data.points_award
       }),
     };
   } catch (e: any) {
     return {
       statusCode: 500,
-      headers: { "content-type": "application/json", "access-control-allow-origin": "*" },
-      body: JSON.stringify({ error: e.message || "Internal error" }),
+      headers: {
+        "content-type": "application/json",
+        "access-control-allow-origin": "*",
+        "x-md-api-version": "v3"
+      },
+      body: JSON.stringify({ error: e?.message || "Internal error" }),
     };
   }
 };
