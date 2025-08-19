@@ -86,13 +86,14 @@ function App() {
                 <Route path="/shorts/:slug" element={<ShortDetailPage />} />
                 <Route path="/trial-quiz" element={<TrialQuizPage />} />
                 <Route path="/vocab" element={<VinoVocabPage />} />
-                
+
                 <Route
                   path="/account"
                   element={
                     <>
                       <AutoResumeOnAccount />
                       <AccountPage />
+                      <div>Fallback render</div> {/* 👈 Added for debug */}
                     </>
                   }
                 />
