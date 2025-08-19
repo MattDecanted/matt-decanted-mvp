@@ -2,12 +2,9 @@
 import type { Handler } from "@netlify/functions";
 import { admin } from "./_supabaseAdmin";
 
-// --- CORS helpers -----------------------------------------------------------
+// ---------------- CORS ----------------
 const CORS_BASE = { "access-control-allow-origin": "*" };
-const CORS_JSON = {
-  ...CORS_BASE,
-  "content-type": "application/json",
-};
+const CORS_JSON = { ...CORS_BASE, "content-type": "application/json" };
 const CORS_PRE = {
   ...CORS_BASE,
   "access-control-allow-methods": "POST,OPTIONS",
@@ -24,7 +21,20 @@ async function getUserIdFromAuth(authorization?: string): Promise<string | null>
   return data.user?.id ?? null;
 }
 
-// --- Handler ---------------------------------------------------------------
+// Adelaide "now" as ISO string (for trial start)
+function adelaideNowISO(): string {
+  return new Date(
+    new Date().toLocaleString("en-US", { timeZone: "Australia/Adelaide" })
+  ).toISOString();
+}
+
+type QuizQuestion = {
+  q: string;
+  options: string[];
+  correct_index: number;
+};
+
+// ---------------- Handler ----------------
 export const handler: Handler = async (event) => {
   // CORS preflight
   if (event.httpMethod === "OPTIONS") {
@@ -58,7 +68,6 @@ export const handler: Handler = async (event) => {
     // Prefer Supabase JWT (Authorization: Bearer <access_token>), else fall back to body user_id
     const authHeader =
       (event.headers.authorization ||
-        // some environments send capitalized header
         (event.headers as any).Authorization) as string | undefined;
 
     const userIdFromJwt = await getUserIdFromAuth(authHeader);
@@ -88,12 +97,12 @@ export const handler: Handler = async (event) => {
       };
     }
 
-    // Prevent duplicate attempt for the same day
+    // Prevent duplicate attempt for the same day (for_date is DATE)
     const { data: existing } = await admin
       .from("trial_quiz_attempts")
       .select("id, correct_count, points_awarded")
       .eq("user_id", user_id)
-      .eq("for_date", quiz.for_date) // quiz date is the canonical "today"
+      .eq("for_date", quiz.for_date)
       .eq("locale", locale || quiz.locale)
       .maybeSingle();
 
@@ -110,25 +119,20 @@ export const handler: Handler = async (event) => {
     }
 
     // Score the submission
-    const questions = (quiz.questions || []) as Array<{
-      q: string;
-      options: string[];
-      correct_index: number;
-    }>;
-
-    let correct = 0;
+    const questions = (quiz.questions || []) as QuizQuestion[];
     const max = Math.min(questions.length, selections.length);
+    let correct = 0;
     for (let i = 0; i < max; i++) {
       if (selections[i] === questions[i].correct_index) correct++;
     }
 
     const points = correct > 0 ? (quiz.points_award ?? 0) : 0;
 
-    // Record attempt (one row per day per user enforced by our checks above)
+    // Record attempt
     await admin.from("trial_quiz_attempts").insert({
       user_id,
       locale: locale || quiz.locale,
-      for_date: quiz.for_date,
+      for_date: quiz.for_date, // DATE
       correct_count: correct,
       points_awarded: points,
       source: "web",
@@ -136,7 +140,15 @@ export const handler: Handler = async (event) => {
       affiliate_code: null,
     });
 
+    // Ensure a profile row exists (idempotent)
+    await admin
+      .from("profiles")
+      .insert({ user_id, locale })
+      .onConflict("user_id")
+      .ignore();
+
     // Write to points_ledger if points earned
+    let trialStarted = false;
     if (points > 0) {
       await admin.from("points_ledger").insert({
         user_id,
@@ -144,12 +156,26 @@ export const handler: Handler = async (event) => {
         reason: "trial_quiz",
         meta: { quiz_id, for_date: quiz.for_date, locale, correct },
       });
+
+      // Start 7-day trial on first award (only if not already started)
+      const { data: updated, error: trialErr } = await admin
+        .from("profiles")
+        .update({ trial_started_at: adelaideNowISO() })
+        .eq("user_id", user_id)
+        .is("trial_started_at", null)
+        .select("user_id"); // returns [] if nothing updated
+
+      if (trialErr) {
+        console.error("Failed to set trial_started_at:", trialErr.message);
+      } else {
+        trialStarted = Array.isArray(updated) && updated.length > 0;
+      }
     }
 
     return {
       statusCode: 200,
       headers: CORS_JSON,
-      body: JSON.stringify({ correct, points }),
+      body: JSON.stringify({ correct, points, trialStarted }),
     };
   } catch (e: any) {
     console.error(e);
