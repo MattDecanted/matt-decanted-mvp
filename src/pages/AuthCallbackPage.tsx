@@ -1,40 +1,27 @@
-import React from 'react';
+// src/pages/AuthCallbackPage.tsx
+import { useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '@/lib/supabase';
 
 export default function AuthCallbackPage() {
   const navigate = useNavigate();
-  const [msg, setMsg] = React.useState('Completing sign-in…');
 
-  React.useEffect(() => {
+  useEffect(() => {
     (async () => {
       try {
-        // Always try the exchange (works for #access_token or ?code flows)
-        const { data, error } = await supabase.auth.getSessionFromUrl({ storeSession: true });
-        if (error) {
-          setMsg(error.message || 'Sign-in link is invalid or has expired.');
-          // If it’s an OTP expiry, offer to resend from /account
-          setTimeout(() => navigate('/account'), 1200);
-          return;
-        }
-        if (data?.session) {
-          setMsg('Signed in! Redirecting…');
-          // Clean up the URL and go to account
-          navigate('/account', { replace: true });
-          return;
-        }
-        setMsg('No session found. Redirecting…');
+        const { error } = await supabase.auth.getSessionFromUrl({ storeSession: true });
+        // Clean the URL so refreshes don’t retry
+        window.history.replaceState({}, document.title, '/auth/callback');
+        if (error) throw error;
         navigate('/account', { replace: true });
-      } catch (e: any) {
-        setMsg(e?.message || 'Something went wrong. Redirecting…');
-        setTimeout(() => navigate('/account'), 1200);
+      } catch (e) {
+        // If the link was already used / expired you’ll land on account with a flag
+        navigate('/account?auth=failed', { replace: true });
       }
     })();
   }, [navigate]);
 
   return (
-    <div className="max-w-md mx-auto py-12 text-center">
-      <p className="text-sm text-muted-foreground">{msg}</p>
-    </div>
+    <div className="p-6 text-center">Signing you in…</div>
   );
 }
