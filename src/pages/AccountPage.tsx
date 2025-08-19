@@ -1,6 +1,6 @@
 // src/pages/AccountPage.tsx
 import React, { useEffect, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useLocation } from 'react-router-dom';
 
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -15,6 +15,7 @@ import { useAnalytics } from '@/context/AnalyticsContext';
 import { toast } from 'sonner';
 import { supabase } from '@/lib/supabase';
 
+/* ------------------------------ Helpers ---------------------------------- */
 function adelaideNow(): Date {
   return new Date(new Date().toLocaleString('en-US', { timeZone: 'Australia/Adelaide' }));
 }
@@ -35,15 +36,57 @@ function formatAdelaide(dt: Date): string {
   });
 }
 
+/** Fallback: if a magic link lands directly on /account, exchange it here. */
+function useSupabaseMagicLinkExchange() {
+  const { hash, search, pathname } = useLocation();
+
+  useEffect(() => {
+    (async () => {
+      const url = new URL(window.location.href);
+
+      // Surface error from hash (e.g., #error=access_denied&error_code=otp_expired...)
+      if (hash.includes('error=')) {
+        const params = new URLSearchParams(hash.replace('#', ''));
+        const desc = params.get('error_description') || 'Sign-in link is invalid or expired.';
+        toast.error(decodeURIComponent(desc));
+        // Clean URL but stay on page
+        history.replaceState({}, document.title, pathname);
+        return;
+      }
+
+      // Handle either hash tokens or ?code param
+      const hasHashToken =
+        hash.includes('access_token') || hash.includes('refresh_token') || hash.includes('type=magiclink');
+      const hasCode = !!url.searchParams.get('code');
+
+      if (!hasHashToken && !hasCode) return;
+
+      const { error } = await supabase.auth.getSessionFromUrl({ storeSession: true });
+      if (error) {
+        console.error('getSessionFromUrl error:', error);
+        toast.error('Could not complete sign-in. Please request a new link.');
+      }
+
+      // Clean the URL so refreshes don’t retry or show tokens
+      history.replaceState({}, document.title, pathname);
+    })();
+    // run only on first mount for current URL
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+}
+
+/* ------------------------------ Component -------------------------------- */
 export default function AccountPage() {
+  useSupabaseMagicLinkExchange(); // <— new: in-page token exchange fallback
+
   const [email, setEmail] = useState('');
   const [loading, setLoading] = useState(false);
 
   const { user, signInWithEmail, signOut } = useAuth();
-  const { totalPoints } = usePoints(); // keep using your existing points total
+  const { totalPoints } = usePoints();
   const { track } = useAnalytics();
 
-  // --- New: server-truth trial status from profiles.trial_started_at ---
+  // --- Server-truth trial status from profiles.trial_started_at ---
   const [trialStartedAt, setTrialStartedAt] = useState<string | null>(null);
   const [trialLoading, setTrialLoading] = useState(true);
   const [trialError, setTrialError] = useState<string | null>(null);
@@ -85,7 +128,7 @@ export default function AccountPage() {
 
     setLoading(true);
     try {
-      await signInWithEmail(email);
+      await signInWithEmail(email); // AuthContext now points to /auth/callback
       toast.success('Check your email for the sign-in link!');
       track('signup_complete', { method: 'magic_link' });
       setEmail('');
@@ -107,7 +150,7 @@ export default function AccountPage() {
     }
   };
 
-  // Unauthed view (unchanged)
+  /* ---------------------------- Unauthed view ----------------------------- */
   if (!user) {
     return (
       <div className="max-w-md mx-auto">
@@ -117,9 +160,7 @@ export default function AccountPage() {
               <Mail className="h-8 w-8 text-primary" />
             </div>
             <CardTitle className="text-2xl">Sign In</CardTitle>
-            <p className="text-muted-foreground">
-              Enter your email to receive a magic sign-in link
-            </p>
+            <p className="text-muted-foreground">Enter your email to receive a magic sign-in link</p>
           </CardHeader>
 
           <CardContent>
@@ -145,9 +186,7 @@ export default function AccountPage() {
                   <Crown className="h-3 w-3 mr-1" />
                   Free 7-Day Trial
                 </Badge>
-                <p className="text-sm text-muted-foreground">
-                  Start your free trial instantly upon sign-in
-                </p>
+                <p className="text-sm text-muted-foreground">Start your free trial instantly upon sign-in</p>
               </div>
             </div>
           </CardContent>
@@ -156,7 +195,7 @@ export default function AccountPage() {
     );
   }
 
-  // Compute trial state from server value
+  /* ------------------------- Trial state (server) ------------------------- */
   const nowADL = adelaideNow();
   const started = trialStartedAt ? new Date(trialStartedAt) : null;
   const ends = started ? addDays(started, 7) : null;
@@ -171,7 +210,7 @@ export default function AccountPage() {
         <p className="text-muted-foreground">Track your progress and manage your trial</p>
       </div>
 
-      {/* NEW: Trial Status Card (server-truth) */}
+      {/* Trial Status */}
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
@@ -188,21 +227,13 @@ export default function AccountPage() {
             <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
               <div>
                 <p className="font-medium">Start your trial by playing today’s Daily Trial Quiz.</p>
-                <p className="text-sm text-muted-foreground">
-                  Your 7-day timer begins as soon as you bank your first points.
-                </p>
+                <p className="text-sm text-muted-foreground">Your 7-day timer begins as soon as you bank your first points.</p>
               </div>
               <div className="flex gap-2">
-                <Link
-                  to="/trial-quiz"
-                  className="inline-flex items-center rounded-lg border px-4 py-2 hover:bg-accent"
-                >
+                <Link to="/trial-quiz" className="inline-flex items-center rounded-lg border px-4 py-2 hover:bg-accent">
                   Play Daily Quiz
                 </Link>
-                <Link
-                  to="/pricing"
-                  className="inline-flex items-center rounded-lg border px-4 py-2 hover:bg-accent"
-                >
+                <Link to="/pricing" className="inline-flex items-center rounded-lg border px-4 py-2 hover:bg-accent">
                   See Plans
                 </Link>
               </div>
@@ -213,20 +244,13 @@ export default function AccountPage() {
                 <span className="font-medium">Started:</span> {formatAdelaide(started)}
               </p>
               <p>
-                <span className="font-medium">Ends:</span> {formatAdelaide(ends!)} ({daysLeft}{' '}
-                day{daysLeft === 1 ? '' : 's'} left)
+                <span className="font-medium">Ends:</span> {formatAdelaide(ends!)} ({daysLeft} day{daysLeft === 1 ? '' : 's'} left)
               </p>
               <div className="flex gap-2 pt-1">
-                <Link
-                  to="/trial-quiz"
-                  className="inline-flex items-center rounded-lg border px-4 py-2 hover:bg-accent"
-                >
+                <Link to="/trial-quiz" className="inline-flex items-center rounded-lg border px-4 py-2 hover:bg-accent">
                   Play today’s Daily Quiz
                 </Link>
-                <Link
-                  to="/pricing"
-                  className="inline-flex items-center rounded-lg border px-4 py-2 hover:bg-accent"
-                >
+                <Link to="/pricing" className="inline-flex items-center rounded-lg border px-4 py-2 hover:bg-accent">
                   Upgrade to keep access
                 </Link>
               </div>
@@ -234,13 +258,8 @@ export default function AccountPage() {
           ) : (
             <div className="space-y-2">
               <p className="text-destructive">Your trial has ended.</p>
-              <p className="text-sm text-muted-foreground">
-                Ended on {formatAdelaide(ends!)}. Upgrade to continue unlimited access.
-              </p>
-              <Link
-                to="/pricing"
-                className="inline-flex items-center rounded-lg border px-4 py-2 hover:bg-accent"
-              >
+              <p className="text-sm text-muted-foreground">Ended on {formatAdelaide(ends!)}. Upgrade to continue unlimited access.</p>
+              <Link to="/pricing" className="inline-flex items-center rounded-lg border px-4 py-2 hover:bg-accent">
                 See Plans
               </Link>
             </div>
@@ -275,18 +294,14 @@ export default function AccountPage() {
               </div>
             </div>
 
-            <Button
-              variant="outline"
-              onClick={handleSignOut}
-              className="w-full flex items-center space-x-2"
-            >
+            <Button variant="outline" onClick={handleSignOut} className="w-full flex items-center space-x-2">
               <LogOut className="h-4 w-4" />
               <span>Sign Out</span>
             </Button>
           </CardContent>
         </Card>
 
-        {/* Points & Progress Card (uses server-truth trial where available) */}
+        {/* Points & Progress */}
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center space-x-2">
@@ -295,7 +310,7 @@ export default function AccountPage() {
             </CardTitle>
           </CardHeader>
 
-          <CardContent className="space-y-4">
+        <CardContent className="space-y-4">
             <div className="text-center">
               <div className="text-3xl font-bold text-primary">{totalPoints}</div>
               <div className="text-sm text-muted-foreground">Total Points</div>
