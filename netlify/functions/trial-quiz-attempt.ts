@@ -140,15 +140,14 @@ export const handler: Handler = async (event) => {
       affiliate_code: null,
     });
 
-    // Ensure a profile row exists (idempotent)
+    // Ensure a profile row exists (use UPSERT; v2 has no .onConflict().ignore() chain)
     await admin
       .from("profiles")
-      .insert({ user_id, locale })
-      .onConflict("user_id")
-      .ignore();
+      .upsert({ user_id, locale }, { onConflict: "user_id" });
 
-    // Write to points_ledger if points earned
+    // Write to points_ledger if points earned, and start trial if not started
     let trialStarted = false;
+
     if (points > 0) {
       await admin.from("points_ledger").insert({
         user_id,
@@ -168,7 +167,7 @@ export const handler: Handler = async (event) => {
       if (trialErr) {
         console.error("Failed to set trial_started_at:", trialErr.message);
       } else {
-        trialStarted = Array.isArray(updated) && updated.length > 0;
+        trialStarted = Array.isArray(updated) ? updated.length > 0 : !!updated;
       }
     }
 
