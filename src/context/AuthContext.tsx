@@ -1,5 +1,6 @@
+// src/context/AuthContext.tsx
 import React, { createContext, useContext, useEffect, useState } from 'react';
-import { User, Session } from '@supabase/supabase-js';
+import type { User, Session } from '@supabase/supabase-js';
 import { supabase } from '@/lib/supabase';
 
 interface AuthContextType {
@@ -17,80 +18,85 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    // Get initial session
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setSession(session);
-      setUser(session?.user ?? null);
-      setLoading(false);
-    });
+  // --- helpers --------------------------------------------------------------
 
-    // Listen for auth changes
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      async (event, session) => {
-        setSession(session);
-        setUser(session?.user ?? null);
-        setLoading(false);
+  // Ensure a profile row exists; safe to call repeatedly
+  const ensureProfile = async (uid: string) => {
+    // prefer upsert to avoid race/duplicates
+    const { error } = await supabase
+      .from('profiles')
+      .upsert([{ user_id: uid, locale: 'en' }], { onConflict: 'user_id' });
+    if (error) throw error;
+  };
 
-        // Handle sign in event
-        if (event === 'SIGNED_IN' && session?.user) {
-          await handleSignIn(session.user);
-        }
-      }
-    );
-
-    return () => subscription.unsubscribe();
-  }, []);
-
-  const handleSignIn = async (user: User) => {
+  // Merge any guest progress (uses CURRENT access token)
+  const mergeGuestProgress = async (sess: Session) => {
+    const guestData = localStorage.getItem('mdTrialQuiz_guest');
+    if (!guestData) return;
     try {
-      // Check if user has a profile
-      const { data: profile } = await supabase
-        .from('profiles')
-        .select('*')
-        .eq('user_id', user.id)
-        .single();
-
-      if (!profile) {
-        // Create profile for new user
-        await supabase
-          .from('profiles')
-          .insert([{ user_id: user.id, locale: 'en' }]);
-      }
-
-      // Check for guest progress to merge
-      const guestData = localStorage.getItem('mdTrialQuiz_guest');
-      if (guestData) {
-        try {
-          const response = await fetch('/.netlify/functions/merge-guest-progress', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'Authorization': `Bearer ${session?.access_token}`,
-            },
-            body: guestData,
-          });
-          
-          if (response.ok) {
-            localStorage.removeItem('mdTrialQuiz_guest');
-          }
-        } catch (error) {
-          console.error('Error merging guest progress:', error);
-        }
-      }
-    } catch (error) {
-      console.error('Error handling sign in:', error);
+      const res = await fetch('/.netlify/functions/merge-guest-progress', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${sess.access_token}`,
+        },
+        body: guestData,
+      });
+      if (res.ok) localStorage.removeItem('mdTrialQuiz_guest');
+    } catch (e) {
+      // Non-fatal: user can re-play; keep console noise minimal in prod
+      console.error('merge-guest-progress failed', e);
     }
   };
+
+  const handlePostSignIn = async (sess: Session) => {
+    try {
+      await ensureProfile(sess.user.id);
+      await mergeGuestProgress(sess);
+    } catch (e) {
+      console.error('post-signin tasks failed', e);
+    }
+  };
+
+  // --- bootstrap & subscription --------------------------------------------
+
+  useEffect(() => {
+    let mounted = true;
+
+    (async () => {
+      const { data } = await supabase.auth.getSession();
+      if (!mounted) return;
+      setSession(data.session);
+      setUser(data.session?.user ?? null);
+      setLoading(false);
+    })();
+
+    const { data: sub } = supabase.auth.onAuthStateChange(async (event, newSession) => {
+      setSession(newSession);
+      setUser(newSession?.user ?? null);
+      setLoading(false);
+
+      if (event === 'SIGNED_IN' && newSession) {
+        await handlePostSignIn(newSession);
+      }
+    });
+
+    return () => {
+      mounted = false;
+      sub.subscription.unsubscribe();
+    };
+  }, []);
+
+  // --- public API -----------------------------------------------------------
 
   const signInWithEmail = async (email: string) => {
     const { error } = await supabase.auth.signInWithOtp({
       email,
       options: {
-        emailRedirectTo: window.location.origin + '/account',
+        // send users back to /account where you exchange ?code= for a session
+        emailRedirectTo: `${window.location.origin}/account`,
       },
     });
-    
     if (error) throw error;
   };
 
@@ -99,25 +105,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (error) throw error;
   };
 
-  const value = {
-    user,
-    session,
-    loading,
-    signInWithEmail,
-    signOut,
-  };
+  const value: AuthContextType = { user, session, loading, signInWithEmail, signOut };
 
-  return (
-    <AuthContext.Provider value={value}>
-      {children}
-    </AuthContext.Provider>
-  );
+  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
 
-export function useAuth() {
-  const context = useContext(AuthContext);
-  if (context === undefined) {
-    throw new Error('useAuth must be used within an AuthProvider');
-  }
-  return context;
+export function useAuth(): AuthContextType {
+  const ctx = useContext(AuthContext);
+  if (!ctx) throw new Error('useAuth must be used within an AuthProvider');
+  return ctx;
 }
