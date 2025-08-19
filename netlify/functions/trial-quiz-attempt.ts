@@ -1,131 +1,161 @@
 // netlify/functions/trial-quiz-attempt.ts
 import type { Handler } from "@netlify/functions";
-import { createClient } from "@supabase/supabase-js";
+import { admin } from "./_supabaseAdmin";
 
-// CORS helpers
-const base = { "access-control-allow-origin": "*" };
-const corsJSON = { ...base, "content-type": "application/json" };
-const corsPre = {
-  ...base,
+// --- CORS helpers -----------------------------------------------------------
+const CORS_BASE = { "access-control-allow-origin": "*" };
+const CORS_JSON = {
+  ...CORS_BASE,
+  "content-type": "application/json",
+};
+const CORS_PRE = {
+  ...CORS_BASE,
   "access-control-allow-methods": "POST,OPTIONS",
   "access-control-allow-headers": "content-type,authorization",
 };
 
-// Use server env (prefer SUPABASE_URL if you set it; fallback to VITE_ for now)
-const SUPABASE_URL =
-  process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || "";
-const SERVICE_ROLE = process.env.SUPABASE_SERVICE_ROLE || "";
-
-if (!SUPABASE_URL || !SERVICE_ROLE) {
-  // Throwing here will produce a Netlify error page; instead, return JSON
-  console.error("Missing Supabase env vars on server");
+// Pull user id from Supabase JWT (if sent as Bearer token)
+async function getUserIdFromAuth(authorization?: string): Promise<string | null> {
+  if (!authorization) return null;
+  const [, token] = authorization.split(" ");
+  if (!token) return null;
+  const { data, error } = await admin.auth.getUser(token);
+  if (error) return null;
+  return data.user?.id ?? null;
 }
 
-const admin = SUPABASE_URL && SERVICE_ROLE
-  ? createClient(SUPABASE_URL, SERVICE_ROLE)
-  : null;
-
+// --- Handler ---------------------------------------------------------------
 export const handler: Handler = async (event) => {
+  // CORS preflight
   if (event.httpMethod === "OPTIONS") {
-    return { statusCode: 204, headers: corsPre, body: "" };
+    return { statusCode: 204, headers: CORS_PRE, body: "" };
   }
+
   if (event.httpMethod !== "POST") {
     return {
       statusCode: 405,
-      headers: corsJSON,
+      headers: CORS_JSON,
       body: JSON.stringify({ error: "Method Not Allowed" }),
     };
   }
 
   try {
-    if (!admin) {
-      return {
-        statusCode: 500,
-        headers: corsJSON,
-        body: JSON.stringify({ error: "Server misconfig: Supabase env" }),
-      };
-    }
-
     const body = JSON.parse(event.body || "{}");
-    const { quiz_id, user_id, selections, locale = "en" } = body;
 
-    if (!quiz_id || !user_id || !Array.isArray(selections)) {
+    const quiz_id = body.quiz_id as string;
+    const selections = body.selections as number[];
+    const bodyUserId = body.user_id as string | undefined;
+    const locale = (body.locale as string) || "en";
+
+    if (!quiz_id || !Array.isArray(selections)) {
       return {
         statusCode: 400,
-        headers: corsJSON,
-        body: JSON.stringify({ error: "Bad Request" }),
+        headers: CORS_JSON,
+        body: JSON.stringify({ error: "Missing quiz_id or selections" }),
       };
     }
 
-    // Fetch the quiz (with answers) to score server-side
+    // Prefer Supabase JWT (Authorization: Bearer <access_token>), else fall back to body user_id
+    const authHeader =
+      (event.headers.authorization ||
+        // some environments send capitalized header
+        (event.headers as any).Authorization) as string | undefined;
+
+    const userIdFromJwt = await getUserIdFromAuth(authHeader);
+    const user_id = userIdFromJwt ?? bodyUserId ?? null;
+
+    if (!user_id) {
+      return {
+        statusCode: 401,
+        headers: CORS_JSON,
+        body: JSON.stringify({ error: "Unauthorized" }),
+      };
+    }
+
+    // Load quiz (with answers) to score on the server
     const { data: quiz, error: qErr } = await admin
       .from("trial_quizzes")
-      .select("id, for_date, locale, questions, points_award")
+      .select("id, for_date, locale, questions, points_award, is_published")
       .eq("id", quiz_id)
+      .eq("is_published", true)
       .single();
 
     if (qErr || !quiz) {
       return {
         statusCode: 404,
-        headers: corsJSON,
+        headers: CORS_JSON,
         body: JSON.stringify({ error: "Quiz not found" }),
       };
     }
 
-    // Prevent duplicate attempt same day
-    const { data: already } = await admin
+    // Prevent duplicate attempt for the same day
+    const { data: existing } = await admin
       .from("trial_quiz_attempts")
-      .select("id")
+      .select("id, correct_count, points_awarded")
       .eq("user_id", user_id)
-      .eq("for_date", quiz.for_date)
+      .eq("for_date", quiz.for_date) // quiz date is the canonical "today"
+      .eq("locale", locale || quiz.locale)
       .maybeSingle();
 
-    if (already) {
+    if (existing) {
       return {
         statusCode: 200,
-        headers: corsJSON,
-        body: JSON.stringify({ alreadyAttempted: true }),
+        headers: CORS_JSON,
+        body: JSON.stringify({
+          alreadyAttempted: true,
+          correct: existing.correct_count,
+          points: existing.points_awarded,
+        }),
       };
     }
 
-    // Score answers
-    const correct = (quiz.questions || []).reduce(
-      (acc: number, q: any, i: number) =>
-        acc + (q?.correct_index === selections[i] ? 1 : 0),
-      0
-    );
-    const points = quiz.points_award ?? 0;
+    // Score the submission
+    const questions = (quiz.questions || []) as Array<{
+      q: string;
+      options: string[];
+      correct_index: number;
+    }>;
 
-    // Record attempt
+    let correct = 0;
+    const max = Math.min(questions.length, selections.length);
+    for (let i = 0; i < max; i++) {
+      if (selections[i] === questions[i].correct_index) correct++;
+    }
+
+    const points = correct > 0 ? (quiz.points_award ?? 0) : 0;
+
+    // Record attempt (one row per day per user enforced by our checks above)
     await admin.from("trial_quiz_attempts").insert({
       user_id,
       locale: locale || quiz.locale,
       for_date: quiz.for_date,
       correct_count: correct,
       points_awarded: points,
-      source: "mvp",
+      source: "web",
       utm: null,
       affiliate_code: null,
     });
 
-    // Award points
-    await admin.from("points_ledger").insert({
-      user_id,
-      points,
-      reason: "trial_quiz",
-      meta: { quiz_id },
-    });
+    // Write to points_ledger if points earned
+    if (points > 0) {
+      await admin.from("points_ledger").insert({
+        user_id,
+        points,
+        reason: "trial_quiz",
+        meta: { quiz_id, for_date: quiz.for_date, locale, correct },
+      });
+    }
 
     return {
       statusCode: 200,
-      headers: corsJSON,
+      headers: CORS_JSON,
       body: JSON.stringify({ correct, points }),
     };
   } catch (e: any) {
     console.error(e);
     return {
       statusCode: 500,
-      headers: corsJSON,
+      headers: CORS_JSON,
       body: JSON.stringify({ error: e?.message || "Server error" }),
     };
   }
