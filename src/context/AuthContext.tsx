@@ -3,13 +3,13 @@ import React, { createContext, useContext, useEffect, useState } from 'react';
 import type { User, Session } from '@supabase/supabase-js';
 import { supabase } from '@/lib/supabase';
 
-interface AuthContextType {
+type AuthContextType = {
   user: User | null;
   session: Session | null;
   loading: boolean;
   signInWithEmail: (email: string) => Promise<void>;
   signOut: () => Promise<void>;
-}
+};
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
@@ -18,83 +18,49 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState(true);
 
-  // --- helpers --------------------------------------------------------------
-
-  // Ensure a profile row exists; safe to call repeatedly
-  const ensureProfile = async (uid: string) => {
-    // prefer upsert to avoid race/duplicates
-    const { error } = await supabase
-      .from('profiles')
-      .upsert([{ user_id: uid, locale: 'en' }], { onConflict: 'user_id' });
-    if (error) throw error;
-  };
-
-  // Merge any guest progress (uses CURRENT access token)
-  const mergeGuestProgress = async (sess: Session) => {
-    const guestData = localStorage.getItem('mdTrialQuiz_guest');
-    if (!guestData) return;
-    try {
-      const res = await fetch('/.netlify/functions/merge-guest-progress', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${sess.access_token}`,
-        },
-        body: guestData,
-      });
-      if (res.ok) localStorage.removeItem('mdTrialQuiz_guest');
-    } catch (e) {
-      // Non-fatal: user can re-play; keep console noise minimal in prod
-      console.error('merge-guest-progress failed', e);
-    }
-  };
-
-  const handlePostSignIn = async (sess: Session) => {
-    try {
-      await ensureProfile(sess.user.id);
-      await mergeGuestProgress(sess);
-    } catch (e) {
-      console.error('post-signin tasks failed', e);
-    }
-  };
-
-  // --- bootstrap & subscription --------------------------------------------
-
   useEffect(() => {
-    let mounted = true;
-
     (async () => {
-      const { data } = await supabase.auth.getSession();
-      if (!mounted) return;
-      setSession(data.session);
-      setUser(data.session?.user ?? null);
-      setLoading(false);
-    })();
+      // 1) If returning from a magic link, exchange it for a session and clean the URL.
+      const hasHash = typeof window !== 'undefined' && window.location.hash.includes('access_token');
+      const hasCode = typeof window !== 'undefined' && (new URL(window.location.href)).searchParams.get('code');
 
-    const { data: sub } = supabase.auth.onAuthStateChange(async (event, newSession) => {
-      setSession(newSession);
-      setUser(newSession?.user ?? null);
-      setLoading(false);
-
-      if (event === 'SIGNED_IN' && newSession) {
-        await handlePostSignIn(newSession);
+      if (hasHash || hasCode) {
+        try {
+          const { data, error } = await supabase.auth.getSessionFromUrl({ storeSession: true });
+          if (error) console.error('getSessionFromUrl error:', error);
+          if (data?.session) {
+            setSession(data.session);
+            setUser(data.session.user);
+          }
+        } finally {
+          // Remove auth params from the URL so refreshes don’t retry the exchange
+          const clean = window.location.pathname + window.location.search.replace(/(\?|&)code=[^&]+/,'').replace(/(\?|&)state=[^&]+/,'');
+          window.history.replaceState({}, document.title, clean.split('?')[0]);
+        }
+      } else {
+        // 2) Normal load: hydrate from stored session
+        const { data } = await supabase.auth.getSession();
+        setSession(data.session ?? null);
+        setUser(data.session?.user ?? null);
       }
-    });
 
-    return () => {
-      mounted = false;
-      sub.subscription.unsubscribe();
-    };
+      setLoading(false);
+
+      // 3) Listen for future auth changes
+      const { data: listener } = supabase.auth.onAuthStateChange((_event, newSession) => {
+        setSession(newSession);
+        setUser(newSession?.user ?? null);
+      });
+      return () => listener.subscription.unsubscribe();
+    })();
   }, []);
-
-  // --- public API -----------------------------------------------------------
 
   const signInWithEmail = async (email: string) => {
     const { error } = await supabase.auth.signInWithOtp({
       email,
       options: {
-        // send users back to /account where you exchange ?code= for a session
         emailRedirectTo: `${window.location.origin}/account`,
+        shouldCreateUser: true, // ok for MVP
       },
     });
     if (error) throw error;
@@ -105,12 +71,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (error) throw error;
   };
 
-  const value: AuthContextType = { user, session, loading, signInWithEmail, signOut };
-
-  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
+  return (
+    <AuthContext.Provider value={{ user, session, loading, signInWithEmail, signOut }}>
+      {children}
+    </AuthContext.Provider>
+  );
 }
 
-export function useAuth(): AuthContextType {
+export function useAuth() {
   const ctx = useContext(AuthContext);
   if (!ctx) throw new Error('useAuth must be used within an AuthProvider');
   return ctx;
