@@ -86,6 +86,8 @@ function App() {
                 <Route path="/shorts/:slug" element={<ShortDetailPage />} />
                 <Route path="/trial-quiz" element={<TrialQuizPage />} />
                 <Route path="/vocab" element={<VinoVocabPage />} />
+                <Route path="/auth/callback" element={<AuthCallbackPage />} />
+
                 <Route
                   path="/account"
                   element={
