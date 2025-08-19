@@ -18,6 +18,7 @@ import AccountPage from '@/pages/AccountPage';
 import PricingPage from '@/pages/PricingPage';
 import TrialQuizPage from '@/pages/TrialQuizPage';
 import VinoVocabPage from "@/pages/VinoVocabPage";
+import AuthCallbackPage from '@/pages/AuthCallbackPage';
 
 // MVP additions
 import TrialQuizWidget from '@/components/TrialQuizWidget';
