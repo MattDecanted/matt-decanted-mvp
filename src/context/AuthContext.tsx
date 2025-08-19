@@ -20,25 +20,32 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     (async () => {
-      // 1) If returning from a magic link, exchange it for a session and clean the URL.
-      const hasHash = typeof window !== 'undefined' && window.location.hash.includes('access_token');
-      const hasCode = typeof window !== 'undefined' && (new URL(window.location.href)).searchParams.get('code');
+      // If returning from a magic link (/auth/callback), exchange it for a session.
+      const href = typeof window !== 'undefined' ? window.location.href : '';
+      const url = href ? new URL(href) : null;
+      const hasHashToken =
+        !!url?.hash && (url.hash.includes('access_token') || url.hash.includes('refresh_token'));
+      const hasCode = !!url?.searchParams.get('code');
 
-      if (hasHash || hasCode) {
-        try {
-          const { data, error } = await supabase.auth.getSessionFromUrl({ storeSession: true });
-          if (error) console.error('getSessionFromUrl error:', error);
-          if (data?.session) {
-            setSession(data.session);
-            setUser(data.session.user);
-          }
-        } finally {
-          // Remove auth params from the URL so refreshes don’t retry the exchange
-          const clean = window.location.pathname + window.location.search.replace(/(\?|&)code=[^&]+/,'').replace(/(\?|&)state=[^&]+/,'');
-          window.history.replaceState({}, document.title, clean.split('?')[0]);
+      if (hasHashToken || hasCode) {
+        const { data, error } = await supabase.auth.getSessionFromUrl({ storeSession: true });
+        if (error) {
+          console.error('getSessionFromUrl error:', error);
+        }
+        if (data?.session) {
+          setSession(data.session);
+          setUser(data.session.user);
+        }
+        // Clean URL and route to /account if we’re on /auth/callback
+        const path = window.location.pathname;
+        if (path === '/auth/callback') {
+          window.history.replaceState({}, document.title, '/account');
+        } else {
+          // Remove auth params from any other path
+          window.history.replaceState({}, document.title, path);
         }
       } else {
-        // 2) Normal load: hydrate from stored session
+        // Normal load: hydrate from stored session
         const { data } = await supabase.auth.getSession();
         setSession(data.session ?? null);
         setUser(data.session?.user ?? null);
@@ -46,12 +53,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
       setLoading(false);
 
-      // 3) Listen for future auth changes
-      const { data: listener } = supabase.auth.onAuthStateChange((_event, newSession) => {
+      // Listen for future auth changes
+      const { data: sub } = supabase.auth.onAuthStateChange((_event, newSession) => {
         setSession(newSession);
         setUser(newSession?.user ?? null);
       });
-      return () => listener.subscription.unsubscribe();
+
+      return () => sub.subscription.unsubscribe();
     })();
   }, []);
 
@@ -59,8 +67,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const { error } = await supabase.auth.signInWithOtp({
       email,
       options: {
-        emailRedirectTo: `${window.location.origin}/account`,
-        shouldCreateUser: true, // ok for MVP
+        // 🔑 Send users to /auth/callback (must be in Supabase Auth "Redirect URLs")
+        emailRedirectTo: `${window.location.origin}/auth/callback`,
+        shouldCreateUser: true,
       },
     });
     if (error) throw error;
