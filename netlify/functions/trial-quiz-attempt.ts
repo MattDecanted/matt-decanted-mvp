@@ -2,7 +2,7 @@
 import type { Handler } from "@netlify/functions";
 import { createClient } from "@supabase/supabase-js";
 
-// --- CORS helpers (allow browser POSTs) ---
+// CORS helpers
 const base = { "access-control-allow-origin": "*" };
 const corsJSON = { ...base, "content-type": "application/json" };
 const corsPre = {
@@ -11,39 +11,53 @@ const corsPre = {
   "access-control-allow-headers": "content-type,authorization",
 };
 
-// --- Admin (service-role) Supabase client ---
-const SUPABASE_URL = process.env.VITE_SUPABASE_URL!;
-const SERVICE_ROLE = process.env.SUPABASE_SERVICE_ROLE!;
+// Use server env (prefer SUPABASE_URL if you set it; fallback to VITE_ for now)
+const SUPABASE_URL =
+  process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || "";
+const SERVICE_ROLE = process.env.SUPABASE_SERVICE_ROLE || "";
 
 if (!SUPABASE_URL || !SERVICE_ROLE) {
-  throw new Error("Missing Supabase env vars on server");
+  // Throwing here will produce a Netlify error page; instead, return JSON
+  console.error("Missing Supabase env vars on server");
 }
 
-const admin = createClient(SUPABASE_URL, SERVICE_ROLE);
+const admin = SUPABASE_URL && SERVICE_ROLE
+  ? createClient(SUPABASE_URL, SERVICE_ROLE)
+  : null;
 
 export const handler: Handler = async (event) => {
   if (event.httpMethod === "OPTIONS") {
-    return new Response("", { status: 204, headers: corsPre });
+    return { statusCode: 204, headers: corsPre, body: "" };
   }
   if (event.httpMethod !== "POST") {
-    return new Response(JSON.stringify({ error: "Method Not Allowed" }), {
-      status: 405,
+    return {
+      statusCode: 405,
       headers: corsJSON,
-    });
+      body: JSON.stringify({ error: "Method Not Allowed" }),
+    };
   }
 
   try {
+    if (!admin) {
+      return {
+        statusCode: 500,
+        headers: corsJSON,
+        body: JSON.stringify({ error: "Server misconfig: Supabase env" }),
+      };
+    }
+
     const body = JSON.parse(event.body || "{}");
     const { quiz_id, user_id, selections, locale = "en" } = body;
 
     if (!quiz_id || !user_id || !Array.isArray(selections)) {
-      return new Response(JSON.stringify({ error: "Bad Request" }), {
-        status: 400,
+      return {
+        statusCode: 400,
         headers: corsJSON,
-      });
+        body: JSON.stringify({ error: "Bad Request" }),
+      };
     }
 
-    // Fetch the quiz WITH answers so we can score server-side
+    // Fetch the quiz (with answers) to score server-side
     const { data: quiz, error: qErr } = await admin
       .from("trial_quizzes")
       .select("id, for_date, locale, questions, points_award")
@@ -51,13 +65,14 @@ export const handler: Handler = async (event) => {
       .single();
 
     if (qErr || !quiz) {
-      return new Response(JSON.stringify({ error: "Quiz not found" }), {
-        status: 404,
+      return {
+        statusCode: 404,
         headers: corsJSON,
-      });
+        body: JSON.stringify({ error: "Quiz not found" }),
+      };
     }
 
-    // Prevent double-claim for same day
+    // Prevent duplicate attempt same day
     const { data: already } = await admin
       .from("trial_quiz_attempts")
       .select("id")
@@ -66,15 +81,17 @@ export const handler: Handler = async (event) => {
       .maybeSingle();
 
     if (already) {
-      return new Response(JSON.stringify({ alreadyAttempted: true }), {
-        status: 200,
+      return {
+        statusCode: 200,
         headers: corsJSON,
-      });
+        body: JSON.stringify({ alreadyAttempted: true }),
+      };
     }
 
-    // Score
+    // Score answers
     const correct = (quiz.questions || []).reduce(
-      (acc: number, q: any, i: number) => acc + (q?.correct_index === selections[i] ? 1 : 0),
+      (acc: number, q: any, i: number) =>
+        acc + (q?.correct_index === selections[i] ? 1 : 0),
       0
     );
     const points = quiz.points_award ?? 0;
@@ -99,15 +116,18 @@ export const handler: Handler = async (event) => {
       meta: { quiz_id },
     });
 
-    return new Response(JSON.stringify({ correct, points }), {
-      status: 200,
+    return {
+      statusCode: 200,
       headers: corsJSON,
-    });
+      body: JSON.stringify({ correct, points }),
+    };
   } catch (e: any) {
-    return new Response(
-      JSON.stringify({ error: e?.message || "Server error" }),
-      { status: 500, headers: corsJSON }
-    );
+    console.error(e);
+    return {
+      statusCode: 500,
+      headers: corsJSON,
+      body: JSON.stringify({ error: e?.message || "Server error" }),
+    };
   }
 };
 
