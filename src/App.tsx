@@ -10,7 +10,7 @@ import { AnalyticsProvider } from '@/context/AnalyticsContext';
 
 // Layout & Pages
 import Layout from '@/components/Layout';
-import HomePage from '@/pages/HomePage';
+import HomePage from '@/pages/Home';
 import GuessWhatPage from '@/pages/GuessWhatPage';
 import ShortsPage from '@/pages/ShortsPage';
 import ShortDetailPage from '@/pages/ShortDetailPage';
@@ -34,7 +34,7 @@ function HomeWithTrial() {
       <div className="mb-8">
         <TrialQuizWidget />
       </div>
-      <HomePage />
+      <Home />
     </>
   );
 }
