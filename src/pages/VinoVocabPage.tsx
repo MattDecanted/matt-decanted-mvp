@@ -21,29 +21,38 @@ export default function VinoVocabPage() {
   }, []);
 
   async function submit() {
-    if (pick == null || !v) return;
+    if (pick == null || !v) {
+      setStatus("Please select an option.");
+      return;
+    }
+
     if (!uid) {
       setStatus("Please sign in (magic link) to save points.");
       return;
     }
 
     setStatus("Scoring…");
-    const res = await fetch("/.netlify/functions/vocab-attempt", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ user_id: uid, selection: pick })
-    });
+    try {
+      const res = await fetch("/.netlify/functions/vocab-attempt", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ user_id: uid, selection: pick })
+      });
 
-    const data = await res.json();
-    console.log("🎯 Attempt result:", data); // Debug log
+      const data = await res.json();
+      console.log("🎯 Attempt result:", data); // Debug log
 
-    if (data?.alreadyAttempted) {
-      setStatus("Already completed today.");
-    } else if (data?.error) {
-      setStatus(`Error: ${data.error}`);
-    } else {
-      setResult(data);
-      setStatus("Saved!");
+      if (data?.alreadyAttempted) {
+        setStatus("Already completed today.");
+      } else if (data?.error) {
+        setStatus(`Error: ${data.error}`);
+      } else {
+        setResult(data);
+        setStatus("Saved!");
+      }
+    } catch (err) {
+      console.error("⚠️ Submission error:", err);
+      setStatus("Something went wrong. Please try again.");
     }
   }
 
