@@ -10,7 +10,7 @@ import { AnalyticsProvider } from '@/context/AnalyticsContext';
 
 // Layout & Pages
 import Layout from '@/components/Layout';
-import HomePage from '@/pages/Home';
+import Home from '@/pages/Home';  // ✅ Corrected here
 import GuessWhatPage from '@/pages/GuessWhatPage';
 import ShortsPage from '@/pages/ShortsPage';
 import ShortDetailPage from '@/pages/ShortDetailPage';
@@ -28,7 +28,6 @@ import { supabase } from '@/lib/supabase';
 const FN_SUBMIT = '/.netlify/functions/trial-quiz-attempt';
 const PENDING_KEY = 'md_trial_pending';
 
-// Renders HomePage with the Trial Quiz block above it
 function HomeWithTrial() {
   return (
     <>
@@ -40,7 +39,6 @@ function HomeWithTrial() {
   );
 }
 
-// When user lands on /account after magic-link, auto-submit any pending quiz
 function AutoResumeOnAccount() {
   React.useEffect(() => {
     (async () => {
@@ -67,7 +65,7 @@ function AutoResumeOnAccount() {
 
         localStorage.removeItem(PENDING_KEY);
       } catch {
-        // silent fail is fine for MVP; widget handles user-visible status
+        // silent fail is fine for MVP
       }
     })();
   }, []);
@@ -90,14 +88,13 @@ function App() {
                 <Route path="/vocab" element={<VinoVocabPage />} />
                 <Route path="/demo" element={<BrandedDemo />} />
                 <Route path="/admin/vocab" element={<VocabChallengeManager />} />
-
                 <Route
                   path="/account"
                   element={
                     <>
                       <AutoResumeOnAccount />
                       <AccountPage />
-                      <div>Fallback render</div> {/* 👈 Added for debug */}
+                      <div>Fallback render</div>
                     </>
                   }
                 />
