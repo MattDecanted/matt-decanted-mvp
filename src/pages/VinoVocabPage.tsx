@@ -1,7 +1,7 @@
 // src/pages/VinoVocabPage.tsx
 import React, { useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabaseClient';
-import { useAuth } from '@/contexts/AuthContext';
+import { useAuth } from '@/context/AuthContext';
 import StatsPanel from '@/components/StatsPanel';
 
 const VinoVocabPage: React.FC = () => {
