@@ -223,18 +223,16 @@ const VinoVocabPage: React.FC = () => {
           </div>
         )}
 
-        {status && <p className="mt-3 text-sm text-muted-foreground">{status}</p>}
-      </section>
+      {status && (
+        <p className="mt-3 text-sm text-muted-foreground">{status}</p>
+      )}
+    </section>
 
-      {/* Stats (static for now) */}
-      <StatsPanel
-        gamesPlayed={gamesPlayed}
-        winRate={winRate}
-        currentStreak={currentStreak}
-        bestStreak={bestStreak}
-      />
-    </div>
-  );
+    {/* Stats (dynamic now) */}
+    <StatsPanel userId={user?.id} />
+  </div>
+);
 };
 
 export default VinoVocabPage;
+
