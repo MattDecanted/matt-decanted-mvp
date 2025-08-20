@@ -1,4 +1,3 @@
-// src/context/AuthContext.tsx
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import type { User, Session } from '@supabase/supabase-js';
 import { supabase } from '@/lib/supabase';
@@ -19,58 +18,54 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    let unsub: (() => void) | undefined;
-
-    (async () => {
+    const initAuth = async () => {
       try {
         const { pathname, hash, search } = window.location;
-        const onCallback = pathname.startsWith('/auth/callback');
+        const isCallback = pathname.startsWith('/auth/callback');
         const hasHashTokens = hash.includes('access_token');
-        const hasCode = new URLSearchParams(search).get('code');
+        const hasCode = new URLSearchParams(search).has('code');
 
-        if (onCallback && (hasHashTokens || hasCode)) {
-          // 1) Exchange the link for a session (stores it for us)
+        if (isCallback && (hasHashTokens || hasCode)) {
           const { data, error } = await supabase.auth.getSessionFromUrl({ storeSession: true });
-          if (error) console.error('getSessionFromUrl error:', error);
+          if (error) console.error('Error during getSessionFromUrl:', error);
 
-          // 2) Clean the URL *before* navigating away to avoid retry loops
           window.history.replaceState({}, document.title, '/auth/callback');
 
-          // 3) Hydrate local state then send user to /account
           if (data?.session) {
             setSession(data.session);
             setUser(data.session.user);
             window.location.replace('/account');
-            return; // stop here; next load will hydrate from storage
+            return;
           }
         }
 
-        // Normal app load (or callback without tokens): hydrate from stored session
         const { data } = await supabase.auth.getSession();
         setSession(data.session ?? null);
         setUser(data.session?.user ?? null);
-      } catch (e) {
-        console.error(e);
+      } catch (err) {
+        console.error('Auth init error:', err);
       } finally {
         setLoading(false);
       }
 
-      // Listen for future auth changes
-      const { data: listener } = supabase.auth.onAuthStateChange((_evt, newSession) => {
+      const { data: listener } = supabase.auth.onAuthStateChange((_event, newSession) => {
         setSession(newSession);
         setUser(newSession?.user ?? null);
       });
-      unsub = () => listener.subscription.unsubscribe();
-    })();
 
-    return () => { if (unsub) unsub(); };
+      return () => listener.subscription.unsubscribe();
+    };
+
+    const cleanup = initAuth();
+    return () => {
+      if (typeof cleanup === 'function') cleanup();
+    };
   }, []);
 
   const signInWithEmail = async (email: string) => {
     const { error } = await supabase.auth.signInWithOtp({
       email,
       options: {
-        // Email link should land on the callback route (not /account)
         emailRedirectTo: `${window.location.origin}/auth/callback`,
         shouldCreateUser: true,
       },
@@ -84,7 +79,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   return (
-    <AuthContext.Provider value={{ user, session, loading, signInWithEmail, signOut }}>
+    <AuthContext.Provider
+      value={{ user, session, loading, signInWithEmail, signOut }}
+    >
       {children}
     </AuthContext.Provider>
   );
