@@ -16,6 +16,7 @@ module.exports = {
         sm: 'calc(var(--radius) - 4px)',
       },
       colors: {
+        // Default theming system
         background: 'hsl(var(--background))',
         foreground: 'hsl(var(--foreground))',
         card: {
@@ -49,12 +50,24 @@ module.exports = {
         border: 'hsl(var(--border))',
         input: 'hsl(var(--input))',
         ring: 'hsl(var(--ring))',
+
+        // Chart colours
         chart: {
           1: 'hsl(var(--chart-1))',
           2: 'hsl(var(--chart-2))',
           3: 'hsl(var(--chart-3))',
           4: 'hsl(var(--chart-4))',
           5: 'hsl(var(--chart-5))',
+        },
+
+        // ✅ Branded colours from Bolt-developed site
+        brand: {
+          blue: '#3B82F6',         // Primary CTA (Start Free Trial)
+          purple: '#8B5CF6',       // Member-Only / Premium
+          orange: '#F97316',       // Highlight / urgency
+          green: '#10B981',        // Positive actions
+          navy: '#1E293B',         // Footer / dark elements
+          soft: '#F3F4F6',         // Card backgrounds / muted
         },
       },
       keyframes: {
