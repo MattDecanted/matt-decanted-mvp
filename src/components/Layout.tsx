@@ -26,7 +26,7 @@ export default function Layout({ children }: LayoutProps) {
               {/* Logo + Title Block */}
               <Link to="/" className="flex items-center space-x-3">
                 <img
-                  src="/logo-md.png"
+                  src="/Matt_decantednk.png"
                   alt="Matt Decanted Logo"
                   className="h-10 w-auto"
                 />
