@@ -1,13 +1,13 @@
 import React from "react";
 import { supabase } from "@/lib/supabase";
+import { CheckCircle, XCircle, Sparkles } from "lucide-react";
 
 export default function VinoVocabPage() {
   const [v, setV] = React.useState<any>(null);
   const [pick, setPick] = React.useState<number | null>(null);
   const [status, setStatus] = React.useState("");
-  const [result, setResult] = React.useState<{ correct: boolean; points: number; hint?: string } | null>(null);
+  const [result, setResult] = React.useState<{ correct: number; points: number; hint?: string } | null>(null);
   const [uid, setUid] = React.useState<string | null>(null);
-  const [stats, setStats] = React.useState<{ correct_answers: number; total_attempts: number; total_points: number } | null>(null);
 
   React.useEffect(() => {
     (async () => {
@@ -17,19 +17,6 @@ export default function VinoVocabPage() {
 
       const vocabData = await fetch("/.netlify/functions/vocab-today").then(r => r.json());
       setV(vocabData);
-
-      if (userId) {
-        const { data: statData } = await supabase
-          .from("vocab_attempts")
-          .select("correct, points_awarded")
-          .eq("user_id", userId);
-
-        const correct_answers = statData?.filter(r => r.correct).length ?? 0;
-        const total_attempts = statData?.length ?? 0;
-        const total_points = statData?.reduce((sum, r) => sum + (r.points_awarded ?? 0), 0) ?? 0;
-
-        setStats({ correct_answers, total_attempts, total_points });
-      }
     })();
   }, []);
 
@@ -55,34 +42,24 @@ export default function VinoVocabPage() {
     } else {
       setResult(data);
       setStatus("Saved!");
-
-      // Update stats
-      setStats(prev => prev
-        ? {
-            ...prev,
-            total_attempts: prev.total_attempts + 1,
-            correct_answers: prev.correct_answers + (data.correct ? 1 : 0),
-            total_points: prev.total_points + data.points
-          }
-        : null
-      );
     }
   }
 
-  if (!v) return <div className="p-6 text-center text-lg text-gray-600">Loading today’s challenge…</div>;
+  if (!v) return <div className="p-8 text-center animate-pulse">🍷 Loading today’s Vino Vocab…</div>;
 
   const answered = result !== null;
   const correctIndex = v.correct_option_index;
 
   return (
-    <main className="p-6 max-w-xl mx-auto font-sans text-gray-900">
-      <div className="bg-white shadow-md rounded-lg p-6">
-        <h1 className="text-3xl font-bold mb-2 text-purple-800">Vino Vocab</h1>
-        <p className="text-sm text-gray-500 mb-4">{new Date(v.for_date).toDateString()}</p>
-        <h2 className="text-xl font-semibold mb-3">{v.term}</h2>
-        <p className="mb-4 text-md leading-relaxed">{v.question}</p>
+    <main className="min-h-screen bg-gradient-to-b from-white to-purple-50 flex flex-col items-center py-10 px-4">
+      <div className="bg-white shadow-xl rounded-2xl w-full max-w-xl p-8">
+        <h1 className="text-4xl font-bold text-purple-700 mb-1">Vino Vocab</h1>
+        <p className="text-gray-500 text-sm mb-6">{new Date(v.for_date).toDateString()}</p>
 
-        <div className="space-y-2">
+        <h2 className="text-xl font-semibold text-gray-800 mb-2">{v.term}</h2>
+        <p className="text-gray-700 mb-6">{v.question}</p>
+
+        <div className="space-y-3">
           {v.options?.map((opt: string, i: number) => {
             const isSelected = pick === i;
             const isCorrect = answered && correctIndex === i;
@@ -92,16 +69,16 @@ export default function VinoVocabPage() {
               <button
                 key={i}
                 onClick={() => !answered && setPick(i)}
-                className={`w-full text-left px-4 py-2 rounded-md border transition duration-150 ease-in-out
+                className={`w-full px-4 py-3 rounded-lg font-medium transition-all border text-left
                   ${answered
                     ? isCorrect
-                      ? "bg-green-200 border-green-600 text-green-900"
+                      ? "bg-green-100 border-green-500 text-green-800"
                       : isWrong
-                      ? "bg-red-200 border-red-500 text-red-900"
-                      : "bg-white border-gray-300 text-gray-600 opacity-60"
+                      ? "bg-red-100 border-red-400 text-red-700"
+                      : "bg-gray-100 text-gray-400 border-gray-200"
                     : isSelected
-                    ? "bg-purple-700 text-white border-purple-800"
-                    : "bg-white hover:bg-gray-100 border-gray-300 text-gray-800"}`}
+                    ? "bg-purple-600 text-white border-purple-700"
+                    : "bg-white hover:bg-purple-100 border-gray-300 text-gray-800"}`}
                 disabled={answered}
               >
                 {opt}
@@ -110,44 +87,42 @@ export default function VinoVocabPage() {
           })}
         </div>
 
-        <div className="mt-6 flex items-center gap-3">
+        <div className="mt-6 flex items-center gap-4">
           <button
             onClick={submit}
             disabled={pick === null || answered}
-            className={`px-5 py-2 rounded-md font-semibold border transition
-              ${answered || pick === null
-                ? "bg-gray-300 text-white cursor-not-allowed"
-                : "bg-purple-700 text-white hover:bg-purple-800 border-purple-700"}`}
+            className={`px-6 py-2 rounded-lg font-semibold transition-all shadow-sm
+              ${answered || pick === null ? "bg-gray-300 text-white cursor-not-allowed" : "bg-purple-600 hover:bg-purple-700 text-white"}`}
           >
             Submit
           </button>
 
           {result && (
-            <span className="text-sm">
+            <span className="flex items-center gap-1 text-sm font-medium text-gray-700">
+              {result.correct ? <CheckCircle className="w-4 h-4 text-green-600" /> : <XCircle className="w-4 h-4 text-red-500" />}
               You got it <strong>{result.correct ? "right" : "wrong"}</strong> — +{result.points} points
             </span>
           )}
         </div>
 
         {result && !result.correct && v.hint && (
-          <div className="mt-4 text-sm bg-yellow-100 text-yellow-800 border border-yellow-300 p-4 rounded">
-            <strong>Hint:</strong> {v.hint}
+          <div className="mt-5 p-4 bg-yellow-100 text-yellow-800 border border-yellow-300 rounded-lg">
+            <Sparkles className="inline-block w-4 h-4 mr-1 -mt-1" /> Hint: <span className="italic">{v.hint}</span>
           </div>
         )}
 
-        {status && <p className="mt-4 text-sm text-gray-600 italic">{status}</p>}
+        {status && <p className="mt-3 text-sm text-purple-700 italic">{status}</p>}
       </div>
 
-      {stats && (
-        <div className="mt-8 bg-gray-50 border-t pt-4 px-6 pb-6 rounded shadow-inner">
-          <h3 className="font-semibold text-gray-700 text-lg mb-2">Your Stats</h3>
-          <ul className="space-y-1 text-sm text-gray-700">
-            <li><strong>Total Attempts:</strong> {stats.total_attempts}</li>
-            <li><strong>Correct Answers:</strong> {stats.correct_answers}</li>
-            <li><strong>Total Points:</strong> {stats.total_points}</li>
-          </ul>
-        </div>
-      )}
+      <div className="mt-10 w-full max-w-md bg-white shadow rounded-xl p-6 text-sm text-gray-700">
+        <h3 className="font-semibold text-purple-600 text-base mb-2">📊 Your Stats (Coming Soon)</h3>
+        <ul className="space-y-1">
+          <li>• 1 game played</li>
+          <li>• Current streak: 1</li>
+          <li>• Best streak: 1</li>
+          <li>• Total points: 10</li>
+        </ul>
+      </div>
     </main>
   );
 }
