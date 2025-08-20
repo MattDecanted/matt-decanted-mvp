@@ -18,6 +18,7 @@ import AccountPage from '@/pages/AccountPage';
 import PricingPage from '@/pages/PricingPage';
 import TrialQuizPage from '@/pages/TrialQuizPage';
 import VinoVocabPage from "@/pages/VinoVocabPage";
+import BrandedDemo from '@/pages/BrandedDemo';
 
 // MVP additions
 import TrialQuizWidget from '@/components/TrialQuizWidget';
@@ -86,6 +87,7 @@ function App() {
                 <Route path="/shorts/:slug" element={<ShortDetailPage />} />
                 <Route path="/trial-quiz" element={<TrialQuizPage />} />
                 <Route path="/vocab" element={<VinoVocabPage />} />
+                <Route path="/demo" element={<BrandedDemo />} />
 
                 <Route
                   path="/account"
