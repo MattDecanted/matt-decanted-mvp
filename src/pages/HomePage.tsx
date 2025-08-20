@@ -10,7 +10,83 @@ export default function HomePage() {
     <div className="space-y-8">
       {/* Hero Section */}
       <section className="text-center space-y-4">
-        <h1 className="text-4xl md:text-6xl font-bold bg-gradient-to-r from-primary to-blue-600 bg-clip-text text-transparent">
+        <h1 className="text-4xl md:text-6xl font-bold bg-gradient-to-r from-primary to-blue-600 bg-import React from 'react';
+import { Link } from 'react-router-dom';
+import { useAuth } from '@/context/AuthContext';
+
+const HomePage: React.FC = () => {
+  const { user } = useAuth();
+
+  return (
+    <div className="min-h-screen bg-background text-foreground">
+      {/* Hero Section */}
+      <section className="py-20 text-center">
+        <div className="max-w-3xl mx-auto px-4">
+          <h1 className="text-4xl md:text-6xl font-bold mb-4">
+            Learn wine your way.
+          </h1>
+          <p className="text-lg md:text-xl text-muted-foreground mb-6">
+            Quick hits. Deep dives. Games. Challenges. Points. And a few surprises.
+          </p>
+          <div className="flex flex-wrap justify-center gap-4">
+            <Link to="/trial-quiz">
+              <button className="px-6 py-3 rounded-xl bg-primary text-white text-lg font-semibold shadow-md hover:bg-primary/80">
+                Try the Daily Quiz
+              </button>
+            </Link>
+            <Link to="/games/guess-what">
+              <button className="px-6 py-3 rounded-xl bg-muted text-primary text-lg font-semibold border hover:border-primary">
+                Play Guess What?
+              </button>
+            </Link>
+          </div>
+        </div>
+      </section>
+
+      {/* Vocab & Shorts */}
+      <section className="py-16 bg-muted">
+        <div className="max-w-4xl mx-auto px-4 grid grid-cols-1 md:grid-cols-2 gap-8">
+          <div className="bg-white p-6 rounded-xl shadow">
+            <h2 className="text-2xl font-bold mb-2">Build your wine vocab</h2>
+            <p className="text-muted-foreground mb-4">
+              Learn one wine word a day and test your knowledge with micro-quizzes.
+            </p>
+            <Link to="/vocab" className="text-primary font-medium hover:underline">
+              Go to Vino Vocab →
+            </Link>
+          </div>
+          <div className="bg-white p-6 rounded-xl shadow">
+            <h2 className="text-2xl font-bold mb-2">Watch and learn with Shorts</h2>
+            <p className="text-muted-foreground mb-4">
+              Quick lessons on labels, tasting, and regions. Just 90 seconds.
+            </p>
+            <Link to="/shorts" className="text-primary font-medium hover:underline">
+              Explore Shorts →
+            </Link>
+          </div>
+        </div>
+      </section>
+
+      {/* Community CTA */}
+      <section className="py-20 text-center">
+        <div className="max-w-xl mx-auto px-4">
+          <h2 className="text-3xl font-bold mb-4">Make wine less confusing. And more fun.</h2>
+          <p className="text-muted-foreground mb-6">
+            Whether you're swirling your first glass or already lead tastings, Matt Decanted helps you learn, play, and grow.
+          </p>
+          <Link to={user ? "/account" : "/pricing"}>
+            <button className="px-6 py-3 rounded-xl bg-primary text-white text-lg font-semibold shadow hover:bg-primary/80">
+              {user ? 'Go to Account' : 'Join Now'}
+            </button>
+          </Link>
+        </div>
+      </section>
+    </div>
+  );
+};
+
+export default HomePage;
+clip-text text-transparent">
           Daily Brain Challenge
         </h1>
         <p className="text-xl text-muted-foreground max-w-2xl mx-auto">
