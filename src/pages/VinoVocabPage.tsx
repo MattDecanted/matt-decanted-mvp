@@ -11,8 +11,12 @@ export default function VinoVocabPage() {
   React.useEffect(() => {
     (async () => {
       const { data } = await supabase.auth.getUser();
-      setUid(data?.user?.id ?? null);
-      setV(await fetch("/.netlify/functions/vocab-today").then(r => r.json()));
+      const userId = data?.user?.id ?? null;
+      setUid(userId);
+
+      const vocabData = await fetch("/.netlify/functions/vocab-today").then(r => r.json());
+      console.log("🔍 Loaded vocab data:", vocabData); // Debug log
+      setV(vocabData);
     })();
   }, []);
 
@@ -22,13 +26,17 @@ export default function VinoVocabPage() {
       setStatus("Please sign in (magic link) to save points.");
       return;
     }
+
     setStatus("Scoring…");
     const res = await fetch("/.netlify/functions/vocab-attempt", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ user_id: uid, selection: pick })
     });
+
     const data = await res.json();
+    console.log("🎯 Attempt result:", data); // Debug log
+
     if (data?.alreadyAttempted) {
       setStatus("Already completed today.");
     } else if (data?.error) {
@@ -49,6 +57,7 @@ export default function VinoVocabPage() {
       <h1 className="text-2xl font-semibold mb-2">Vino Vocab — {v.term}</h1>
       <p className="text-sm text-gray-500 mb-4">{new Date(v.for_date).toDateString()}</p>
       <div className="mb-4 font-medium">{v.question}</div>
+
       <div className="space-y-2">
         {v.options?.map((opt: string, i: number) => {
           const isSelected = pick === i;
