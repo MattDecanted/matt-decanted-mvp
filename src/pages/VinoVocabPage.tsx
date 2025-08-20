@@ -69,75 +69,79 @@ export default function VinoVocabPage() {
     }
   }
 
-  if (!v) return <div className="p-4">Loading…</div>;
+  if (!v) return <div className="p-6 text-center text-lg text-gray-600">Loading today’s challenge…</div>;
 
   const answered = result !== null;
   const correctIndex = v.correct_option_index;
 
   return (
-    <main className="p-6 max-w-2xl mx-auto">
-      <h1 className="text-2xl font-semibold mb-2">Vino Vocab — {v.term}</h1>
-      <p className="text-sm text-gray-500 mb-4">{new Date(v.for_date).toDateString()}</p>
+    <main className="p-6 max-w-xl mx-auto font-sans text-gray-900">
+      <div className="bg-white shadow-md rounded-lg p-6">
+        <h1 className="text-3xl font-bold mb-2 text-purple-800">Vino Vocab</h1>
+        <p className="text-sm text-gray-500 mb-4">{new Date(v.for_date).toDateString()}</p>
+        <h2 className="text-xl font-semibold mb-3">{v.term}</h2>
+        <p className="mb-4 text-md leading-relaxed">{v.question}</p>
 
-      <div className="mb-4 font-medium">{v.question}</div>
+        <div className="space-y-2">
+          {v.options?.map((opt: string, i: number) => {
+            const isSelected = pick === i;
+            const isCorrect = answered && correctIndex === i;
+            const isWrong = answered && isSelected && correctIndex !== i;
 
-      <div className="space-y-2">
-        {v.options?.map((opt: string, i: number) => {
-          const isSelected = pick === i;
-          const isCorrect = answered && correctIndex === i;
-          const isWrong = answered && isSelected && correctIndex !== i;
-
-          return (
-            <button
-              key={i}
-              onClick={() => !answered && setPick(i)}
-              className={`w-full text-left px-3 py-2 rounded border transition
-                ${answered
-                  ? isCorrect
-                    ? "bg-green-100 border-green-600"
-                    : isWrong
-                    ? "bg-red-100 border-red-500"
-                    : "bg-white border-gray-300 opacity-60"
-                  : isSelected
-                  ? "bg-black text-white border-black"
-                  : "bg-white hover:bg-gray-100 border-gray-300"}`}
-              disabled={answered}
-            >
-              {opt}
-            </button>
-          );
-        })}
-      </div>
-
-      <div className="mt-4 flex items-center gap-2">
-        <button
-          onClick={submit}
-          disabled={pick === null || answered}
-          className={`px-4 py-2 rounded border font-medium transition
-            ${answered || pick === null ? "bg-gray-300 text-white cursor-not-allowed" : "bg-black text-white hover:bg-gray-800"}`}
-        >
-          Submit
-        </button>
-
-        {result && (
-          <span className="text-sm">
-            You got it <strong>{result.correct ? "right" : "wrong"}</strong> — +{result.points} points
-          </span>
-        )}
-      </div>
-
-      {result && !result.correct && v.hint && (
-        <div className="mt-3 text-sm text-yellow-700 bg-yellow-100 p-3 rounded border border-yellow-300">
-          Hint: {v.hint}
+            return (
+              <button
+                key={i}
+                onClick={() => !answered && setPick(i)}
+                className={`w-full text-left px-4 py-2 rounded-md border transition duration-150 ease-in-out
+                  ${answered
+                    ? isCorrect
+                      ? "bg-green-200 border-green-600 text-green-900"
+                      : isWrong
+                      ? "bg-red-200 border-red-500 text-red-900"
+                      : "bg-white border-gray-300 text-gray-600 opacity-60"
+                    : isSelected
+                    ? "bg-purple-700 text-white border-purple-800"
+                    : "bg-white hover:bg-gray-100 border-gray-300 text-gray-800"}`}
+                disabled={answered}
+              >
+                {opt}
+              </button>
+            );
+          })}
         </div>
-      )}
 
-      {status && <p className="mt-3 text-sm text-gray-600">{status}</p>}
+        <div className="mt-6 flex items-center gap-3">
+          <button
+            onClick={submit}
+            disabled={pick === null || answered}
+            className={`px-5 py-2 rounded-md font-semibold border transition
+              ${answered || pick === null
+                ? "bg-gray-300 text-white cursor-not-allowed"
+                : "bg-purple-700 text-white hover:bg-purple-800 border-purple-700"}`}
+          >
+            Submit
+          </button>
+
+          {result && (
+            <span className="text-sm">
+              You got it <strong>{result.correct ? "right" : "wrong"}</strong> — +{result.points} points
+            </span>
+          )}
+        </div>
+
+        {result && !result.correct && v.hint && (
+          <div className="mt-4 text-sm bg-yellow-100 text-yellow-800 border border-yellow-300 p-4 rounded">
+            <strong>Hint:</strong> {v.hint}
+          </div>
+        )}
+
+        {status && <p className="mt-4 text-sm text-gray-600 italic">{status}</p>}
+      </div>
 
       {stats && (
-        <div className="mt-6 p-4 border-t pt-4 text-sm text-gray-800 bg-gray-50 rounded">
-          <h2 className="font-medium mb-2">Your Stats</h2>
-          <ul>
+        <div className="mt-8 bg-gray-50 border-t pt-4 px-6 pb-6 rounded shadow-inner">
+          <h3 className="font-semibold text-gray-700 text-lg mb-2">Your Stats</h3>
+          <ul className="space-y-1 text-sm text-gray-700">
             <li><strong>Total Attempts:</strong> {stats.total_attempts}</li>
             <li><strong>Correct Answers:</strong> {stats.correct_answers}</li>
             <li><strong>Total Points:</strong> {stats.total_points}</li>
