@@ -1,160 +1,192 @@
 // src/pages/VinoVocabPage.tsx
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { supabase } from '@/lib/supabaseClient';
 import { useAuth } from '@/context/AuthContext';
 import StatsPanel from '@/components/StatsPanel';
 
-type ChallengeRow = {
-  date: string;
-  term?: string;              // e.g. "Acidity"
-  word?: string;              // some tables use "word" instead of "term"
-  question?: string;          // optional, when present we show it
+type Challenge = {
+  id: string;
+  for_date?: string | null;
+  date?: string | null; // fallback if older seed used `date`
+  term: string;
+  question?: string | null;
   options: string[];
-  correct_answer?: string;    // if you store plain text answer
-  correct_option_index?: number;
+  correct_option_index: number;
+  hint?: string | null;
+  points?: number | null;
 };
 
 const VinoVocabPage: React.FC = () => {
   const { user } = useAuth();
 
+  const [challenge, setChallenge] = useState<Challenge | null>(null);
   const [loading, setLoading] = useState(true);
-  const [row, setRow] = useState<ChallengeRow | null>(null);
-
-  const [selectedOption, setSelectedOption] = useState<string | null>(null);
+  const [pick, setPick] = useState<number | null>(null);
   const [submitted, setSubmitted] = useState(false);
-  const [isCorrect, setIsCorrect] = useState<boolean | null>(null);
+  const [status, setStatus] = useState<string>('');
+  const [result, setResult] = useState<{ correct: boolean; points: number } | null>(null);
 
-  // Temporary (wired later to real stats)
+  // ---- Load today's challenge ------------------------------------------------
+  useEffect(() => {
+    (async () => {
+      try {
+        setLoading(true);
+        const today = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+
+        // Prefer new `for_date` column. If none, try legacy `date`.
+        let { data, error } = await supabase
+          .from('vocab_daily_challenges')
+          .select('id,for_date,date,term,question,options,correct_option_index,hint,points')
+          .eq('for_date', today)
+          .maybeSingle();
+
+        if (!data) {
+          const fallback = await supabase
+            .from('vocab_daily_challenges')
+            .select('id,for_date,date,term,question,options,correct_option_index,hint,points')
+            .eq('date', today)
+            .maybeSingle();
+          data = fallback.data as any;
+          error = fallback.error as any;
+        }
+
+        if (error) throw error;
+        setChallenge(data as Challenge);
+      } catch (e: any) {
+        console.error('Failed to load vocab challenge:', e?.message || e);
+        setStatus('Could not load today’s Vino Vocab.');
+      } finally {
+        setLoading(false);
+      }
+    })();
+  }, []);
+
+  const displayDate = useMemo(() => {
+    const d = challenge?.for_date || challenge?.date;
+    return d ? new Date(d).toDateString() : new Date().toDateString();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [challenge?.for_date, challenge?.date]);
+
+  // If the author left `question` blank, create a helpful default.
+  const displayQuestion = useMemo(() => {
+    if (!challenge) return '';
+    const q = (challenge.question || '').trim();
+    if (q) return q;
+    return `Choose the best description for “${challenge.term}”.`;
+  }, [challenge]);
+
+  // ---- Submit attempt (uses your Netlify function so points track) ----------
+  const onSubmit = async () => {
+    if (!challenge || pick === null) return;
+    setSubmitted(true);
+
+    // Not signed in? allow the reveal but explain why points won’t save
+    if (!user?.id) {
+      setStatus('Sign in with your magic link to save points.');
+      // still show correctness feedback
+      const correct = pick === challenge.correct_option_index;
+      setResult({ correct, points: correct ? challenge.points ?? 5 : 0 });
+      return;
+    }
+
+    try {
+      setStatus('Scoring…');
+      const res = await fetch('/.netlify/functions/vocab-attempt', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          user_id: user.id,
+          selection: pick,
+          challenge_id: challenge.id, // harmless if function ignores it
+        }),
+      });
+      const data = await res.json();
+
+      if (data?.error) {
+        setStatus(`Error: ${data.error}`);
+      } else if (data?.alreadyAttempted) {
+        setStatus('You’ve already completed today’s Vino Vocab.');
+        setResult({ correct: data.correct ?? false, points: data.points ?? 0 });
+      } else {
+        setResult({ correct: !!data.correct, points: Number(data.points ?? 0) });
+        setStatus('Saved!');
+      }
+    } catch (e: any) {
+      console.error(e);
+      setStatus('Something went wrong saving your attempt.');
+    }
+  };
+
+  // ---- UI -------------------------------------------------------------------
+  if (loading) {
+    return (
+      <div className="max-w-3xl mx-auto p-6 pt-10">
+        <div className="animate-pulse h-6 w-40 bg-muted rounded mb-4" />
+        <div className="animate-pulse h-9 w-64 bg-muted rounded" />
+      </div>
+    );
+  }
+  if (!challenge) {
+    return (
+      <div className="max-w-3xl mx-auto p-6 pt-10">
+        <h1 className="text-2xl font-bold">Vino Vocab</h1>
+        <p className="text-muted-foreground mt-2">No challenge is scheduled for today yet.</p>
+      </div>
+    );
+  }
+
+  const answered = submitted && result !== null;
+  const correctIndex = challenge.correct_option_index;
+
+  // Simple placeholder stats (replace with live stats later)
   const gamesPlayed = 3;
   const winRate = 100;
   const currentStreak = 3;
   const bestStreak = 3;
 
-  useEffect(() => {
-    (async () => {
-      setLoading(true);
-      const today = new Date().toISOString().slice(0, 10);
-
-      const { data, error } = await supabase
-        .from('vocab_daily_challenges')
-        .select('*')
-        .eq('date', today)
-        .maybeSingle<ChallengeRow>();
-
-      if (error) {
-        console.error('Error fetching vocab:', error);
-      } else {
-        setRow(data ?? null);
-      }
-      setLoading(false);
-    })();
-  }, []);
-
-  const term = row?.term || row?.word || ''; // support both column names
-
-  // 1) Use explicit question if present
-  // 2) Else fall back to a sensible prompt based on available data
-  const prompt =
-    row?.question ||
-    (term
-      ? `Choose the best description for “${term}”.`
-      : 'Choose the best description:');
-
-  const correctText =
-    typeof row?.correct_option_index === 'number'
-      ? row?.options?.[row.correct_option_index]
-      : row?.correct_answer;
-
-  const handleSubmit = async () => {
-    if (!row || !selectedOption || submitted) return;
-
-    const gotItRight =
-      (typeof row.correct_option_index === 'number' &&
-        selectedOption === row.options[row.correct_option_index]) ||
-      (row.correct_answer && selectedOption === row.correct_answer);
-
-    setIsCorrect(gotItRight);
-    setSubmitted(true);
-
-    // record (optional)
-    if (user) {
-      try {
-        await supabase.from('user_vocab_logs').insert({
-          user_id: user.id,
-          word: term || '(unknown term)',
-          correct: gotItRight,
-          played_on: new Date().toISOString(),
-        });
-      } catch (e) {
-        console.warn('Could not record user attempt:', e);
-      }
-    }
-  };
-
-  if (loading) {
-    return (
-      <div className="max-w-3xl mx-auto p-6 pt-10">
-        <div className="animate-pulse bg-white p-6 rounded-2xl shadow-md border border-gray-100">
-          <div className="h-6 w-40 bg-gray-200 rounded mb-3" />
-          <div className="h-4 w-28 bg-gray-200 rounded mb-6" />
-          <div className="h-5 w-64 bg-gray-200 rounded mb-2" />
-          <div className="h-5 w-80 bg-gray-200 rounded mb-6" />
-          <div className="space-y-3">
-            {[...Array(3)].map((_, i) => (
-              <div key={i} className="h-12 bg-gray-100 rounded-xl border border-gray-200" />
-            ))}
-          </div>
-          <div className="h-12 bg-gray-200 rounded-xl mt-6" />
-        </div>
-      </div>
-    );
-  }
-
   return (
-    <div className="max-w-3xl mx-auto p-6 pt-10">
-      <div className="bg-white p-6 rounded-2xl shadow-md border border-gray-100">
-        {/* Title + onboarding blurb */}
-        <h1 className="text-3xl font-extrabold text-purple-700 mb-2">Vino Vocab</h1>
-        <p className="text-sm text-gray-500 mb-6">{new Date().toDateString()}</p>
+    <div className="max-w-3xl mx-auto p-6 pt-10 space-y-6">
+      {/* Header + explainer (outside the card) */}
+      <header>
+        <h1 className="text-3xl font-extrabold tracking-tight text-purple-700">Vino Vocab</h1>
+        <p className="text-sm text-muted-foreground mt-1">{displayDate}</p>
 
-        <p className="text-gray-700 leading-relaxed mb-6">
-          A cornerstone of building confidence tasting wine is vocabulary—being able to put a word
-          next to what you’re seeing, smelling, and tasting. Not everyone will be the same:
-          one person’s “tropical” might be another’s “pineapple”. Do this every day and watch your
-          wine vocab and confidence grow!
+        <p className="mt-4 text-base text-muted-foreground">
+          A cornerstone of wine confidence is your vocabulary. It’s putting a word next to what you
+          see, smell, and taste. Not everyone will choose the same word—one person’s “tropical” is
+          another’s “pineapple”. Do this daily and watch your wine vocab (and confidence) grow.
         </p>
+      </header>
 
-        {/* Term heading if we have one */}
-        {term && (
-          <h2 className="text-2xl font-semibold text-gray-900 mb-2">{term}</h2>
-        )}
+      {/* Challenge card */}
+      <section className="bg-card border rounded-2xl shadow-sm p-6">
+        {/* Term as an H2 for context */}
+        <h2 className="text-xl font-semibold mb-1">{challenge.term}</h2>
+        <p className="text-sm text-muted-foreground mb-4">{displayQuestion}</p>
 
-        {/* Prompt (always shown, with fallback) */}
-        <p className="text-md text-gray-800 mb-4">{prompt}</p>
-
-        {/* Options */}
-        <div className="space-y-3 mb-6">
-          {row?.options?.map((opt) => {
-            const isRight = submitted && isCorrect && opt === selectedOption;
-            const isWrong = submitted && isCorrect === false && opt === selectedOption;
+        <div className="space-y-3">
+          {challenge.options?.map((opt, i) => {
+            const selected = pick === i;
+            const isCorrect = answered && i === correctIndex;
+            const isWrong = answered && selected && i !== correctIndex;
 
             const base =
-              'w-full px-4 py-3 rounded-xl text-left font-medium transition cursor-pointer border focus:outline-none focus:ring-2 focus:ring-purple-300';
-
-            const classes = isRight
-              ? `${base} bg-green-100 text-green-800 border-green-300`
+              'w-full px-4 py-3 rounded-xl text-left font-medium transition border focus:outline-none';
+            const normal = selected
+              ? 'bg-purple-600 text-white border-purple-700 hover:bg-purple-600'
+              : 'bg-white hover:bg-purple-50 text-foreground border-border';
+            const afterAnswer = isCorrect
+              ? 'bg-green-100 text-green-800 border-green-300'
               : isWrong
-              ? `${base} bg-red-100 text-red-800 border-red-300`
-              : selectedOption === opt
-              ? `${base} bg-purple-600 text-white border-purple-700`
-              : `${base} bg-white hover:bg-purple-50 text-gray-700 border-gray-200`;
+              ? 'bg-red-100 text-red-800 border-red-300'
+              : 'bg-white text-muted-foreground border-border opacity-70';
 
             return (
               <button
-                key={opt}
-                className={classes}
-                disabled={submitted}
-                onClick={() => setSelectedOption(opt)}
+                key={i}
+                className={`${base} ${answered ? afterAnswer : normal}`}
+                disabled={answered}
+                onClick={() => !answered && setPick(i)}
               >
                 {opt}
               </button>
@@ -163,35 +195,38 @@ const VinoVocabPage: React.FC = () => {
         </div>
 
         <button
-          className="bg-purple-600 text-white font-semibold px-5 py-3 rounded-xl w-full transition hover:bg-purple-700 disabled:opacity-50"
-          onClick={handleSubmit}
-          disabled={!row || !selectedOption || submitted}
+          onClick={onSubmit}
+          disabled={pick === null || answered}
+          className={`mt-5 w-full px-5 py-3 rounded-xl font-semibold transition 
+            ${pick === null || answered ? 'bg-muted text-muted-foreground cursor-not-allowed' : 'bg-purple-600 text-white hover:bg-purple-700'}`}
         >
           Submit
         </button>
 
-        {/* Feedback line */}
-        {submitted && (
+        {/* Feedback */}
+        {answered && (
           <div className="mt-3 text-sm">
-            {isCorrect ? (
-              <span className="text-green-700 font-medium">Nice! +5 points</span>
-            ) : (
-              <span className="text-red-700">
-                Not quite. {correctText ? <>Correct answer: <b>{correctText}</b></> : null}
+            {result?.correct ? (
+              <span className="text-green-700 font-medium">
+                You got it right — +{result.points} points
               </span>
+            ) : (
+              <span className="text-red-700 font-medium">Not quite this time.</span>
             )}
           </div>
         )}
 
-        {/* Sign-in nudge */}
-        {!user && (
-          <p className="text-sm mt-3 text-center text-gray-400 italic">
-            Please sign in (magic link) to save points.
-          </p>
+        {/* Optional hint when wrong */}
+        {answered && !result?.correct && challenge.hint && (
+          <div className="mt-3 text-sm text-yellow-800 bg-yellow-50 border border-yellow-200 rounded p-3">
+            Hint: {challenge.hint}
+          </div>
         )}
-      </div>
 
-      {/* Stats Panel (kept below the card) */}
+        {status && <p className="mt-3 text-sm text-muted-foreground">{status}</p>}
+      </section>
+
+      {/* Stats (static for now) */}
       <StatsPanel
         gamesPlayed={gamesPlayed}
         winRate={winRate}
