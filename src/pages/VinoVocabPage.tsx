@@ -2,7 +2,7 @@
 import React, { useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabaseClient';
 import { useAuth } from '@/context/AuthContext';
-import StatsPanel from '@/component/StatsPanel';
+import StatsPanel from '@/components/StatsPanel';
 
 const VinoVocabPage: React.FC = () => {
   const { user } = useAuth();
