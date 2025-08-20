@@ -20,6 +20,7 @@ import TrialQuizPage from '@/pages/TrialQuizPage';
 import VinoVocabPage from "@/pages/VinoVocabPage";
 import BrandedDemo from '@/pages/BrandedDemo';
 import VocabChallengeManager from '@/pages/admin/VocabChallengeManager';
+import QuizManager from '@/pages/admin/QuizManager';
 
 // MVP additions
 import TrialQuizWidget from '@/components/TrialQuizWidget';
@@ -88,6 +89,7 @@ function App() {
                 <Route path="/vocab" element={<VinoVocabPage />} />
                 <Route path="/demo" element={<BrandedDemo />} />
                 <Route path="/admin/vocab" element={<VocabChallengeManager />} />
+                <Route path="/admin/quizzes" element={<QuizManager />} />
                 <Route
                   path="/account"
                   element={
