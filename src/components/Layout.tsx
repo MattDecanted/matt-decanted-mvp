@@ -1,6 +1,6 @@
 import React from 'react';
 import { Link, useLocation } from 'react-router-dom';
-import { Brain, Trophy, Play, User, CreditCard } from 'lucide-react';
+import { Trophy, Play, User, CreditCard } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import { usePoints } from '@/context/PointsContext';
 import { Button } from '@/components/ui/button';
@@ -23,11 +23,22 @@ export default function Layout({ children }: LayoutProps) {
         <div className="container mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between items-center h-16">
             <div className="flex items-center space-x-8">
-              <Link to="/" className="flex items-center space-x-2">
-                <Brain className="h-8 w-8 text-primary" />
-                <span className="text-xl font-bold">MD Trial Quiz</span>
+              {/* Logo + Title Block */}
+              <Link to="/" className="flex items-center space-x-3">
+                <img
+                  src="/logo-md.png"
+                  alt="Matt Decanted Logo"
+                  className="h-10 w-auto"
+                />
+                <div className="leading-tight">
+                  <h1 className="text-xl font-bold text-foreground">Matt Decanted</h1>
+                  <span className="text-sm text-muted-foreground -mt-1 block">
+                    Wine Education
+                  </span>
+                </div>
               </Link>
-              
+
+              {/* Main Nav Links */}
               <nav className="hidden md:flex space-x-6">
                 <Link
                   to="/games/guess-what"
@@ -40,7 +51,7 @@ export default function Layout({ children }: LayoutProps) {
                   <Trophy className="h-4 w-4" />
                   <span>Guess What</span>
                 </Link>
-                
+
                 <Link
                   to="/shorts"
                   className={`flex items-center space-x-1 px-3 py-2 rounded-md text-sm font-medium transition-colors ${
@@ -52,7 +63,7 @@ export default function Layout({ children }: LayoutProps) {
                   <Play className="h-4 w-4" />
                   <span>Shorts</span>
                 </Link>
-                
+
                 <Link
                   to="/pricing"
                   className={`flex items-center space-x-1 px-3 py-2 rounded-md text-sm font-medium transition-colors ${
@@ -67,6 +78,7 @@ export default function Layout({ children }: LayoutProps) {
               </nav>
             </div>
 
+            {/* Right-side (User + Points) */}
             <div className="flex items-center space-x-4">
               {user && (
                 <div className="flex items-center space-x-2">
@@ -74,7 +86,7 @@ export default function Layout({ children }: LayoutProps) {
                     <Trophy className="h-3 w-3" />
                     <span>{totalPoints} pts</span>
                   </Badge>
-                  
+
                   {isTrialUser && trialDaysLeft !== null && (
                     <Badge variant="outline" className="text-xs">
                       Trial: {trialDaysLeft}d left
@@ -82,7 +94,7 @@ export default function Layout({ children }: LayoutProps) {
                   )}
                 </div>
               )}
-              
+
               <Link to="/account">
                 <Button
                   variant={isActive('/account') ? 'default' : 'ghost'}
