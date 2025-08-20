@@ -14,31 +14,6 @@ const VocabChallengeManager: React.FC = () => {
   const [status, setStatus] = useState('');
   const [challenges, setChallenges] = useState<any[]>([]);
 
-  const fetchChallenges = async () => {
-    const { data, error } = await supabase
-      .from('vocab_daily_challenges')
-      .select('*')
-      .order('date', { ascending: true });
-
-    if (!error && data) {
-      const today = new Date();
-      const past = new Date(today);
-      past.setDate(today.getDate() - 3);
-      const future = new Date(today);
-      future.setDate(today.getDate() + 3);
-      setChallenges(
-        data.filter(d => {
-          const date = new Date(d.date);
-          return date >= past && date <= future;
-        })
-      );
-    }
-  };
-
-  useEffect(() => {
-    fetchChallenges();
-  }, []);
-
   const handleSubmit = async () => {
     const { error } = await supabase.from('vocab_daily_challenges').insert([form]);
     if (error) {
@@ -49,118 +24,105 @@ const VocabChallengeManager: React.FC = () => {
     }
   };
 
-  const handleCSVImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+  const fetchChallenges = async () => {
+    const start = new Date();
+    start.setDate(start.getDate() - 3);
+    const end = new Date();
+    end.setDate(end.getDate() + 3);
 
-    const reader = new FileReader();
-    reader.onload = async () => {
-      const text = reader.result as string;
-      const rows = text.trim().split('\n');
-      const entries = rows.slice(1).map(row => {
-        const [date, word, definition, opt1, opt2, opt3, opt4, correctIndex, hint, points] = row.split(',');
-        return {
-          date,
-          word,
-          definition,
-          options: [opt1, opt2, opt3, opt4],
-          correct_option_index: Number(correctIndex),
-          hint,
-          points: Number(points)
-        };
-      });
-      const { error } = await supabase.from('vocab_daily_challenges').insert(entries);
-      if (error) {
-        setStatus(`CSV Import Error: ${error.message}`);
-      } else {
-        setStatus('CSV import successful!');
-        fetchChallenges();
-      }
-    };
-    reader.readAsText(file);
+    const { data, error } = await supabase
+      .from('vocab_daily_challenges')
+      .select('*')
+      .gte('date', start.toISOString().split('T')[0])
+      .lte('date', end.toISOString().split('T')[0])
+      .order('date', { ascending: true });
+
+    if (!error && data) {
+      const enriched = await Promise.all(
+        data.map(async (challenge: any) => {
+          const { count } = await supabase
+            .from('vocab_attempts')
+            .select('*', { count: 'exact', head: true })
+            .eq('challenge_id', challenge.id);
+          return { ...challenge, attempts: count || 0 };
+        })
+      );
+      setChallenges(enriched);
+    }
   };
+
+  useEffect(() => {
+    fetchChallenges();
+  }, []);
 
   return (
     <div className="p-4 max-w-4xl mx-auto">
-      <h1 className="text-2xl font-bold mb-4">Manage Vocab Challenges</h1>
+      <h1 className="text-2xl font-bold mb-4">Create Vocab Challenge</h1>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div>
+          <label>Date</label>
+          <input type="date" className="input" value={form.date}
+            onChange={e => setForm({ ...form, date: e.target.value })} />
 
-      {/* Form for single entry */}
-      <div className="bg-gray-50 p-4 rounded mb-6">
-        <h2 className="text-xl font-semibold mb-2">Add New Challenge</h2>
-        <label>Date</label>
-        <input type="date" className="input" value={form.date}
-          onChange={e => setForm({ ...form, date: e.target.value })} />
+          <label>Word</label>
+          <input type="text" className="input" value={form.word}
+            onChange={e => setForm({ ...form, word: e.target.value })} />
 
-        <label>Word</label>
-        <input type="text" className="input" value={form.word}
-          onChange={e => setForm({ ...form, word: e.target.value })} />
+          <label>Definition</label>
+          <textarea className="input" value={form.definition}
+            onChange={e => setForm({ ...form, definition: e.target.value })} />
 
-        <label>Definition</label>
-        <textarea className="input" value={form.definition}
-          onChange={e => setForm({ ...form, definition: e.target.value })} />
+          {form.options.map((opt, i) => (
+            <div key={i}>
+              <label>Option {i + 1}</label>
+              <input type="text" className="input" value={opt}
+                onChange={e => {
+                  const newOptions = [...form.options];
+                  newOptions[i] = e.target.value;
+                  setForm({ ...form, options: newOptions });
+                }} />
+            </div>
+          ))}
 
-        {form.options.map((opt, i) => (
-          <div key={i}>
-            <label>Option {i + 1}</label>
-            <input type="text" className="input" value={opt}
-              onChange={e => {
-                const newOptions = [...form.options];
-                newOptions[i] = e.target.value;
-                setForm({ ...form, options: newOptions });
-              }} />
-          </div>
-        ))}
+          <label>Correct Option Index (0–3)</label>
+          <input type="number" className="input" min={0} max={3} value={form.correct_option_index}
+            onChange={e => setForm({ ...form, correct_option_index: Number(e.target.value) })} />
 
-        <label>Correct Option Index (0–3)</label>
-        <input type="number" className="input" min={0} max={3} value={form.correct_option_index}
-          onChange={e => setForm({ ...form, correct_option_index: Number(e.target.value) })} />
+          <label>Hint</label>
+          <input type="text" className="input" value={form.hint}
+            onChange={e => setForm({ ...form, hint: e.target.value })} />
 
-        <label>Hint</label>
-        <input type="text" className="input" value={form.hint}
-          onChange={e => setForm({ ...form, hint: e.target.value })} />
+          <label>Points</label>
+          <input type="number" className="input" value={form.points}
+            onChange={e => setForm({ ...form, points: Number(e.target.value) })} />
 
-        <label>Points</label>
-        <input type="number" className="input" value={form.points}
-          onChange={e => setForm({ ...form, points: Number(e.target.value) })} />
+          <button onClick={handleSubmit} className="mt-4 px-4 py-2 bg-blue-600 text-white rounded">Save Challenge</button>
+          {status && <p className="mt-2 text-sm text-gray-700">{status}</p>}
+        </div>
 
-        <button onClick={handleSubmit} className="mt-4 px-4 py-2 bg-blue-600 text-white rounded">Save Challenge</button>
-        {status && <p className="mt-2 text-sm text-gray-700">{status}</p>}
-      </div>
-
-      {/* CSV Upload */}
-      <div className="mb-6">
-        <h2 className="font-semibold mb-2">📁 Bulk Upload via CSV</h2>
-        <input type="file" accept=".csv" onChange={handleCSVImport} />
-      </div>
-
-      {/* Challenge Table */}
-      <div className="overflow-x-auto">
-        <table className="min-w-full text-sm text-left">
-          <thead>
-            <tr className="bg-gray-200">
-              <th className="p-2">Date</th>
-              <th className="p-2">Word</th>
-              <th className="p-2">Definition</th>
-              <th className="p-2">Options</th>
-              <th className="p-2">Correct</th>
-              <th className="p-2">Hint</th>
-              <th className="p-2">Points</th>
-            </tr>
-          </thead>
-          <tbody>
-            {challenges.map(c => (
-              <tr key={c.id} className="border-t">
-                <td className="p-2 whitespace-nowrap">{c.date}</td>
-                <td className="p-2 whitespace-nowrap">{c.word}</td>
-                <td className="p-2">{c.definition}</td>
-                <td className="p-2">{c.options?.join(', ')}</td>
-                <td className="p-2">{c.options?.[c.correct_option_index]}</td>
-                <td className="p-2">{c.hint}</td>
-                <td className="p-2">{c.points}</td>
+        <div className="overflow-x-auto mt-8">
+          <h2 className="text-lg font-semibold mb-2">7-Day Challenge Overview</h2>
+          <table className="min-w-full text-sm border">
+            <thead className="bg-gray-100">
+              <tr>
+                <th className="px-2 py-1 border">Date</th>
+                <th className="px-2 py-1 border">Word</th>
+                <th className="px-2 py-1 border">Hint</th>
+                <th className="px-2 py-1 border">Attempts</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {challenges.map(c => (
+                <tr key={c.id}>
+                  <td className="px-2 py-1 border">{c.date}</td>
+                  <td className="px-2 py-1 border">{c.word}</td>
+                  <td className="px-2 py-1 border">{c.hint}</td>
+                  <td className="px-2 py-1 border text-center">{c.attempts}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
   );
