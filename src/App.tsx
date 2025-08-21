@@ -76,6 +76,27 @@ function AutoResumeOnAccount() {
   }, []);
   return null;
 }
+function RouteErrorBoundary({ children }: { children: React.ReactNode }) {
+  const [err, setErr] = React.useState<Error | null>(null);
+  if (err) {
+    return (
+      <div style={{ padding: 24 }}>
+        <h2>Something went wrong</h2>
+        <pre style={{ whiteSpace: 'pre-wrap' }}>{String(err.stack || err.message)}</pre>
+      </div>
+    );
+  }
+  return (
+    <React.ErrorBoundary
+      fallbackRender={({ error }) => {
+        setErr(error as Error);
+        return null;
+      }}
+    >
+      {children}
+    </React.ErrorBoundary>
+  );
+}
 
 function App() {
   return (
@@ -85,33 +106,46 @@ function App() {
           <Router>
             <Layout>
               <Routes>
-                <Route path="/" element={<HomeWithTrial />} />
-                <Route path="/games/guess-what" element={<GuessWhatPage />} />
-                <Route path="/shorts" element={<ShortsPage />} />
-                <Route path="/shorts/:slug" element={<ShortDetailPage />} />
-                <Route path="/trial-quiz" element={<TrialQuizPage />} />
-                <Route path="/vocab" element={<VinoVocabPage />} />
-                <Route path="/demo" element={<BrandedDemo />} />
-                <Route path="/admin/vocab" element={<VocabChallengeManager />} />
-                <Route path="/admin/quizzes" element={<QuizManager />} />
-                <Route path="/admin/quizzes" element={<TrialQuizManager />} />
-                <Route path="/dashboard" element={<DashboardLite />} />
-                <Route path="/Dashboard" element={<Navigate to="/dashboard" replace />} />
-                <Route path="/account"  element={<Navigate to="/dashboard" replace />} />
-                <Route path="/swirdle" element={<Swirdle />} />
-                
-                <Route
-                  path="/account"
-                  element={
-                    <>
-                      <AutoResumeOnAccount />
-                      <AccountPage />
-                      <div>Fallback render</div>
-                    </>
-                  }
-                />
-                <Route path="/pricing" element={<PricingPage />} />
-              </Routes>
+  <Route path="/" element={<HomeWithTrial />} />
+
+  {/* Games */}
+  <Route path="/games/guess-what" element={<GuessWhatPage />} />
+  <Route path="/swirdle" element={
+    <RouteErrorBoundary>
+      <Swirdle />
+    </RouteErrorBoundary>
+  } />
+
+  {/* Shorts */}
+  <Route path="/shorts" element={<ShortsPage />} />
+  <Route path="/shorts/:slug" element={<ShortDetailPage />} />
+
+  {/* Trial & Vocab */}
+  <Route path="/trial-quiz" element={<TrialQuizPage />} />
+  <Route path="/vocab" element={<VinoVocabPage />} />
+
+  {/* Admin */}
+  <Route path="/admin/vocab" element={<VocabChallengeManager />} />
+  <Route path="/admin/quizzes" element={<QuizManager />} />
+  <Route path="/admin/trial-quizzes" element={<TrialQuizManager />} /> {/* ✅ renamed path */}
+
+  {/* Dashboard / Account */}
+  <Route path="/dashboard" element={<DashboardLite />} />
+  <Route path="/Dashboard" element={<Navigate to="/dashboard" replace />} />
+  <Route
+    path="/account"
+    element={
+      <>
+        <AutoResumeOnAccount />
+        <AccountPage />
+      </>
+    }
+  />
+
+  {/* Pricing */}
+  <Route path="/pricing" element={<PricingPage />} />
+</Routes>
+
             </Layout>
             <Toaster />
           </Router>
