@@ -24,6 +24,7 @@ import QuizManager from '@/pages/admin/QuizManager';
 import TrialQuizManager from '@/pages/admin/TrialQuizManager';
 import DashboardLite from './pages/DashboardLite';
 import Swirdle from '@/pages/Swirdle';
+import SwirdleAdmin from '@/pages/admin/SwirdleAdmin';
 
 // MVP additions
 import TrialQuizWidget from '@/components/TrialQuizWidget';
@@ -142,6 +143,7 @@ function App() {
                 <Route path="/admin/vocab" element={<VocabChallengeManager />} />
                 <Route path="/admin/quizzes" element={<QuizManager />} />
                 <Route path="/admin/trial-quizzes" element={<TrialQuizManager />} />
+                <Route path="/admin/swirdle" element={<SwirdleAdmin />} />
 
                 {/* Dashboard / Account */}
                 <Route path="/dashboard" element={<DashboardLite />} />
