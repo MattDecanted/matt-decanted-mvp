@@ -19,7 +19,6 @@ import { usePoints } from '@/context/PointsContext';
 import { supabase } from '@/lib/supabase';
 
 // keep these relative paths as in your project
-import LoadingSpinner from '../components/Common/LoadingSpinner';
 import { computeStatuses } from '../features/swirdle/utils';
 import {
   getWordForDate,
@@ -35,6 +34,15 @@ import {
 const HINT_COST = 5;        // ✅ cost to buy a hint
 const WIN_POINTS = 15;      // ✅ points for a Swirdle win
 const maxGuesses = 6;
+
+const Spinner = () => (
+  <div className="flex items-center justify-center p-6">
+    <div
+      className="h-8 w-8 animate-spin rounded-full border-2 border-gray-300 border-t-transparent"
+      aria-label="Loading"
+    />
+  </div>
+);
 
 const Swirdle: React.FC = () => {
   // 🔧 Local no-op translator so we don’t depend on LanguageProvider
@@ -434,10 +442,11 @@ const loadTodaysGame = async () => {
 
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center">
-        <LoadingSpinner size="lg" />
-      </div>
-    );
+    return (
+  <div className="min-h-screen flex items-center justify-center">
+    <Spinner />
+  </div>
+);
   }
 
   if (error) {
