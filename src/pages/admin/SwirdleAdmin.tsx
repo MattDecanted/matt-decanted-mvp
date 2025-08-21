@@ -7,6 +7,24 @@ import {
   Target, TrendingUp, Edit, Save, X, Plus, Upload, LayoutGrid, Rows
 } from 'lucide-react';
 
+// --- local helper to mimic safeQuery ----------------------------------------
+async function safeQuery<T>(
+  fn: () => Promise<{ data: T | null; error: any }>,
+  fallback: T
+): Promise<T> {
+  try {
+    const { data, error } = await fn();
+    if (error) {
+      console.error('safeQuery error:', error);
+      return fallback;
+    }
+    return (data ?? fallback) as T;
+  } catch (e) {
+    console.error('safeQuery exception:', e);
+    return fallback;
+  }
+}
+
 type Category = 'grape_variety' | 'wine_region' | 'tasting_term' | 'production' | 'general';
 type Difficulty = 'beginner' | 'intermediate' | 'advanced';
 
