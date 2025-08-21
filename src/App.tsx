@@ -1,7 +1,6 @@
 // src/App.tsx
 import React from 'react';
-import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
-import { Navigate } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 
 // UI / Providers
 import { Toaster } from '@/components/ui/sonner';
@@ -11,20 +10,20 @@ import { AnalyticsProvider } from '@/context/AnalyticsContext';
 
 // Layout & Pages
 import Layout from '@/components/Layout';
-import Home from '@/pages/Home';  // ✅ Corrected here
+import Home from '@/pages/Home';
 import GuessWhatPage from '@/pages/GuessWhatPage';
 import ShortsPage from '@/pages/ShortsPage';
 import ShortDetailPage from '@/pages/ShortDetailPage';
 import AccountPage from '@/pages/AccountPage';
 import PricingPage from '@/pages/PricingPage';
 import TrialQuizPage from '@/pages/TrialQuizPage';
-import VinoVocabPage from "@/pages/VinoVocabPage";
+import VinoVocabPage from '@/pages/VinoVocabPage';
 import BrandedDemo from '@/pages/BrandedDemo';
 import VocabChallengeManager from '@/pages/admin/VocabChallengeManager';
 import QuizManager from '@/pages/admin/QuizManager';
 import TrialQuizManager from '@/pages/admin/TrialQuizManager';
 import DashboardLite from './pages/DashboardLite';
-import Swirdle from '@/pages/Swirdle'; // or '../pages/Swirdle' if you’re not using '@'
+import Swirdle from '@/pages/Swirdle';
 
 // MVP additions
 import TrialQuizWidget from '@/components/TrialQuizWidget';
@@ -76,26 +75,35 @@ function AutoResumeOnAccount() {
   }, []);
   return null;
 }
-function RouteErrorBoundary({ children }: { children: React.ReactNode }) {
-  const [err, setErr] = React.useState<Error | null>(null);
-  if (err) {
-    return (
-      <div style={{ padding: 24 }}>
-        <h2>Something went wrong</h2>
-        <pre style={{ whiteSpace: 'pre-wrap' }}>{String(err.stack || err.message)}</pre>
-      </div>
-    );
+
+/** ✅ Safe error boundary for routes (React has no React.ErrorBoundary) */
+class RouteErrorBoundary extends React.Component<
+  { children: React.ReactNode },
+  { error: any }
+> {
+  constructor(props: any) {
+    super(props);
+    this.state = { error: null };
   }
-  return (
-    <React.ErrorBoundary
-      fallbackRender={({ error }) => {
-        setErr(error as Error);
-        return null;
-      }}
-    >
-      {children}
-    </React.ErrorBoundary>
-  );
+  static getDerivedStateFromError(error: any) {
+    return { error };
+  }
+  componentDidCatch(error: any, info: any) {
+    console.error('Route error:', error, info);
+  }
+  render() {
+    if (this.state.error) {
+      return (
+        <div style={{ padding: 24 }}>
+          <h2>Something went wrong</h2>
+          <pre style={{ whiteSpace: 'pre-wrap' }}>
+            {String(this.state.error?.stack || this.state.error?.message || this.state.error)}
+          </pre>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
 }
 
 function App() {
@@ -106,46 +114,51 @@ function App() {
           <Router>
             <Layout>
               <Routes>
-  <Route path="/" element={<HomeWithTrial />} />
+                <Route path="/" element={<HomeWithTrial />} />
 
-  {/* Games */}
-  <Route path="/games/guess-what" element={<GuessWhatPage />} />
-  <Route path="/swirdle" element={
-    <RouteErrorBoundary>
-      <Swirdle />
-    </RouteErrorBoundary>
-  } />
+                {/* Games */}
+                <Route
+                  path="/games/guess-what"
+                  element={<GuessWhatPage />}
+                />
+                <Route
+                  path="/swirdle"
+                  element={
+                    <RouteErrorBoundary>
+                      <Swirdle />
+                    </RouteErrorBoundary>
+                  }
+                />
 
-  {/* Shorts */}
-  <Route path="/shorts" element={<ShortsPage />} />
-  <Route path="/shorts/:slug" element={<ShortDetailPage />} />
+                {/* Shorts */}
+                <Route path="/shorts" element={<ShortsPage />} />
+                <Route path="/shorts/:slug" element={<ShortDetailPage />} />
 
-  {/* Trial & Vocab */}
-  <Route path="/trial-quiz" element={<TrialQuizPage />} />
-  <Route path="/vocab" element={<VinoVocabPage />} />
+                {/* Trial & Vocab */}
+                <Route path="/trial-quiz" element={<TrialQuizPage />} />
+                <Route path="/vocab" element={<VinoVocabPage />} />
 
-  {/* Admin */}
-  <Route path="/admin/vocab" element={<VocabChallengeManager />} />
-  <Route path="/admin/quizzes" element={<QuizManager />} />
-  <Route path="/admin/trial-quizzes" element={<TrialQuizManager />} /> {/* ✅ renamed path */}
+                {/* Admin */}
+                <Route path="/admin/vocab" element={<VocabChallengeManager />} />
+                <Route path="/admin/quizzes" element={<QuizManager />} />
+                <Route path="/admin/trial-quizzes" element={<TrialQuizManager />} />
 
-  {/* Dashboard / Account */}
-  <Route path="/dashboard" element={<DashboardLite />} />
-  <Route path="/Dashboard" element={<Navigate to="/dashboard" replace />} />
-  <Route
-    path="/account"
-    element={
-      <>
-        <AutoResumeOnAccount />
-        <AccountPage />
-      </>
-    }
-  />
+                {/* Dashboard / Account */}
+                <Route path="/dashboard" element={<DashboardLite />} />
+                <Route path="/Dashboard" element={<Navigate to="/dashboard" replace />} />
+                <Route
+                  path="/account"
+                  element={
+                    <>
+                      <AutoResumeOnAccount />
+                      <AccountPage />
+                    </>
+                  }
+                />
 
-  {/* Pricing */}
-  <Route path="/pricing" element={<PricingPage />} />
-</Routes>
-
+                {/* Pricing */}
+                <Route path="/pricing" element={<PricingPage />} />
+              </Routes>
             </Layout>
             <Toaster />
           </Router>
