@@ -1,12 +1,12 @@
 // src/pages/DashboardLite.tsx
 import React, { useEffect, useState } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { supabase } from '../lib/supabaseClient';
-import { Link, useNavigate } from 'react-router-dom';
 
 type TodayVocab = {
   id: string;
-  for_date: string;          // use this (you may also have a legacy 'date' column; ignore it here)
+  for_date: string;
   word: string;
   definition: string;
   options: string[];
@@ -28,26 +28,26 @@ const DashboardLite: React.FC = () => {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string>('');
 
-  // Fetch today's vocab + points on mount
   useEffect(() => {
     const run = async () => {
       try {
         setLoading(true);
         setError('');
 
-        // get or seed today's vocab
+        // Fetch or seed today's vocab
         const { data: vocab, error: rpcErr } = await supabase.rpc('get_or_seed_today_vocab');
         if (rpcErr) throw rpcErr;
         setToday(vocab as TodayVocab);
 
-        // get points for this user
+        // Fetch points
         if (user?.id) {
           const { data: ptsRow, error: ptsErr } = await supabase
             .from('user_points')
             .select('total_points')
             .eq('user_id', user.id)
             .maybeSingle();
-          if (ptsErr && ptsErr.code !== 'PGRST116') throw ptsErr; // ignore "no rows" code
+          // PGRST116 = no rows; ignore
+          if (ptsErr && (ptsErr as any).code !== 'PGRST116') throw ptsErr;
           setTotalPoints(ptsRow?.total_points ?? 0);
         }
       } catch (e: any) {
@@ -61,27 +61,24 @@ const DashboardLite: React.FC = () => {
   }, [user?.id]);
 
   const handleSubmit = async () => {
-    if (!user?.id || today == null || selected == null) return;
-    if (answered) return;
+    if (!user?.id || !today || selected == null || answered) return;
 
     setSubmitting(true);
     try {
       const correct = selected === today.correct_option_index;
 
       if (correct) {
-        // log event -> add points -> evaluate badges
         await supabase.rpc('record_event', { p_user: user.id, p_type: 'VOCAB_CORRECT', p_meta: {} });
         const award = today.points ?? 10;
         await supabase.rpc('add_points', { p_user: user.id, p_points: award });
         await supabase.rpc('evaluate_badges', { p_user: user.id });
 
-        // refresh points
         const { data: ptsRow, error: ptsErr } = await supabase
           .from('user_points')
           .select('total_points')
           .eq('user_id', user.id)
           .maybeSingle();
-        if (ptsErr && ptsErr.code !== 'PGRST116') throw ptsErr;
+        if (ptsErr && (ptsErr as any).code !== 'PGRST116') throw ptsErr;
         setTotalPoints(ptsRow?.total_points ?? 0);
 
         setAnswered('correct');
@@ -123,17 +120,11 @@ const DashboardLite: React.FC = () => {
 
       {/* Quick actions */}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-8">
-        <Link
-          to="/swirdle"
-          className="block rounded-2xl border p-4 hover:shadow transition"
-        >
+        <Link to="/swirdle" className="block rounded-2xl border p-4 hover:shadow transition">
           <div className="text-lg font-medium mb-1">Play Swirdle</div>
           <div className="text-sm text-gray-600">Wordle-style daily fun. Earn points on a win.</div>
         </Link>
-        <Link
-          to="/wine-options"
-          className="block rounded-2xl border p-4 hover:shadow transition"
-        >
+        <Link to="/wine-options" className="block rounded-2xl border p-4 hover:shadow transition">
           <div className="text-lg font-medium mb-1">Play Wine Options</div>
           <div className="text-sm text-gray-600">Quick 6–8 questions. Clear-glass version for MVP.</div>
         </Link>
@@ -144,9 +135,7 @@ const DashboardLite: React.FC = () => {
         <div className="flex items-center justify-between mb-3">
           <div className="text-lg font-semibold">Today’s Vocab</div>
           {!!today?.points && (
-            <div className="text-xs rounded-full border px-2 py-1">
-              +{today.points} pts
-            </div>
+            <div className="text-xs rounded-full border px-2 py-1">+{today.points} pts</div>
           )}
         </div>
 
@@ -159,9 +148,7 @@ const DashboardLite: React.FC = () => {
             <div className="mb-1">
               <span className="font-semibold">{today.word}</span>
             </div>
-            <div className="mb-3 text-gray-700">
-              {today.definition}
-            </div>
+            <div className="mb-3 text-gray-700">{today.definition}</div>
 
             {today.hint && (
               <div className="mb-3 text-xs text-gray-500">Hint: {today.hint}</div>
@@ -176,3 +163,41 @@ const DashboardLite: React.FC = () => {
                   }`}
                 >
                   <input
+                    type="radio"
+                    name="vocab"
+                    checked={selected === idx}
+                    onChange={() => setSelected(idx)}
+                  />
+                  <span>{opt}</span>
+                </label>
+              ))}
+            </div>
+
+            <div className="flex items-center gap-3">
+              <button
+                disabled={selected == null || submitting || !!answered}
+                onClick={handleSubmit}
+                className="px-4 py-2 rounded bg-black text-white disabled:opacity-50"
+              >
+                {submitting ? 'Submitting…' : 'Submit'}
+              </button>
+
+              {answered === 'correct' && (
+                <span className="text-green-600 text-sm">Correct! Points awarded.</span>
+              )}
+              {answered === 'incorrect' && (
+                <span className="text-red-600 text-sm">
+                  Not quite—try a game and come back tomorrow.
+                </span>
+              )}
+            </div>
+          </>
+        ) : (
+          <div className="text-sm text-gray-600">No vocab available today.</div>
+        )}
+      </div>
+    </div>
+  );
+};
+
+export default DashboardLite;
