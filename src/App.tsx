@@ -26,23 +26,13 @@ import DashboardLite from './pages/DashboardLite';
 import Swirdle from '@/pages/Swirdle';
 import SwirdleAdmin from '@/pages/admin/SwirdleAdmin';
 
-// MVP additions
-import TrialQuizWidget from '@/components/TrialQuizWidget';
+// ⛔ Removed TrialQuizWidget from the homepage
+// import TrialQuizWidget from '@/components/TrialQuizWidget';
+
 import { supabase } from '@/lib/supabase';
 
 const FN_SUBMIT = '/.netlify/functions/trial-quiz-attempt';
 const PENDING_KEY = 'md_trial_pending';
-
-function HomeWithTrial() {
-  return (
-    <>
-      <div className="mb-8">
-        <TrialQuizWidget />
-      </div>
-      <Home />
-    </>
-  );
-}
 
 function AutoResumeOnAccount() {
   React.useEffect(() => {
@@ -77,11 +67,8 @@ function AutoResumeOnAccount() {
   return null;
 }
 
-/** ✅ Safe error boundary for routes (React has no React.ErrorBoundary) */
-class RouteErrorBoundary extends React.Component<
-  { children: React.ReactNode },
-  { error: any }
-> {
+/** ✅ Safe error boundary for routes */
+class RouteErrorBoundary extends React.Component<{ children: React.ReactNode }, { error: any }> {
   constructor(props: any) {
     super(props);
     this.state = { error: null };
@@ -103,7 +90,7 @@ class RouteErrorBoundary extends React.Component<
         </div>
       );
     }
-    return this.props.children;
+    return this.props.children as React.ReactNode;
   }
 }
 
@@ -115,13 +102,11 @@ function App() {
           <Router>
             <Layout>
               <Routes>
-                <Route path="/" element={<HomeWithTrial />} />
+                {/* 👇 Home now renders ONLY the homepage (no quiz injected) */}
+                <Route path="/" element={<Home />} />
 
                 {/* Games */}
-                <Route
-                  path="/games/guess-what"
-                  element={<GuessWhatPage />}
-                />
+                <Route path="/games/guess-what" element={<GuessWhatPage />} />
                 <Route
                   path="/swirdle"
                   element={
@@ -144,7 +129,7 @@ function App() {
                 <Route path="/admin/quizzes" element={<QuizManager />} />
                 <Route path="/admin/trial-quizzes" element={<TrialQuizManager />} />
                 <Route path="/admin/swirdle" element={<SwirdleAdmin />} />
-                
+
                 {/* Dashboard / Account */}
                 <Route path="/dashboard" element={<DashboardLite />} />
                 <Route path="/Dashboard" element={<Navigate to="/dashboard" replace />} />
