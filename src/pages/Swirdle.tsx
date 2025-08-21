@@ -18,20 +18,165 @@ import { useAuth } from '@/context/AuthContext';
 import { usePoints } from '@/context/PointsContext';
 import { supabase } from '@/lib/supabase';
 
-import {
-  getWordForDate,
-  getAttempt,
-  recordAttempt,
-  upsertUserStats,
-  getUserStats,
-  SwirdleWord,
-  SwirdleAttempt,
-  UserStats,
-} from '../features/swirdle/swirdle.service';
-
 const HINT_COST = 5;        // cost to buy a hint
 const WIN_POINTS = 15;      // points for a Swirdle win
 const maxGuesses = 6;
+
+// --- Inline service (replaces ../features/swirdle/swirdle.service) ---
+
+export type SwirdleWord = {
+  id: string;
+  word: string;
+  definition: string;
+  difficulty: 'beginner' | 'intermediate' | 'advanced' | string;
+  category: 'grape_variety' | 'wine_region' | 'tasting_term' | 'production' | string;
+  hints: string[];
+  date_scheduled: string;   // YYYY-MM-DD
+  is_published: boolean;
+};
+
+export type SwirdleAttempt = {
+  id?: string;
+  user_id: string;
+  word_id: string;
+  guesses: string[];
+  attempts: number;
+  completed: boolean;
+  won?: boolean;
+  hints_used: number[];
+  completed_at: string | null;
+  created_at?: string;
+  updated_at?: string;
+};
+
+export type UserStats = {
+  user_id: string;
+  current_streak: number;
+  max_streak: number;
+  games_played: number;
+  games_won: number;
+  average_attempts: number;
+  last_played: string | null;
+  updated_at: string | null;
+};
+
+// Get today’s published word (scheduled for `date` AND is_published = true)
+async function getWordForDate(date: string): Promise<{ data: SwirdleWord | null; error: any | null }> {
+  const { data, error } = await supabase
+    .from('swirdle_words')
+    .select('id, word, definition, difficulty, category, hints, date_scheduled, is_published')
+    .eq('date_scheduled', date)
+    .eq('is_published', true)
+    .maybeSingle();
+
+  return { data: (data as SwirdleWord) ?? null, error };
+}
+
+// Load an existing attempt for a user & word (if any)
+async function getAttempt(userId: string, wordId: string): Promise<{ data: SwirdleAttempt | null; error: any | null }> {
+  const { data, error } = await supabase
+    .from('swirdle_attempts')
+    .select('id, user_id, word_id, guesses, attempts, completed, won, hints_used, completed_at, created_at, updated_at')
+    .eq('user_id', userId)
+    .eq('word_id', wordId)
+    .maybeSingle();
+
+  return { data: (data as SwirdleAttempt) ?? null, error };
+}
+
+// Upsert attempt (insert if none; update if exists)
+async function recordAttempt(attempt: SwirdleAttempt): Promise<{ data: SwirdleAttempt | null; error: any | null }> {
+  const { data, error } = await supabase
+    .from('swirdle_attempts')
+    .upsert(
+      {
+        id: attempt.id,
+        user_id: attempt.user_id,
+        word_id: attempt.word_id,
+        guesses: attempt.guesses,
+        attempts: attempt.attempts,
+        completed: attempt.completed,
+        won: attempt.won ?? null,
+        hints_used: attempt.hints_used,
+        completed_at: attempt.completed_at,
+      },
+      { onConflict: 'user_id,word_id', ignoreDuplicates: false }
+    )
+    .select()
+    .maybeSingle();
+
+  return { data: (data as SwirdleAttempt) ?? null, error };
+}
+
+// Read user stats row (if exists)
+async function getUserStats(userId: string): Promise<{ data: UserStats | null; error: any | null }> {
+  const { data, error } = await supabase
+    .from('swirdle_user_stats')
+    .select('user_id, current_streak, max_streak, games_played, games_won, average_attempts, last_played, updated_at')
+    .eq('user_id', userId)
+    .maybeSingle();
+
+  return { data: (data as UserStats) ?? null, error };
+}
+
+// Update aggregate stats after a completed game
+async function upsertUserStats(
+  userId: string,
+  params: { won: boolean; attempts: number }
+): Promise<{ data: UserStats | null; error: any | null }> {
+  // You can keep it simple on the client: call a Postgres function if you have one,
+  // otherwise do a naive merge here.
+
+  // If you already created a DB function, uncomment and use it:
+  // const { data, error } = await supabase.rpc('swirdle_upsert_stats', {
+  //   p_user: userId,
+  //   p_won: params.won,
+  //   p_attempts: params.attempts,
+  // });
+  // return { data, error };
+
+  // Fallback client-side upsert:
+  const { data: existing } = await getUserStats(userId);
+
+  const next: UserStats = existing
+    ? {
+        ...existing,
+        games_played: existing.games_played + 1,
+        games_won: existing.games_won + (params.won ? 1 : 0),
+        current_streak: params.won ? existing.current_streak + 1 : 0,
+        max_streak: params.won ? Math.max(existing.max_streak, existing.current_streak + 1) : existing.max_streak,
+        average_attempts:
+          existing.games_played > 0
+            ? Number(
+                (
+                  (existing.average_attempts * existing.games_played + params.attempts) /
+                  (existing.games_played + 1)
+                ).toFixed(2)
+              )
+            : params.attempts,
+        last_played: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      }
+    : {
+        user_id: userId,
+        current_streak: params.won ? 1 : 0,
+        max_streak: params.won ? 1 : 0,
+        games_played: 1,
+        games_won: params.won ? 1 : 0,
+        average_attempts: params.attempts,
+        last_played: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      };
+
+  const { data, error } = await supabase
+    .from('swirdle_user_stats')
+    .upsert(next, { onConflict: 'user_id', ignoreDuplicates: false })
+    .select()
+    .maybeSingle();
+
+  return { data: (data as UserStats) ?? null, error };
+}
+
 
 // Minimal Wordle-style status computer to avoid external import
 function computeStatuses(answer: string, guess: string): Array<'correct' | 'present' | 'absent'> {
