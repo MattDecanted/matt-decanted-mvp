@@ -1,6 +1,18 @@
 // src/pages/Swirdle.tsx
 import React, { useState, useEffect } from 'react';
-import { Wine, Trophy, Target, Share2, Brain, Calendar, TrendingUp, Lightbulb, X, CheckCircle, Shield } from 'lucide-react';
+import {
+  Wine,
+  Trophy,
+  Target,
+  Share2,
+  Brain,
+  Calendar,
+  TrendingUp,
+  Lightbulb,
+  X,
+  CheckCircle,
+  Shield,
+} from 'lucide-react';
 
 import { useAuth } from '@/context/AuthContext';
 import { usePoints } from '@/context/PointsContext';
@@ -25,7 +37,9 @@ const WIN_POINTS = 15;      // ✅ points for a Swirdle win
 const maxGuesses = 6;
 
 const Swirdle: React.FC = () => {
-  const { t } = useLanguage();
+  // 🔧 Local no-op translator so we don’t depend on LanguageProvider
+  const t = (_key: string, fallback?: string) => fallback ?? '';
+
   const { user } = useAuth();
   const { refreshPoints } = usePoints();
 
@@ -97,33 +111,23 @@ const Swirdle: React.FC = () => {
       setLoading(true);
 
       // 1) Today’s published word
-      const { data: wordData } = await getWordForDate(today);
+      const { data: wordData, error: wordErr } = await getWordForDate(today);
+      if (wordErr) console.error('getWordForDate error:', wordErr);
       setDbWordAvailable(!!wordData);
       setTodaysWord(wordData ?? mockWord);
 
       // 2) Admin check
       if (user) {
-        const { data: adminRow } = await supabase
+        const { data: adminRow, error: adminErr } = await supabase
           .from('admins')
           .select('user_id')
           .eq('user_id', user.id)
           .maybeSingle();
+        if (adminErr) console.error('admin check error:', adminErr);
         setIsAdmin(!!adminRow);
       } else {
         setIsAdmin(false);
       }
-
-      // 3) User attempt + stats when signed in and real word present
-      if (user && wordData) {
-        const { data: attempt } = await getAttempt(user.id, wordData.id);
-        if (attempt) {
-          setUserAttempt(attempt);
-          setGuesses(attempt.guesses || Array(maxGuesses).fill(''));
-          setCurrentAttempt(attempt.attempts || 0);
-          setGameComplete(!!attempt.completed);
-          setGameWon(!!attempt.completed && !!attempt.won);
-          setHintsUsed(attempt.hints_used || []);
-        }
 
         const { data: stats } = await getUserStats(user.id);
         setUserStats(stats ?? mockStats);
