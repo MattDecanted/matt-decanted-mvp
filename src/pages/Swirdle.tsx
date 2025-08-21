@@ -18,7 +18,6 @@ import { useAuth } from '@/context/AuthContext';
 import { usePoints } from '@/context/PointsContext';
 import { supabase } from '@/lib/supabase';
 
-import { computeStatuses } from '../features/swirdle/utils';
 import {
   getWordForDate,
   getAttempt,
@@ -33,6 +32,37 @@ import {
 const HINT_COST = 5;        // cost to buy a hint
 const WIN_POINTS = 15;      // points for a Swirdle win
 const maxGuesses = 6;
+
+// Minimal Wordle-style status computer to avoid external import
+function computeStatuses(answer: string, guess: string): Array<'correct' | 'present' | 'absent'> {
+  const A = answer.toUpperCase().split('');
+  const G = guess.toUpperCase().split('');
+  const out: Array<'correct' | 'present' | 'absent'> = Array(G.length).fill('absent');
+
+  // mark correct first
+  const remaining: Record<string, number> = {};
+  for (let i = 0; i < A.length; i++) {
+    if (G[i] === A[i]) {
+      out[i] = 'correct';
+    } else {
+      remaining[A[i]] = (remaining[A[i]] ?? 0) + 1;
+    }
+  }
+
+  // then present
+  for (let i = 0; i < A.length; i++) {
+    if (out[i] === 'correct') continue;
+    const ch = G[i];
+    if (remaining[ch] > 0) {
+      out[i] = 'present';
+      remaining[ch] -= 1;
+    } else {
+      out[i] = 'absent';
+    }
+  }
+  return out;
+}
+
 
 const Spinner = () => (
   <div className="flex items-center justify-center p-6">
