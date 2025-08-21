@@ -54,36 +54,39 @@ export function PointsProvider({ children }: { children: React.ReactNode }) {
 
     setLoading(true);
     try {
-      // 1) Sum points_ledger for this user
-      const { data: rows, error: plErr } = await supabase
-        .from('points_ledger')
-        .select('points')
-        .eq('user_id', user.id)
-        .order('created_at', { ascending: false });
-
-      if (plErr) {
-        console.error('points_ledger select error:', plErr);
-        setTotalPoints(0);
-      } else {
-        const sum = (rows ?? []).reduce(
-          (acc: number, r: any) => acc + (r.points || 0),
-          0
-        );
-        setTotalPoints(sum);
-      }
-
-      // 2) Read trial start from profiles
-      const { data: profile, error: prErr } = await supabase
-        .from('profiles')
-        .select('trial_started_at')
+      // ✅ Read from user_points (MVP schema)
+      const { data: upRow, error: upErr } = await supabase
+        .from('user_points')
+        .select('total_points')
         .eq('user_id', user.id)
         .maybeSingle();
 
-      if (prErr) {
-        console.error('profiles select error:', prErr);
-        computeTrial(null);
+      if (upErr) {
+        // Ignore "no rows" code (PGRST116); otherwise log
+        if ((upErr as any).code !== 'PGRST116') {
+          console.error('user_points select error:', upErr);
+        }
+        setTotalPoints(0);
       } else {
-        computeTrial(profile?.trial_started_at ?? null);
+        setTotalPoints(upRow?.total_points ?? 0);
+      }
+
+      // Optional trial calc from profiles (ignore if table/column not present)
+      try {
+        const { data: profile, error: prErr } = await supabase
+          .from('profiles')
+          .select('trial_started_at')
+          .eq('user_id', user.id)
+          .maybeSingle();
+
+        if (!prErr) {
+          computeTrial(profile?.trial_started_at ?? null);
+        } else {
+          // If profiles table doesn’t exist or column missing, just disable trial UI gracefully
+          computeTrial(null);
+        }
+      } catch {
+        computeTrial(null);
       }
     } catch (e) {
       console.error('refreshPoints error:', e);
@@ -100,26 +103,36 @@ export function PointsProvider({ children }: { children: React.ReactNode }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.id]);
 
-  // Realtime: refresh when this user's points_ledger changes
+  // Realtime: refresh when this user's user_points row changes
   useEffect(() => {
     if (!user?.id) return;
 
     const channel = supabase
-      .channel('realtime-points-self')
+      .channel(`realtime-user-points-${user.id}`)
       .on(
         'postgres_changes',
         {
           event: '*',
           schema: 'public',
-          table: 'points_ledger',
+          table: 'user_points',
           filter: `user_id=eq.${user.id}`,
         },
-        () => refreshPoints()
+        () => {
+          // slight debounce to avoid flicker if multiple writes occur
+          setTimeout(() => void refreshPoints(), 75);
+        }
       )
       .subscribe();
 
+    // also refresh on focus (safety net if realtime is off)
+    const onFocus = () => void refreshPoints();
+    window.addEventListener('focus', onFocus);
+    document.addEventListener('visibilitychange', onFocus);
+
     return () => {
       supabase.removeChannel(channel);
+      window.removeEventListener('focus', onFocus);
+      document.removeEventListener('visibilitychange', onFocus);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.id]);
