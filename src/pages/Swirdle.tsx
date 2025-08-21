@@ -76,71 +76,86 @@ const Swirdle: React.FC = () => {
     loadTodaysGame();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.id]);
+const loadTodaysGame = async () => {
+  const today = new Date().toISOString().split('T')[0];
 
-  const loadTodaysGame = async () => {
-    const today = new Date().toISOString().split('T')[0];
-
-    // Safe mock for preview (if no DB word is scheduled/published)
-    const mockWord: SwirdleWord = {
-      id: 'mock-1',
-      word: 'TERROIR',
-      definition: 'The complete natural environment in which a wine is produced',
-      difficulty: 'intermediate',
-      category: 'tasting_term',
-      hints: [
-        'This French concept relates to wine character',
-        'It includes soil, climate, and topography',
-        'Essential for understanding wine regions',
-      ],
-      date_scheduled: today,
-      is_published: true,
-    };
-
-    const mockStats: UserStats = {
-      user_id: 'mock',
-      current_streak: 7,
-      max_streak: 15,
-      games_played: 23,
-      games_won: 18,
-      average_attempts: 4.2,
-      last_played: null,
-      updated_at: null,
-    };
-
-    try {
-      setLoading(true);
-
-      // 1) Today’s published word
-      const { data: wordData, error: wordErr } = await getWordForDate(today);
-      if (wordErr) console.error('getWordForDate error:', wordErr);
-      setDbWordAvailable(!!wordData);
-      setTodaysWord(wordData ?? mockWord);
-
-      // 2) Admin check
-      if (user) {
-        const { data: adminRow, error: adminErr } = await supabase
-          .from('admins')
-          .select('user_id')
-          .eq('user_id', user.id)
-          .maybeSingle();
-        if (adminErr) console.error('admin check error:', adminErr);
-        setIsAdmin(!!adminRow);
-      } else {
-        setIsAdmin(false);
-      }
-
-        const { data: stats } = await getUserStats(user.id);
-        setUserStats(stats ?? mockStats);
-      } else if (user) {
-        setUserStats(mockStats);
-      }
-    } catch (e) {
-      console.error('Error loading Swirdle game:', e);
-      setError("Failed to load today's game");
-    } finally {
-      setLoading(false);
-    }
+  // Safe mock for preview (if no DB word is scheduled/published)
+  const mockWord: SwirdleWord = {
+    id: 'mock-1',
+    word: 'TERROIR',
+    definition: 'The complete natural environment in which a wine is produced',
+    difficulty: 'intermediate',
+    category: 'tasting_term',
+    hints: [
+      'This French concept relates to wine character',
+      'It includes soil, climate, and topography',
+      'Essential for understanding wine regions',
+    ],
+    date_scheduled: today,
+    is_published: true,
   };
+
+  const mockStats: UserStats = {
+    user_id: 'mock',
+    current_streak: 7,
+    max_streak: 15,
+    games_played: 23,
+    games_won: 18,
+    average_attempts: 4.2,
+    last_played: null,
+    updated_at: null,
+  };
+
+  try {
+    setLoading(true);
+
+    // 1) Today’s published word
+    const { data: wordData, error: wordErr } = await getWordForDate(today);
+    if (wordErr) console.error('getWordForDate error:', wordErr);
+    setDbWordAvailable(!!wordData);
+    setTodaysWord(wordData ?? mockWord);
+
+    // 2) Admin check
+    if (user) {
+      const { data: adminRow, error: adminErr } = await supabase
+        .from('admins')
+        .select('user_id')
+        .eq('user_id', user.id)
+        .maybeSingle();
+      if (adminErr) console.error('admin check error:', adminErr);
+      setIsAdmin(!!adminRow);
+    } else {
+      setIsAdmin(false);
+    }
+
+    // 3) User attempt + stats (only when signed in)
+    if (user && wordData) {
+      const { data: attempt } = await getAttempt(user.id, wordData.id);
+      if (attempt) {
+        setUserAttempt(attempt);
+        setGuesses(attempt.guesses || Array(maxGuesses).fill(''));
+        setCurrentAttempt(attempt.attempts || 0);
+        setGameComplete(!!attempt.completed);
+        setGameWon(!!attempt.completed && !!attempt.won);
+        setHintsUsed(attempt.hints_used || []);
+      }
+
+      const { data: stats } = await getUserStats(user.id);
+      setUserStats(stats ?? mockStats);
+    } else if (user) {
+      // logged-in but no real word today → show mock stats
+      setUserStats(mockStats);
+    } else {
+      // guest user → no stats
+      setUserStats(null);
+    }
+  } catch (e) {
+    console.error('Error loading Swirdle game:', e);
+    setError("Failed to load today's game");
+  } finally {
+    setLoading(false);
+  }
+};
 
   // Persist attempt (with override to avoid async state race)
   const saveAttempt = async (override?: { completed?: boolean; won?: boolean; attempts?: number }) => {
