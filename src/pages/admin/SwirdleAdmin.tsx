@@ -1,10 +1,10 @@
 // src/pages/admin/SwirdleAdmin.tsx
 import React, { useEffect, useMemo, useState } from 'react';
-import { supabase } from '@/lib/supabase';              // ✅ only supabase
-import { useAuth } from '@/context/AuthContext';        // ✅ correct path
+import { supabase } from '@/lib/supabase';
+import { useAuth } from '@/context/AuthContext';
 import {
-  Brain, Calendar, Search, Eye, CheckCircle, AlertCircle, RefreshCw, Download,
-  Target, TrendingUp, Edit, Save, X, Plus, Upload, LayoutGrid, Rows
+  Brain, Calendar, Search, Eye, AlertCircle, RefreshCw, Download,
+  Target, TrendingUp, X, Plus, Upload, LayoutGrid, Rows
 } from 'lucide-react';
 
 // --- local helper to mimic safeQuery ----------------------------------------
@@ -178,7 +178,6 @@ const Inspector: React.FC<{
           </div>
         </div>
 
-
         <div>
           <label className="text-xs text-gray-600">Date scheduled</label>
           <input
@@ -265,24 +264,6 @@ const SwirdleAdmin: React.FC = () => {
   const { user } = useAuth();
   const { isAdmin, loadingGate } = useAdminGate(user?.id);
 
-  if (loadingGate) {
-    return <div className="min-h-screen flex items-center justify-center">Checking access…</div>;
-  }
-  if (!isAdmin) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-50">
-        <div className="text-center">
-          <AlertCircle className="w-16 h-16 text-red-500 mx-auto mb-4" />
-          <h1 className="text-2xl font-bold text-gray-900 mb-2">Access denied</h1>
-          <p className="text-gray-600">Admins only.</p>
-        </div>
-      </div>
-    );
-  }
-
-  // ...the rest of your admin UI
-};
-
   // window controls
   const today = useMemo(() => new Date(), []);
   const [fromDate, setFromDate] = useState<Date>(() => {
@@ -341,8 +322,10 @@ const SwirdleAdmin: React.FC = () => {
     }
   };
 
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => { if (profile?.role === 'admin') load(); }, [profile, fromDate, toDate, categoryFilter, searchTerm]);
+  useEffect(() => {
+    if (isAdmin) load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isAdmin, fromDate, toDate, categoryFilter, searchTerm]);
 
   const totalAttempts = words.reduce((s, w) => s + (Number(w.plays) || 0), 0);
   const publishedWords = words.filter((w) => w.is_published).length;
@@ -355,7 +338,6 @@ const SwirdleAdmin: React.FC = () => {
     setSaving(true);
     try {
       const payload: any = { ...patch, updated_at: new Date().toISOString() };
-      // hints is text[] → ensure we pass string[]
       if ('hints' in payload && !Array.isArray(payload.hints)) {
         payload.hints = [];
       }
@@ -394,18 +376,27 @@ const SwirdleAdmin: React.FC = () => {
     return Array.from(map.entries()).sort((a,b) => a[0].localeCompare(b[0]));
   }, [words]);
 
-  if (profile?.role !== 'admin') {
+  // --- Admin gate screens ----------------------------------------------------
+  if (loadingGate) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="w-8 h-8 rounded-full border-2 border-gray-300 border-t-transparent animate-spin" />
+      </div>
+    );
+  }
+  if (!isAdmin) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-50">
         <div className="text-center">
           <AlertCircle className="w-16 h-16 text-red-500 mx-auto mb-4" />
-        <h1 className="text-2xl font-bold text-gray-900 mb-2">Access denied</h1>
+          <h1 className="text-2xl font-bold text-gray-900 mb-2">Access denied</h1>
           <p className="text-gray-600">Admins only.</p>
         </div>
       </div>
     );
   }
 
+  // --- Main UI ---------------------------------------------------------------
   return (
     <div className="min-h-screen bg-gray-50">
       {/* Sticky header */}
@@ -474,7 +465,15 @@ const SwirdleAdmin: React.FC = () => {
           </div>
           <div className="md:col-span-5 flex gap-2">
             <button onClick={() => shiftWindow(-7)} className="px-3 py-2 border rounded">← Prev 7</button>
-            <button onClick={() => { setFromDate(new Date(new Date().setDate(new Date().getDate()-7))); setToDate(new Date(new Date().setDate(new Date().getDate()+14))); }} className="px-3 py-2 border rounded">Today window</button>
+            <button
+              onClick={() => {
+                setFromDate(new Date(new Date().setDate(new Date().getDate()-7)));
+                setToDate(new Date(new Date().setDate(new Date().getDate()+14)));
+              }}
+              className="px-3 py-2 border rounded"
+            >
+              Today window
+            </button>
             <button onClick={() => shiftWindow(7)} className="px-3 py-2 border rounded">Next 7 →</button>
           </div>
         </div>
