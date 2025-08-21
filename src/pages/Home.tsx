@@ -1,4 +1,4 @@
-home 21/8/2025: import React from 'react';
+import React from 'react';
 import { Link } from 'react-router-dom';
 import { BookOpen, Play, Users, Eye, Award, Calendar, Star } from 'lucide-react';
 
