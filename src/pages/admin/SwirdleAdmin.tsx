@@ -1,7 +1,7 @@
 // src/pages/admin/SwirdleAdmin.tsx
 import React, { useEffect, useMemo, useState } from 'react';
 import { supabase, safeQuery } from '@/lib/supabase';
-import { useAuth } from '@/contexts/AuthContext';
+import { useAuth } from '@/context/AuthContext'; // ✅ fixed path
 import {
   Brain, Calendar, Search, Eye, CheckCircle, AlertCircle, RefreshCw, Download,
   Target, TrendingUp, Edit, Save, X, Plus, Upload, LayoutGrid, Rows
@@ -242,12 +242,6 @@ const SwirdleAdmin: React.FC = () => {
         _search: (searchTerm ?? '').trim(),
         _category: categoryFilter === 'all' ? null : categoryFilter,
       };
-      // You can keep your RPC; here’s a simple fallback query if needed:
-      // const { data, error } = await supabase.from('swirdle_words')
-      //   .select('*')
-      //   .gte('date_scheduled', params._from)
-      //   .lte('date_scheduled', params._to)
-      //   .order('date_scheduled', { ascending: true });
       const data = await safeQuery(
         () => supabase.rpc('get_swirdle_words_with_stats_api', params),
         [] as any[]
@@ -275,7 +269,8 @@ const SwirdleAdmin: React.FC = () => {
     }
   };
 
-  useEffect(() => { if (profile?.role === 'admin') load(); }, [profile, fromDate, toDate, categoryFilter, searchTerm]); // eslint-disable-line
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { if (profile?.role === 'admin') load(); }, [profile, fromDate, toDate, categoryFilter, searchTerm]);
 
   const totalAttempts = words.reduce((s, w) => s + (Number(w.plays) || 0), 0);
   const publishedWords = words.filter((w) => w.is_published).length;
@@ -332,7 +327,7 @@ const SwirdleAdmin: React.FC = () => {
       <div className="min-h-screen flex items-center justify-center bg-gray-50">
         <div className="text-center">
           <AlertCircle className="w-16 h-16 text-red-500 mx-auto mb-4" />
-          <h1 className="text-2xl font-bold text-gray-900 mb-2">Access denied</h1>
+        <h1 className="text-2xl font-bold text-gray-900 mb-2">Access denied</h1>
           <p className="text-gray-600">Admins only.</p>
         </div>
       </div>
