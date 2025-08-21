@@ -4,7 +4,7 @@ import { Wine, Trophy, Target, Share2, Brain, Calendar, TrendingUp, Lightbulb, X
 
 import { useAuth } from '@/context/AuthContext';
 import { usePoints } from '@/context/PointsContext';
-import { supabase } from '@/lib/supabaseClient';
+import { supabase } from '@/lib/supabase';
 
 // keep these relative paths as in your project
 import { useLanguage } from '../context/LanguageContext';
