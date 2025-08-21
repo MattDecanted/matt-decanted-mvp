@@ -1,6 +1,7 @@
 // src/App.tsx
 import React from 'react';
 import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
+import { Navigate } from 'react-router-dom';
 
 // UI / Providers
 import { Toaster } from '@/components/ui/sonner';
@@ -94,6 +95,9 @@ function App() {
                 <Route path="/admin/quizzes" element={<QuizManager />} />
                 <Route path="/admin/quizzes" element={<TrialQuizManager />} />
                 <Route path="/dashboard" element={<DashboardLite />} />
+                <Route path="/Dashboard" element={<Navigate to="/dashboard" replace />} />
+                <Route path="/account"  element={<Navigate to="/dashboard" replace />} />
+                
                 <Route
                   path="/account"
                   element={
