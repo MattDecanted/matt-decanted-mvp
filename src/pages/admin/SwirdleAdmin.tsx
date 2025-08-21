@@ -65,6 +65,40 @@ const getDifficultyColor = (d: string) => {
 };
 const getWinRateColor = (wr: number) => (wr >= 80 ? 'text-green-600' : wr >= 60 ? 'text-amber-600' : 'text-red-600');
 
+/** Admin gate: checks public.admins for this user_id */
+function useAdminGate(userId?: string) {
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [loadingGate, setLoadingGate] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      if (!userId) {
+        if (!cancelled) {
+          setIsAdmin(false);
+          setLoadingGate(false);
+        }
+        return;
+      }
+      const { data, error } = await supabase
+        .from('admins')
+        .select('user_id')
+        .eq('user_id', userId)
+        .maybeSingle();
+
+      if (!cancelled) {
+        if (error) console.error('admins check error:', error);
+        setIsAdmin(!!data);
+        setLoadingGate(false);
+      }
+    })();
+
+    return () => { cancelled = true; };
+  }, [userId]);
+
+  return { isAdmin, loadingGate };
+}
+
 const Inspector: React.FC<{
   word: WordRow | null;
   onClose: () => void;
@@ -143,6 +177,7 @@ const Inspector: React.FC<{
             </select>
           </div>
         </div>
+
 
         <div>
           <label className="text-xs text-gray-600">Date scheduled</label>
@@ -227,7 +262,26 @@ const HintEditor: React.FC<{ hints: string[]; onChange: (h: string[]) => void }>
 };
 
 const SwirdleAdmin: React.FC = () => {
-  const { profile } = useAuth();
+  const { user } = useAuth();
+  const { isAdmin, loadingGate } = useAdminGate(user?.id);
+
+  if (loadingGate) {
+    return <div className="min-h-screen flex items-center justify-center">Checking access…</div>;
+  }
+  if (!isAdmin) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-50">
+        <div className="text-center">
+          <AlertCircle className="w-16 h-16 text-red-500 mx-auto mb-4" />
+          <h1 className="text-2xl font-bold text-gray-900 mb-2">Access denied</h1>
+          <p className="text-gray-600">Admins only.</p>
+        </div>
+      </div>
+    );
+  }
+
+  // ...the rest of your admin UI
+};
 
   // window controls
   const today = useMemo(() => new Date(), []);
