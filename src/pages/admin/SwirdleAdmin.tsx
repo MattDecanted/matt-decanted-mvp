@@ -1,7 +1,7 @@
 // src/pages/admin/SwirdleAdmin.tsx
 import React, { useEffect, useMemo, useState } from 'react';
-import { supabase, safeQuery } from '@/lib/supabase';
-import { useAuth } from '@/context/AuthContext'; // ✅ fixed path
+import { supabase } from '@/lib/supabase';              // ✅ only supabase
+import { useAuth } from '@/context/AuthContext';        // ✅ correct path
 import {
   Brain, Calendar, Search, Eye, CheckCircle, AlertCircle, RefreshCw, Download,
   Target, TrendingUp, Edit, Save, X, Plus, Upload, LayoutGrid, Rows
