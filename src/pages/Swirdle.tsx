@@ -1,29 +1,46 @@
 // src/pages/Swirdle.tsx
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
-  Wine,
-  Trophy,
-  Target,
-  Share2,
-  Brain,
-  Calendar,
-  TrendingUp,
-  Lightbulb,
-  X,
-  CheckCircle,
-  Shield,
+  Wine, Trophy, Target, Share2, Brain, Calendar,
+  TrendingUp, Lightbulb, X, CheckCircle, Shield
 } from 'lucide-react';
 
 import { useAuth } from '@/context/AuthContext';
 import { usePoints } from '@/context/PointsContext';
 import { supabase } from '@/lib/supabase';
 
-const HINT_COST = 5;        // cost to buy a hint
-const WIN_POINTS = 15;      // points for a Swirdle win
+// =================== Config ===================
+const HINT_COST = 5;        // points to buy a hint
+const WIN_POINTS = 15;      // points awarded on a win
 const maxGuesses = 6;
 
-// --- Inline service (replaces ../features/swirdle/swirdle.service) ---
+// =================== Helpers ===================
+const Spinner = () => (
+  <div className="flex items-center justify-center p-6">
+    <div className="h-8 w-8 animate-spin rounded-full border-2 border-gray-300 border-t-transparent" />
+  </div>
+);
 
+// Minimal Wordle-like status calc (avoid external import)
+function computeStatuses(answer: string, guess: string): Array<'correct' | 'present' | 'absent'> {
+  const A = answer.toUpperCase().split('');
+  const G = guess.toUpperCase().split('');
+  const out: Array<'correct' | 'present' | 'absent'> = Array(G.length).fill('absent');
+
+  const remaining: Record<string, number> = {};
+  for (let i = 0; i < A.length; i++) {
+    if (G[i] === A[i]) out[i] = 'correct';
+    else remaining[A[i]] = (remaining[A[i]] ?? 0) + 1;
+  }
+  for (let i = 0; i < A.length; i++) {
+    if (out[i] === 'correct') continue;
+    const ch = G[i];
+    if (remaining[ch] > 0) { out[i] = 'present'; remaining[ch] -= 1; }
+  }
+  return out;
+}
+
+// =================== Inline service (DB I/O) ===================
 export type SwirdleWord = {
   id: string;
   word: string;
@@ -31,7 +48,7 @@ export type SwirdleWord = {
   difficulty: 'beginner' | 'intermediate' | 'advanced' | string;
   category: 'grape_variety' | 'wine_region' | 'tasting_term' | 'production' | string;
   hints: string[];
-  date_scheduled: string;   // YYYY-MM-DD
+  date_scheduled: string; // YYYY-MM-DD
   is_published: boolean;
 };
 
@@ -51,16 +68,14 @@ export type SwirdleAttempt = {
 
 export type UserStats = {
   user_id: string;
+  games_played: number;
+  wins: number;
   current_streak: number;
   max_streak: number;
-  games_played: number;
-  games_won: number;
-  average_attempts: number;
   last_played: string | null;
   updated_at: string | null;
 };
 
-// Get today’s published word (scheduled for `date` AND is_published = true)
 async function getWordForDate(date: string): Promise<{ data: SwirdleWord | null; error: any | null }> {
   const { data, error } = await supabase
     .from('swirdle_words')
@@ -68,11 +83,9 @@ async function getWordForDate(date: string): Promise<{ data: SwirdleWord | null;
     .eq('date_scheduled', date)
     .eq('is_published', true)
     .maybeSingle();
-
   return { data: (data as SwirdleWord) ?? null, error };
 }
 
-// Load an existing attempt for a user & word (if any)
 async function getAttempt(userId: string, wordId: string): Promise<{ data: SwirdleAttempt | null; error: any | null }> {
   const { data, error } = await supabase
     .from('swirdle_attempts')
@@ -80,11 +93,9 @@ async function getAttempt(userId: string, wordId: string): Promise<{ data: Swird
     .eq('user_id', userId)
     .eq('word_id', wordId)
     .maybeSingle();
-
   return { data: (data as SwirdleAttempt) ?? null, error };
 }
 
-// Upsert attempt (insert if none; update if exists)
 async function recordAttempt(attempt: SwirdleAttempt): Promise<{ data: SwirdleAttempt | null; error: any | null }> {
   const { data, error } = await supabase
     .from('swirdle_attempts')
@@ -104,122 +115,48 @@ async function recordAttempt(attempt: SwirdleAttempt): Promise<{ data: SwirdleAt
     )
     .select()
     .maybeSingle();
-
   return { data: (data as SwirdleAttempt) ?? null, error };
 }
 
-// Read user stats row (if exists)
-async function getUserStats(userId: string): Promise<{ data: UserStats | null; error: any | null }> {
+async function fetchUserStats(userId: string): Promise<{ data: UserStats | null; error: any | null }> {
   const { data, error } = await supabase
-    .from('swirdle_user_stats')
-    .select('user_id, current_streak, max_streak, games_played, games_won, average_attempts, last_played, updated_at')
+    .from('user_swirdle_stats')
+    .select('user_id, games_played, wins, current_streak, max_streak, last_played, updated_at')
     .eq('user_id', userId)
     .maybeSingle();
-
   return { data: (data as UserStats) ?? null, error };
 }
 
-// Update aggregate stats after a completed game
-async function upsertUserStats(
-  userId: string,
-  params: { won: boolean; attempts: number }
-): Promise<{ data: UserStats | null; error: any | null }> {
-  // You can keep it simple on the client: call a Postgres function if you have one,
-  // otherwise do a naive merge here.
+async function upsertUserStatsRow(userId: string, didWin: boolean, attempts: number): Promise<{ data: UserStats | null; error: any | null }> {
+  const { data: existing } = await fetchUserStats(userId);
 
-  // If you already created a DB function, uncomment and use it:
-  // const { data, error } = await supabase.rpc('swirdle_upsert_stats', {
-  //   p_user: userId,
-  //   p_won: params.won,
-  //   p_attempts: params.attempts,
-  // });
-  // return { data, error };
+  let games_played = (existing?.games_played ?? 0) + 1;
+  let wins = (existing?.wins ?? 0) + (didWin ? 1 : 0);
+  let current_streak = didWin ? (existing?.current_streak ?? 0) + 1 : 0;
+  let max_streak = didWin ? Math.max(existing?.max_streak ?? 0, current_streak) : (existing?.max_streak ?? 0);
 
-  // Fallback client-side upsert:
-  const { data: existing } = await getUserStats(userId);
-
-  const next: UserStats = existing
-    ? {
-        ...existing,
-        games_played: existing.games_played + 1,
-        games_won: existing.games_won + (params.won ? 1 : 0),
-        current_streak: params.won ? existing.current_streak + 1 : 0,
-        max_streak: params.won ? Math.max(existing.max_streak, existing.current_streak + 1) : existing.max_streak,
-        average_attempts:
-          existing.games_played > 0
-            ? Number(
-                (
-                  (existing.average_attempts * existing.games_played + params.attempts) /
-                  (existing.games_played + 1)
-                ).toFixed(2)
-              )
-            : params.attempts,
-        last_played: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      }
-    : {
-        user_id: userId,
-        current_streak: params.won ? 1 : 0,
-        max_streak: params.won ? 1 : 0,
-        games_played: 1,
-        games_won: params.won ? 1 : 0,
-        average_attempts: params.attempts,
-        last_played: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      };
+  const row: UserStats = {
+    user_id: userId,
+    games_played,
+    wins,
+    current_streak,
+    max_streak,
+    last_played: new Date().toISOString().split('T')[0],
+    updated_at: new Date().toISOString(),
+  };
 
   const { data, error } = await supabase
-    .from('swirdle_user_stats')
-    .upsert(next, { onConflict: 'user_id', ignoreDuplicates: false })
+    .from('user_swirdle_stats')
+    .upsert(row, { onConflict: 'user_id', ignoreDuplicates: false })
     .select()
     .maybeSingle();
 
   return { data: (data as UserStats) ?? null, error };
 }
 
-
-// Minimal Wordle-style status computer to avoid external import
-function computeStatuses(answer: string, guess: string): Array<'correct' | 'present' | 'absent'> {
-  const A = answer.toUpperCase().split('');
-  const G = guess.toUpperCase().split('');
-  const out: Array<'correct' | 'present' | 'absent'> = Array(G.length).fill('absent');
-
-  // mark correct first
-  const remaining: Record<string, number> = {};
-  for (let i = 0; i < A.length; i++) {
-    if (G[i] === A[i]) {
-      out[i] = 'correct';
-    } else {
-      remaining[A[i]] = (remaining[A[i]] ?? 0) + 1;
-    }
-  }
-
-  // then present
-  for (let i = 0; i < A.length; i++) {
-    if (out[i] === 'correct') continue;
-    const ch = G[i];
-    if (remaining[ch] > 0) {
-      out[i] = 'present';
-      remaining[ch] -= 1;
-    } else {
-      out[i] = 'absent';
-    }
-  }
-  return out;
-}
-
-
-const Spinner = () => (
-  <div className="flex items-center justify-center p-6">
-    <div
-      className="h-8 w-8 animate-spin rounded-full border-2 border-gray-300 border-t-transparent"
-      aria-label="Loading"
-    />
-  </div>
-);
-
+// =================== Component ===================
 const Swirdle: React.FC = () => {
-  // Local no-op translator so we don’t depend on LanguageProvider
+  // Simple i18n shim so we don't depend on a LanguageProvider
   const t = (_key: string, fallback?: string) => fallback ?? '';
 
   const { user } = useAuth();
@@ -239,6 +176,7 @@ const Swirdle: React.FC = () => {
   const [hintsUsed, setHintsUsed] = useState<number[]>([]);
   const [showHintModal, setShowHintModal] = useState(false);
   const [availableHint, setAvailableHint] = useState<string>('');
+  const [pendingHintIndex, setPendingHintIndex] = useState<number | null>(null);
   const [currentAttempt, setCurrentAttempt] = useState(0);
 
   const [error, setError] = useState<string>('');
@@ -250,99 +188,83 @@ const Swirdle: React.FC = () => {
   const [adminBusy, setAdminBusy] = useState(false);
   const dashboardUrl = import.meta.env.VITE_SUPABASE_DASHBOARD_URL as string | undefined;
 
-  // Guards to prevent duplicate actions
+  // Guards
   const [awardBusy, setAwardBusy] = useState(false);
   const [purchaseBusy, setPurchaseBusy] = useState(false);
 
+  // -------- Load game + stats --------
   useEffect(() => {
-    loadTodaysGame();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user?.id]);
+    (async () => {
+      const today = new Date().toISOString().split('T')[0];
 
-  const loadTodaysGame = async () => {
-    const today = new Date().toISOString().split('T')[0];
+      // safe mock if no DB word
+      const mockWord: SwirdleWord = {
+        id: 'mock-1',
+        word: 'TERROIR',
+        definition: 'The complete natural environment in which a wine is produced',
+        difficulty: 'intermediate',
+        category: 'tasting_term',
+        hints: [
+          'This French concept relates to wine character',
+          'It includes soil, climate, and topography',
+          'Essential for understanding wine regions',
+        ],
+        date_scheduled: today,
+        is_published: true,
+      };
 
-    // Safe mock for preview (if no DB word is scheduled/published)
-    const mockWord: SwirdleWord = {
-      id: 'mock-1',
-      word: 'TERROIR',
-      definition: 'The complete natural environment in which a wine is produced',
-      difficulty: 'intermediate',
-      category: 'tasting_term',
-      hints: [
-        'This French concept relates to wine character',
-        'It includes soil, climate, and topography',
-        'Essential for understanding wine regions',
-      ],
-      date_scheduled: today,
-      is_published: true,
-    };
+      try {
+        setLoading(true);
 
-    const mockStats: UserStats = {
-      user_id: 'mock',
-      current_streak: 7,
-      max_streak: 15,
-      games_played: 23,
-      games_won: 18,
-      average_attempts: 4.2,
-      last_played: null,
-      updated_at: null,
-    };
+        // Today’s word
+        const { data: wordData } = await getWordForDate(today);
+        setDbWordAvailable(!!wordData);
+        setTodaysWord(wordData ?? mockWord);
 
-    try {
-      setLoading(true);
-
-      // 1) Today’s published word
-      const { data: wordData, error: wordErr } = await getWordForDate(today);
-      if (wordErr) console.error('getWordForDate error:', wordErr);
-      setDbWordAvailable(!!wordData);
-      setTodaysWord(wordData ?? mockWord);
-
-      // 2) Admin check
-      if (user) {
-        const { data: adminRow, error: adminErr } = await supabase
-          .from('admins')
-          .select('user_id')
-          .eq('user_id', user.id)
-          .maybeSingle();
-        if (adminErr) console.error('admin check error:', adminErr);
-        setIsAdmin(!!adminRow);
-      } else {
-        setIsAdmin(false);
-      }
-
-      // 3) User attempt + stats (only when signed in)
-      if (user && wordData) {
-        const { data: attempt } = await getAttempt(user.id, wordData.id);
-        if (attempt) {
-          setUserAttempt(attempt);
-          setGuesses(attempt.guesses || Array(maxGuesses).fill(''));
-          setCurrentAttempt(attempt.attempts || 0);
-          setGameComplete(!!attempt.completed);
-          setGameWon(!!attempt.completed && !!(attempt as any).won);
-          setHintsUsed(attempt.hints_used || []);
+        // Admin check
+        if (user?.id) {
+          const { data: adminRow } = await supabase
+            .from('admins')
+            .select('user_id')
+            .eq('user_id', user.id)
+            .maybeSingle();
+          setIsAdmin(!!adminRow);
+        } else {
+          setIsAdmin(false);
         }
 
-        const { data: stats } = await getUserStats(user.id);
-        setUserStats(stats ?? mockStats);
-      } else if (user) {
-        // logged-in but no real word today → show mock stats
-        setUserStats(mockStats);
-      } else {
-        // guest user → no stats
-        setUserStats(null);
-      }
-    } catch (e) {
-      console.error('Error loading Swirdle game:', e);
-      setError("Failed to load today's game");
-    } finally {
-      setLoading(false);
-    }
-  };
+        // Attempts + stats when signed in
+        if (user?.id && wordData) {
+          const { data: attempt } = await getAttempt(user.id, wordData.id);
+          if (attempt) {
+            setUserAttempt(attempt);
+            setGuesses(attempt.guesses || Array(maxGuesses).fill(''));
+            setCurrentAttempt(attempt.attempts || 0);
+            setGameComplete(!!attempt.completed);
+            setGameWon(!!attempt.completed && !!attempt.won);
+            setHintsUsed(attempt.hints_used || []);
+          }
 
-  // Persist attempt (with override to avoid async state race)
-  const saveAttempt = async (override?: { completed?: boolean; won?: boolean; attempts?: number }) => {
-    if (!user || !todaysWord || !dbWordAvailable) return;
+          const { data: stats } = await fetchUserStats(user.id);
+          setUserStats(stats ?? null);
+        } else if (user?.id) {
+          const { data: stats } = await fetchUserStats(user.id);
+          setUserStats(stats ?? null);
+        } else {
+          setUserStats(null); // guest
+        }
+      } catch (e) {
+        console.error('Swirdle load error:', e);
+        setError("Failed to load today's game");
+      } finally {
+        setLoading(false);
+      }
+    })();
+  }, [user?.id]);
+
+  // -------- Persist attempt --------
+  async function saveAttempt(override?: { completed?: boolean; won?: boolean; attempts?: number }) {
+    if (!user?.id || !todaysWord || !dbWordAvailable) return;
 
     const completed = override?.completed ?? gameComplete;
     const won = override?.won ?? gameWon;
@@ -356,26 +278,25 @@ const Swirdle: React.FC = () => {
         guesses: guesses.filter((g) => g.length > 0),
         attempts: attemptsToSave,
         completed,
+        won,
         hints_used: hintsUsed,
         completed_at: completed ? new Date().toISOString() : null,
-        // @ts-ignore allow won on your model if present
-        won,
       };
 
       const { data: saved } = await recordAttempt(base);
       if (saved) setUserAttempt(saved);
 
       if (completed) {
-        const { data: stats } = await upsertUserStats(user.id, { won, attempts: attemptsToSave });
+        const { data: stats } = await upsertUserStatsRow(user.id, !!won, attemptsToSave);
         if (stats) setUserStats(stats);
       }
     } catch (e) {
-      console.error('Error saving attempt:', e);
+      console.error('saveAttempt error:', e);
     }
-  };
+  }
 
-  // Award on win: event → +points → badges → refresh header
-  const handleWinAward = async (guessesCount: number) => {
+  // -------- Award on win --------
+  async function handleWinAward(guessesCount: number) {
     if (!user?.id || awardBusy) return;
     setAwardBusy(true);
     try {
@@ -388,15 +309,15 @@ const Swirdle: React.FC = () => {
       await supabase.rpc('evaluate_badges', { p_user: user.id });
       await refreshPoints();
     } catch (e) {
-      console.error('Swirdle award failed:', e);
+      console.error('award RPC failed:', e);
     } finally {
       setAwardBusy(false);
     }
-  };
+  }
 
-  // Buy a hint with points
+  // -------- Buy a hint --------
   async function buyHint(hintIndex: number) {
-    if (!user?.id || purchaseBusy) return;
+    if (!user?.id || purchaseBusy || hintIndex == null) return;
     setPurchaseBusy(true);
     try {
       const { data: ok, error } = await supabase.rpc('spend_points', {
@@ -411,26 +332,31 @@ const Swirdle: React.FC = () => {
         return;
       }
 
-      // Optional analytics event
+      // unlock it locally
+      useHint(hintIndex);
+
+      // show the text now that it’s purchased
+      if (todaysWord?.hints?.[hintIndex]) {
+        setAvailableHint(todaysWord.hints[hintIndex]);
+      }
+
       await supabase.rpc('record_event', {
         p_user: user.id,
         p_type: 'HINT_PURCHASED',
         p_meta: { game: 'SWIRDLE', hint_index: hintIndex, cost: HINT_COST },
       });
 
-      // unlock and refresh header points
-      useHint(hintIndex);
       await refreshPoints();
     } catch (e: any) {
       console.error('buyHint failed:', e);
-      alert(e.message ?? 'Purchase failed.');
+      alert(e?.message ?? 'Purchase failed.');
     } finally {
       setPurchaseBusy(false);
     }
   }
 
-  // Input -> submit
-  const handleSubmitGuess = () => {
+  // -------- Guess submission --------
+  function handleSubmitGuess() {
     if (!todaysWord || currentGuess.length !== todaysWord.word.length || gameComplete) return;
 
     const guessUpper = currentGuess.toUpperCase();
@@ -447,40 +373,41 @@ const Swirdle: React.FC = () => {
       setGameWon(true);
       setGameComplete(true);
       generateShareText(newAttemptCount, true);
-      if (user) {
+      if (user?.id) {
         saveAttempt({ completed: true, won: true, attempts: newAttemptCount });
         void handleWinAward(newAttemptCount);
       }
     } else if (newAttemptCount === maxGuesses) {
       setGameComplete(true);
       generateShareText(newAttemptCount, false);
-      if (user) saveAttempt({ completed: true, won: false, attempts: newAttemptCount });
+      if (user?.id) saveAttempt({ completed: true, won: false, attempts: newAttemptCount });
     } else {
-      // Offer hints on attempts 3, 4, 5
+      // Offer hints on attempts 3,4,5 (0,1,2 indexes)
       if ((newAttemptCount === 3 || newAttemptCount === 4 || newAttemptCount === 5) && todaysWord.hints?.length) {
-        const hintIndex = newAttemptCount - 3; // 0, 1, 2
+        const hintIndex = newAttemptCount - 3;
         if (hintIndex < todaysWord.hints.length && !hintsUsed.includes(hintIndex)) {
-          setAvailableHint(todaysWord.hints[hintIndex]);
+          setPendingHintIndex(hintIndex);
+          setAvailableHint(''); // keep hidden until bought
           setShowHintModal(true);
         }
       }
-      if (user) saveAttempt({ completed: false, won: false, attempts: newAttemptCount });
+      if (user?.id) saveAttempt({ completed: false, won: false, attempts: newAttemptCount });
     }
 
     setCurrentGuess('');
-  };
+  }
 
-  const useHint = (hintIndex: number) => {
+  function useHint(hintIndex: number) {
     if (!hintsUsed.includes(hintIndex)) {
       setHintsUsed((prev) => [...prev, hintIndex]);
-      setShowHintModal(false);
-      if (user) saveAttempt(); // persist hints
+      // keep modal as-is; availableHint will be set after purchase
+      if (user?.id) saveAttempt(); // persist
     }
-  };
+  }
 
-  const generateShareText = (attempts: number, won: boolean) => {
+  // -------- Share text --------
+  function generateShareText(attempts: number, won: boolean) {
     if (!todaysWord) return;
-
     const result = won ? `${attempts}/6` : 'X/6';
     const squares = guesses
       .slice(0, attempts)
@@ -497,13 +424,11 @@ const Swirdle: React.FC = () => {
           .join('');
       })
       .join('\n');
-
     const hintsText = hintsUsed.length > 0 ? ` (${hintsUsed.length} hint${hintsUsed.length > 1 ? 's' : ''} used)` : '';
-    const text = `Swirdle ${result}${hintsText}\n\n${squares}\n\nPlay at ${window.location.origin}/swirdle`;
-    setShareText(text);
-  };
+    setShareText(`Swirdle ${result}${hintsText}\n\n${squares}\n\nPlay at ${window.location.origin}/swirdle`);
+  }
 
-  const shareResults = async () => {
+  async function shareResults() {
     if (navigator.share) {
       try {
         await navigator.share({
@@ -520,102 +445,37 @@ const Swirdle: React.FC = () => {
       alert('Results copied to clipboard!');
     }
     setShowShareModal(false);
-  };
+  }
 
-  const getLetterStatus = (letter: string, position: number, word: string): string => {
+  function getLetterStatus(letter: string, position: number, word: string): string {
     if (!todaysWord) return 'empty';
-
     const guess = word.toUpperCase();
     const answer = todaysWord.word.toUpperCase();
-
     if (guess === answer) return 'correct-word';
-
     const statuses = computeStatuses(answer, guess);
     return statuses[position]; // 'correct' | 'present' | 'absent'
-  };
+  }
 
-  const getDifficultyColor = (difficulty: string) => {
+  function getDifficultyColor(difficulty: string) {
     switch (difficulty) {
-      case 'beginner':
-        return 'bg-green-100 text-green-800';
-      case 'intermediate':
-        return 'bg-amber-100 text-amber-800';
-      case 'advanced':
-        return 'bg-red-100 text-red-800';
-      default:
-        return 'bg-gray-100 text-gray-800';
+      case 'beginner': return 'bg-green-100 text-green-800';
+      case 'intermediate': return 'bg-amber-100 text-amber-800';
+      case 'advanced': return 'bg-red-100 text-red-800';
+      default: return 'bg-gray-100 text-gray-800';
     }
-  };
+  }
 
-  const getCategoryColor = (category: string) => {
+  function getCategoryColor(category: string) {
     switch (category) {
-      case 'grape_variety':
-        return 'bg-purple-100 text-purple-800';
-      case 'wine_region':
-        return 'bg-blue-100 text-blue-800';
-      case 'tasting_term':
-        return 'bg-amber-100 text-amber-800';
-      case 'production':
-        return 'bg-green-100 text-green-800';
-      default:
-        return 'bg-gray-100 text-gray-800';
+      case 'grape_variety': return 'bg-purple-100 text-purple-800';
+      case 'wine_region': return 'bg-blue-100 text-blue-800';
+      case 'tasting_term': return 'bg-amber-100 text-amber-800';
+      case 'production': return 'bg-green-100 text-green-800';
+      default: return 'bg-gray-100 text-gray-800';
     }
-  };
+  }
 
-  // === Admin actions ===
-  const publishToday = async () => {
-    if (!todaysWord) return;
-    try {
-      setAdminBusy(true);
-      const { error } = await supabase
-        .from('swirdle_words')
-        .update({ is_published: true })
-        .eq('id', todaysWord.id);
-      if (error) throw error;
-      setTodaysWord({ ...todaysWord, is_published: true });
-    } catch (e: any) {
-      alert(`Publish failed: ${e.message || e}`);
-    } finally {
-      setAdminBusy(false);
-    }
-  };
-
-  const unpublishToday = async () => {
-    if (!todaysWord) return;
-    try {
-      setAdminBusy(true);
-      const { error } = await supabase
-        .from('swirdle_words')
-        .update({ is_published: false })
-        .eq('id', todaysWord.id);
-      if (error) throw error;
-      setTodaysWord({ ...todaysWord, is_published: false });
-    } catch (e: any) {
-      alert(`Unpublish failed: ${e.message || e}`);
-    } finally {
-      setAdminBusy(false);
-    }
-  };
-
-  const setTodayAndPublish = async () => {
-    if (!todaysWord) return;
-    const today = new Date().toISOString().split('T')[0];
-    try {
-      setAdminBusy(true);
-      const { error } = await supabase
-        .from('swirdle_words')
-        .update({ date_scheduled: today, is_published: true })
-        .eq('id', todaysWord.id);
-      if (error) throw error;
-      setTodaysWord({ ...todaysWord, date_scheduled: today, is_published: true });
-    } catch (e: any) {
-      alert(`Set as today failed: ${e.message || e}`);
-    } finally {
-      setAdminBusy(false);
-    }
-  };
-
-  // ===== Early returns (guards) =====
+  // =================== Render ===================
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center">
@@ -648,7 +508,6 @@ const Swirdle: React.FC = () => {
     );
   }
 
-  // ===== Main render =====
   return (
     <div className="min-h-screen bg-gradient-to-br from-purple-50 via-white to-amber-50">
       <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
@@ -704,33 +563,43 @@ const Swirdle: React.FC = () => {
                 </div>
                 <div className="flex flex-wrap gap-2 items-start">
                   <button
-                    onClick={publishToday}
+                    onClick={async () => { setAdminBusy(true); try {
+                      await supabase.from('swirdle_words').update({ is_published: true }).eq('id', todaysWord.id);
+                      setTodaysWord({ ...todaysWord, is_published: true });
+                    } finally { setAdminBusy(false); }}}
                     disabled={adminBusy || todaysWord.is_published}
                     className="px-3 py-2 bg-green-600 text-white rounded-md disabled:opacity-50"
                   >
                     Publish
                   </button>
                   <button
-                    onClick={unpublishToday}
+                    onClick={async () => { setAdminBusy(true); try {
+                      await supabase.from('swirdle_words').update({ is_published: false }).eq('id', todaysWord.id);
+                      setTodaysWord({ ...todaysWord, is_published: false });
+                    } finally { setAdminBusy(false); }}}
                     disabled={adminBusy || !todaysWord.is_published}
                     className="px-3 py-2 bg-gray-700 text-white rounded-md disabled:opacity-50"
                   >
                     Unpublish
                   </button>
                   <button
-                    onClick={setTodayAndPublish}
+                    onClick={async () => {
+                      const today = new Date().toISOString().split('T')[0];
+                      setAdminBusy(true);
+                      try {
+                        await supabase.from('swirdle_words').update({ date_scheduled: today, is_published: true }).eq('id', todaysWord.id);
+                        setTodaysWord({ ...todaysWord, date_scheduled: today, is_published: true });
+                      } catch (e: any) {
+                        alert(`Set as today failed: ${e.message || e}`);
+                      } finally { setAdminBusy(false); }
+                    }}
                     disabled={adminBusy}
                     className="px-3 py-2 bg-purple-600 text-white rounded-md"
                   >
                     Set as today & publish
                   </button>
                   {dashboardUrl && (
-                    <a
-                      href={dashboardUrl}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="px-3 py-2 border border-purple-600 text-purple-700 rounded-md"
-                    >
+                    <a href={dashboardUrl} target="_blank" rel="noreferrer" className="px-3 py-2 border border-purple-600 text-purple-700 rounded-md">
                       Open in Supabase
                     </a>
                   )}
@@ -800,7 +669,6 @@ const Swirdle: React.FC = () => {
                 </button>
               </div>
 
-              {/* Attempts remaining */}
               <div className="text-center text-sm text-gray-500">{maxGuesses - currentAttempt} attempts remaining</div>
             </div>
           )}
@@ -906,7 +774,7 @@ const Swirdle: React.FC = () => {
                 </div>
                 <div className="text-center">
                   <div className="text-2xl font-bold text-green-600">
-                    {userStats.games_played > 0 ? Math.round((userStats.games_won / userStats.games_played) * 100) : 0}%
+                    {userStats.games_played > 0 ? Math.round((userStats.wins / userStats.games_played) * 100) : 0}%
                   </div>
                   <div className="text-sm text-gray-600">{t('swirdle.winRate', 'Win Rate')}</div>
                 </div>
@@ -965,39 +833,57 @@ const Swirdle: React.FC = () => {
               </div>
 
               <div className="mb-6">
-                <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 mb-4">
-                  <Lightbulb className="w-5 h-5 text-amber-600 mb-2" />
-                  <p className="text-amber-800 font-medium mb-2">Here's a hint:</p>
-                  <p className="text-amber-700">{availableHint}</p>
-                </div>
+                {pendingHintIndex !== null && hintsUsed.includes(pendingHintIndex) ? (
+                  <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 mb-4">
+                    <Lightbulb className="w-5 h-5 text-amber-600 mb-2" />
+                    <p className="text-amber-800 font-medium mb-2">Here’s your hint:</p>
+                    <p className="text-amber-700">
+                      {availableHint || (todaysWord?.hints?.[pendingHintIndex] ?? '')}
+                    </p>
+                  </div>
+                ) : (
+                  <div className="bg-gray-50 border border-gray-200 rounded-lg p-4 mb-4">
+                    <Lightbulb className="w-5 h-5 text-gray-500 mb-2" />
+                    <p className="text-gray-700 font-medium mb-2">Reveal a hint?</p>
+                    <p className="text-gray-600 text-sm">
+                      Spend <strong>{HINT_COST} points</strong> to unlock this hint for attempt <strong>{currentAttempt}</strong>.
+                    </p>
+                  </div>
+                )}
                 <p className="text-gray-600 text-sm">Using hints will be noted in your results, but you can still win!</p>
               </div>
 
               <div className="flex space-x-3">
-                {user ? (
-                  <button
-                    onClick={() => {
-                      const hintIndex = currentAttempt - 3; // 0..2
-                      buyHint(hintIndex);
-                    }}
-                    disabled={purchaseBusy}
-                    className="flex-1 bg-amber-600 hover:bg-amber-700 text-white py-2 px-4 rounded-lg font-medium transition-colors disabled:opacity-50"
-                  >
-                    {purchaseBusy ? 'Processing…' : `Buy Hint (-${HINT_COST} pts)`}
-                  </button>
+                {pendingHintIndex !== null && !hintsUsed.includes(pendingHintIndex) ? (
+                  user ? (
+                    <button
+                      onClick={() => buyHint(pendingHintIndex)}
+                      disabled={purchaseBusy}
+                      className="flex-1 bg-amber-600 hover:bg-amber-700 text-white py-2 px-4 rounded-lg font-medium transition-colors disabled:opacity-50"
+                    >
+                      {purchaseBusy ? 'Processing…' : `Buy Hint (-${HINT_COST} pts)`}
+                    </button>
+                  ) : (
+                    <a
+                      href="/signin"
+                      className="flex-1 bg-amber-600 hover:bg-amber-700 text-white py-2 px-4 rounded-lg font-medium text-center"
+                    >
+                      Sign in to buy hint
+                    </a>
+                  )
                 ) : (
-                  <a
-                    href="/signin"
-                    className="flex-1 bg-amber-600 hover:bg-amber-700 text-white py-2 px-4 rounded-lg font-medium text-center"
+                  <button
+                    onClick={() => setShowHintModal(false)}
+                    className="flex-1 bg-amber-600 hover:bg-amber-700 text-white py-2 px-4 rounded-lg font-medium transition-colors"
                   >
-                    Sign in to buy hint
-                  </a>
+                    Close
+                  </button>
                 )}
                 <button
                   onClick={() => setShowHintModal(false)}
                   className="flex-1 border border-gray-300 text-gray-700 hover:bg-gray-50 py-2 px-4 rounded-lg font-medium transition-colors"
                 >
-                  No Thanks
+                  {pendingHintIndex !== null && !hintsUsed.includes(pendingHintIndex) ? 'No Thanks' : 'Dismiss'}
                 </button>
               </div>
             </div>
@@ -1039,6 +925,7 @@ const Swirdle: React.FC = () => {
             </div>
           </div>
         )}
+
       </div>
     </div>
   );
