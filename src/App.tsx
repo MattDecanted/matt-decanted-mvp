@@ -24,6 +24,7 @@ import VocabChallengeManager from '@/pages/admin/VocabChallengeManager';
 import QuizManager from '@/pages/admin/QuizManager';
 import TrialQuizManager from '@/pages/admin/TrialQuizManager';
 import DashboardLite from './pages/DashboardLite';
+import Swirdle from '@/pages/Swirdle'; // or '../pages/Swirdle' if you’re not using '@'
 
 // MVP additions
 import TrialQuizWidget from '@/components/TrialQuizWidget';
@@ -97,6 +98,7 @@ function App() {
                 <Route path="/dashboard" element={<DashboardLite />} />
                 <Route path="/Dashboard" element={<Navigate to="/dashboard" replace />} />
                 <Route path="/account"  element={<Navigate to="/dashboard" replace />} />
+                <Route path="/swirdle" element={<Swirdle />} />
                 
                 <Route
                   path="/account"
