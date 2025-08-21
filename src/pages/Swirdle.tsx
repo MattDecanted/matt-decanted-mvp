@@ -7,7 +7,6 @@ import { usePoints } from '@/context/PointsContext';
 import { supabase } from '@/lib/supabase';
 
 // keep these relative paths as in your project
-import { useLanguage } from '../context/LanguageContext';
 import LoadingSpinner from '../components/Common/LoadingSpinner';
 import { computeStatuses } from '../features/swirdle/utils';
 import {
