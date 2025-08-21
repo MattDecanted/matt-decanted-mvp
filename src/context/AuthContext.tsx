@@ -34,7 +34,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           if (data?.session) {
             setSession(data.session);
             setUser(data.session.user);
-            window.location.replace('/account');
+            window.location.replace('/dashboard');
             return;
           }
         }
