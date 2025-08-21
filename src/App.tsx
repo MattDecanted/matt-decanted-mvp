@@ -144,7 +144,7 @@ function App() {
                 <Route path="/admin/quizzes" element={<QuizManager />} />
                 <Route path="/admin/trial-quizzes" element={<TrialQuizManager />} />
                 <Route path="/admin/swirdle" element={<SwirdleAdmin />} />
-
+                
                 {/* Dashboard / Account */}
                 <Route path="/dashboard" element={<DashboardLite />} />
                 <Route path="/Dashboard" element={<Navigate to="/dashboard" replace />} />
