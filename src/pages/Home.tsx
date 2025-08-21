@@ -1,137 +1,118 @@
-// src/pages/Home.tsx
-import React from 'react';
+home 21/8/2025: import React from 'react';
 import { Link } from 'react-router-dom';
-import { Trophy, BookOpen, PlayCircle, Sparkles } from 'lucide-react';
-
-function ClearGlassSVG(props: React.SVGProps<SVGSVGElement>) {
-  // Minimal, elegant clear-glass outline (no color fill)
-  return (
-    <svg viewBox="0 0 180 220" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" {...props}>
-      <g fill="none" stroke="currentColor" strokeWidth="3">
-        {/* Bowl */}
-        <path d="M50 20c0 40 10 65 40 80c30-15 40-40 40-80" strokeLinecap="round"/>
-        {/* Stem */}
-        <line x1="90" y1="100" x2="90" y2="165" strokeLinecap="round"/>
-        {/* Base */}
-        <path d="M55 180h70" strokeLinecap="round"/>
-        <path d="M45 185h90" strokeLinecap="round" opacity="0.6"/>
-      </g>
-    </svg>
-  );
-}
+import { BookOpen, Play, Users, Eye, Award, Calendar, Star } from 'lucide-react';
 
 const Home: React.FC = () => {
   return (
-    <div className="min-h-screen bg-gradient-to-b from-white to-amber-50">
-      {/* Hero */}
-      <section className="relative">
-        <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 pt-16 pb-12">
-          <div className="grid md:grid-cols-2 gap-10 items-center">
-            <div>
-              <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-medium border border-amber-200 text-amber-800 bg-amber-50 mb-4">
-                <Sparkles className="w-3.5 h-3.5" />
-                Learn wine, one smart sip at a time
-              </div>
-              <h1 className="text-4xl sm:text-5xl font-extrabold tracking-tight text-gray-900">
-                Level up your wine chops—without the waffle
-              </h1>
-              <p className="mt-4 text-lg text-gray-600">
-                Daily mini-games, bite-size lessons, and clear definitions. Built by Matt for people who want to actually
-                understand wine, not memorize flashcards.
-              </p>
+    <div className="min-h-screen bg-white">
+      {/* Hero Section */}
+      <section className="bg-gradient-to-b from-white to-purple-50 py-16 px-6 text-center">
+        <p className="text-sm font-semibold text-yellow-600 mb-2">Wine Spectator Top 100 Winemaker</p>
+        <h1 className="text-4xl sm:text-5xl font-extrabold mb-4 text-gray-900">
+          Learn wine from the winemaker behind <br />
+          10 years of Wine Spectator Top 100
+        </h1>
+        <p className="text-lg text-gray-700 max-w-2xl mx-auto mb-6">
+          <span className="font-medium text-gray-800">Taste, talk, and think like a winemaker</span> — without the pretension.
+        </p>
+        <div className="flex flex-wrap justify-center gap-4">
+          <Link to="/courses" className="bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-2 px-6 rounded-xl shadow">
+            Start Free Learning
+          </Link>
+          <Link to="/wine-game" className="bg-purple-600 hover:bg-purple-700 text-white font-semibold py-2 px-6 rounded-xl shadow">
+            Wine Games & Content
+          </Link>
+          <Link to="/community" className="border border-gray-400 text-gray-700 hover:bg-gray-100 font-semibold py-2 px-6 rounded-xl">
+            Join Community
+          </Link>
+        </div>
+        <div className="mt-6 flex justify-center gap-6 text-sm text-gray-500">
+          <p>🥂 2,500+ Happy Students</p>
+          <p>🏆 10 Years Top 100</p>
+        </div>
+      </section>
 
-              <div className="mt-6 flex flex-wrap gap-3">
-                <Link
-                  to="/swirdle"
-                  className="inline-flex items-center justify-center rounded-lg bg-black text-white px-5 py-3 font-semibold hover:bg-gray-900"
-                >
-                  Play Swirdle
-                  <Trophy className="w-4 h-4 ml-2" />
-                </Link>
-                <Link
-                  to="/vocab"
-                  className="inline-flex items-center justify-center rounded-lg border px-5 py-3 font-semibold text-gray-800 hover:bg-gray-50"
-                >
-                  Explore Vocab
-                  <BookOpen className="w-4 h-4 ml-2" />
-                </Link>
-              </div>
-
-              <p className="mt-3 text-sm text-gray-500">
-                New word daily • Optional hints • Earn points & badges
-              </p>
-            </div>
-
-            {/* Clear glass only */}
-            <div className="flex md:justify-end">
-              <div className="relative">
-                <div className="absolute -inset-6 bg-amber-100/40 blur-xl rounded-full" />
-                <ClearGlassSVG className="relative w-[220px] h-[280px] text-gray-300 md:w-[260px] md:h-[320px]" />
-              </div>
-            </div>
+      {/* Features Section */}
+      <section className="py-16 px-6 text-center">
+        <h2 className="text-3xl font-bold text-gray-900 mb-4">Experience Wine Learning Like Never Before</h2>
+        <p className="text-gray-600 mb-10">Interactive, engaging, and designed for real wine lovers</p>
+        <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-4 max-w-6xl mx-auto">
+          <div className="bg-white shadow-md rounded-xl p-6 text-left">
+            <BookOpen className="text-pink-600 mb-2" />
+            <h3 className="font-bold mb-1">Weekly Wine Shorts</h3>
+            <p className="text-sm text-gray-600">Bite-sized wine education videos perfect for busy schedules</p>
+            <Link to="/shorts" className="text-indigo-600 text-sm mt-2 inline-block">Watch Latest →</Link>
+          </div>
+          <div className="bg-white shadow-md rounded-xl p-6 text-left">
+            <Eye className="text-purple-600 mb-2" />
+            <h3 className="font-bold mb-1">Swirdle Daily</h3>
+            <p className="text-sm text-gray-600">Daily wine word game that builds your vocabulary</p>
+            <Link to="/swirdle" className="text-indigo-600 text-sm mt-2 inline-block">Play Today →</Link>
+          </div>
+          <div className="bg-white shadow-md rounded-xl p-6 text-left">
+            <Calendar className="text-orange-500 mb-2" />
+            <h3 className="font-bold mb-1">Blind Tasting Challenges</h3>
+            <p className="text-sm text-gray-600">Test your palate with weekly blind tasting sessions</p>
+            <Link to="/guess-what" className="text-indigo-600 text-sm mt-2 inline-block">Join Session →</Link>
+          </div>
+          <div className="bg-white shadow-md rounded-xl p-6 text-left">
+            <Users className="text-green-600 mb-2" />
+            <h3 className="font-bold mb-1">Wine Community</h3>
+            <p className="text-sm text-gray-600">Connect with fellow wine enthusiasts worldwide</p>
+            <Link to="/community" className="text-indigo-600 text-sm mt-2 inline-block">Join Discussion →</Link>
           </div>
         </div>
       </section>
 
-      {/* Options grid */}
-      <section className="pb-20">
-        <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
-            <Link
-              to="/swirdle"
-              className="group rounded-xl border bg-white hover:shadow-sm transition p-5 flex flex-col"
-            >
-              <div className="flex items-center justify-between">
-                <h3 className="font-semibold text-gray-900">Swirdle</h3>
-                <Trophy className="w-4 h-4 text-amber-600" />
-              </div>
-              <p className="mt-2 text-sm text-gray-600">Daily wine word. Six guesses. Smart hints.</p>
-              <span className="mt-auto pt-4 text-sm text-amber-700 group-hover:underline">Play now</span>
-            </Link>
-
-            <Link
-              to="/vocab"
-              className="group rounded-xl border bg-white hover:shadow-sm transition p-5 flex flex-col"
-            >
-              <div className="flex items-center justify-between">
-                <h3 className="font-semibold text-gray-900">Vino Vocab</h3>
-                <BookOpen className="w-4 h-4 text-amber-600" />
-              </div>
-              <p className="mt-2 text-sm text-gray-600">Clear, usable definitions with Matt’s notes.</p>
-              <span className="mt-auto pt-4 text-sm text-amber-700 group-hover:underline">Browse terms</span>
-            </Link>
-
-            <Link
-              to="/shorts"
-              className="group rounded-xl border bg-white hover:shadow-sm transition p-5 flex flex-col"
-            >
-              <div className="flex items-center justify-between">
-                <h3 className="font-semibold text-gray-900">Shorts</h3>
-                <PlayCircle className="w-4 h-4 text-amber-600" />
-              </div>
-              <p className="mt-2 text-sm text-gray-600">60–90s hits on grapes, regions, and techniques.</p>
-              <span className="mt-auto pt-4 text-sm text-amber-700 group-hover:underline">Watch</span>
-            </Link>
-
-            <Link
-              to="/pricing"
-              className="group rounded-xl border bg-white hover:shadow-sm transition p-5 flex flex-col"
-            >
-              <div className="flex items-center justify-between">
-                <h3 className="font-semibold text-gray-900">Go Pro</h3>
-                <Sparkles className="w-4 h-4 text-amber-600" />
-              </div>
-              <p className="mt-2 text-sm text-gray-600">Unlock streaks, stats, and advanced vocab.</p>
-              <span className="mt-auto pt-4 text-sm text-amber-700 group-hover:underline">See plans</span>
-            </Link>
+      {/* Trust Section */}
+      <section className="bg-white py-16 px-6 text-center">
+        <h2 className="text-2xl font-bold mb-10 text-gray-800">Trusted by wine lovers worldwide</h2>
+        <div className="flex flex-wrap justify-center gap-10">
+          <div>
+            <Star className="mx-auto text-yellow-500 mb-2" size={32} />
+            <p className="font-semibold">30+ years</p>
+            <p className="text-sm text-gray-500">Winemaking experience</p>
           </div>
-
-          {/* Trust strip / tiny benefits */}
-          <div className="mt-8 grid sm:grid-cols-3 gap-3 text-sm text-gray-600">
-            <div className="rounded-lg border bg-white p-3">Plain-English definitions (no fluff)</div>
-            <div className="rounded-lg border bg-white p-3">Built for WSET learners & the wine-curious</div>
-            <div className="rounded-lg border bg-white p-3">Daily nudge to keep you consistent</div>
+          <div>
+            <Award className="mx-auto text-purple-600 mb-2" size={32} />
+            <p className="font-semibold">Wine Spectator Top 100</p>
+            <p className="text-sm text-gray-500">10 years in a row</p>
           </div>
+          <div>
+            <Users className="mx-auto text-blue-600 mb-2" size={32} />
+            <p className="font-semibold">Certified Wine Judge</p>
+            <p className="text-sm text-gray-500">International competitions</p>
+          </div>
+        </div>
+      </section>
+
+      {/* Testimonials */}
+      <section className="bg-gray-50 py-16 px-6 text-center">
+        <h2 className="text-xl font-bold text-gray-800 mb-4">This is wine education for real people.</h2>
+        <p className="text-gray-600 max-w-2xl mx-auto mb-10">
+          Not stuffy. Not snobby. Just brilliant wine, great stories, and a winemaker who wants to take you along for the ride.
+        </p>
+        <div className="grid gap-6 sm:grid-cols-1 md:grid-cols-3 max-w-6xl mx-auto">
+          <div className="bg-white p-6 rounded-xl shadow-md">
+            <p className="italic mb-4">"Matt’s approach transformed how I understand wine. The blind tastings are addictive!"</p>
+            <p className="text-sm font-medium">Sarah Chen ⭐ Premium Member</p>
+            <p className="text-xs text-gray-500">Completed 15 courses</p>
+          </div>
+          <div className="bg-white p-6 rounded-xl shadow-md">
+            <p className="italic mb-4">"Weekly wine shorts are perfect for my schedule. Learning so much in just 10 minutes!"</p>
+            <p className="text-sm font-medium">James Rodriguez 🟣 Basic Member</p>
+            <p className="text-xs text-gray-500">45-day learning streak</p>
+          </div>
+          <div className="bg-white p-6 rounded-xl shadow-md">
+            <p className="italic mb-4">"Started with the free guide and now I’m hooked. The community is so welcoming!"</p>
+            <p className="text-sm font-medium">Emma Thompson ⚪ Free Member</p>
+            <p className="text-xs text-gray-500">Downloaded wine guide</p>
+          </div>
+        </div>
+        <div className="mt-10">
+          <Link to="/signup" className="bg-green-600 hover:bg-green-700 text-white font-semibold py-3 px-6 rounded-xl shadow">
+            🍷 Join Matt Decanted Today
+          </Link>
         </div>
       </section>
     </div>
