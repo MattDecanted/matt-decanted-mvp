@@ -1,15 +1,13 @@
+// src/pages/Swirdle.tsx
 import React, { useState, useEffect } from 'react';
-import { useLanguage } from '../context/LanguageContext'; 
-// If you use alias paths everywhere else, you can switch the above to:
-// import { useLanguage } from '@/context/LanguageContext';
+import { Wine, Trophy, Target, Share2, Brain, Calendar, TrendingUp, Lightbulb, X, CheckCircle, Shield } from 'lucide-react';
 
 import { useAuth } from '@/context/AuthContext';
 import { usePoints } from '@/context/PointsContext';
-import { supabase } from '@/lib/supabase';
-// If your project still uses the older relative import here, use:
-// import { supabase } from '../lib/supabaseClient';
+import { supabase } from '@/lib/supabaseClient';
 
-import { Wine, Trophy, Target, Share2, Brain, Calendar, TrendingUp, Lightbulb, X, CheckCircle, Shield } from 'lucide-react';
+// keep these relative paths as in your project
+import { useLanguage } from '../context/LanguageContext';
 import LoadingSpinner from '../components/Common/LoadingSpinner';
 import { computeStatuses } from '../features/swirdle/utils';
 import {
@@ -23,6 +21,10 @@ import {
   UserStats,
 } from '../features/swirdle/swirdle.service';
 
+const HINT_COST = 5;        // ✅ cost to buy a hint
+const WIN_POINTS = 15;      // ✅ points for a Swirdle win
+const maxGuesses = 6;
+
 const Swirdle: React.FC = () => {
   const { t } = useLanguage();
   const { user } = useAuth();
@@ -35,7 +37,7 @@ const Swirdle: React.FC = () => {
 
   const [loading, setLoading] = useState(true);
   const [currentGuess, setCurrentGuess] = useState('');
-  const [guesses, setGuesses] = useState<string[]>(['', '', '', '', '', '']);
+  const [guesses, setGuesses] = useState<string[]>(Array(maxGuesses).fill(''));
   const [gameComplete, setGameComplete] = useState(false);
   const [gameWon, setGameWon] = useState(false);
 
@@ -53,18 +55,19 @@ const Swirdle: React.FC = () => {
   const [adminBusy, setAdminBusy] = useState(false);
   const dashboardUrl = import.meta.env.VITE_SUPABASE_DASHBOARD_URL as string | undefined;
 
-  const [awardBusy, setAwardBusy] = useState(false); // ✅ guard to avoid double-awards
-  const maxGuesses = 6;
+  // Guards to prevent duplicate actions
+  const [awardBusy, setAwardBusy] = useState(false);
+  const [purchaseBusy, setPurchaseBusy] = useState(false);
 
   useEffect(() => {
     loadTodaysGame();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user]);
+  }, [user?.id]);
 
   const loadTodaysGame = async () => {
     const today = new Date().toISOString().split('T')[0];
 
-    // Safe mock (works even if DB has nothing scheduled)
+    // Safe mock for preview (if no DB word is scheduled/published)
     const mockWord: SwirdleWord = {
       id: 'mock-1',
       word: 'TERROIR',
@@ -94,12 +97,12 @@ const Swirdle: React.FC = () => {
     try {
       setLoading(true);
 
-      // 1) Today’s word (published + scheduled)
+      // 1) Today’s published word
       const { data: wordData } = await getWordForDate(today);
       setDbWordAvailable(!!wordData);
       setTodaysWord(wordData ?? mockWord);
 
-      // 2) If signed in, check admin status
+      // 2) Admin check
       if (user) {
         const { data: adminRow } = await supabase
           .from('admins')
@@ -111,15 +114,15 @@ const Swirdle: React.FC = () => {
         setIsAdmin(false);
       }
 
-      // 3) User stuff only if signed-in AND real DB word
+      // 3) User attempt + stats when signed in and real word present
       if (user && wordData) {
         const { data: attempt } = await getAttempt(user.id, wordData.id);
         if (attempt) {
           setUserAttempt(attempt);
-          setGuesses(attempt.guesses || ['', '', '', '', '', '']);
+          setGuesses(attempt.guesses || Array(maxGuesses).fill(''));
           setCurrentAttempt(attempt.attempts || 0);
           setGameComplete(!!attempt.completed);
-          setGameWon(!!attempt.completed);
+          setGameWon(!!attempt.completed && !!attempt.won);
           setHintsUsed(attempt.hints_used || []);
         }
 
@@ -136,7 +139,7 @@ const Swirdle: React.FC = () => {
     }
   };
 
-  // Save with overrides so we don't rely on async state
+  // Persist attempt (with override to avoid async state race)
   const saveAttempt = async (override?: { completed?: boolean; won?: boolean; attempts?: number }) => {
     if (!user || !todaysWord || !dbWordAvailable) return;
 
@@ -154,6 +157,8 @@ const Swirdle: React.FC = () => {
         completed,
         hints_used: hintsUsed,
         completed_at: completed ? new Date().toISOString() : null,
+        // @ts-ignore allow won on your model if present
+        won,
       };
 
       const { data: saved } = await recordAttempt(base);
@@ -168,7 +173,7 @@ const Swirdle: React.FC = () => {
     }
   };
 
-  // ✅ Award handler when the player wins
+  // ✅ Award on win: event → +points → badges → refresh header
   const handleWinAward = async (guessesCount: number) => {
     if (!user?.id || awardBusy) return;
     setAwardBusy(true);
@@ -178,9 +183,9 @@ const Swirdle: React.FC = () => {
         p_type: 'SWIRDLE_WIN',
         p_meta: { guesses: guessesCount },
       });
-      await supabase.rpc('add_points', { p_user: user.id, p_points: 15 });
+      await supabase.rpc('add_points', { p_user: user.id, p_points: WIN_POINTS });
       await supabase.rpc('evaluate_badges', { p_user: user.id });
-      await refreshPoints(); // update header immediately
+      await refreshPoints();
     } catch (e) {
       console.error('Swirdle award failed:', e);
     } finally {
@@ -188,6 +193,42 @@ const Swirdle: React.FC = () => {
     }
   };
 
+  // ✅ Buy a hint with points
+  async function buyHint(hintIndex: number) {
+    if (!user?.id || purchaseBusy) return;
+    setPurchaseBusy(true);
+    try {
+      const { data: ok, error } = await supabase.rpc('spend_points', {
+        p_user: user.id,
+        p_cost: HINT_COST,
+        p_reason: 'HINT_PURCHASE',
+        p_meta: { game: 'SWIRDLE', hint_index: hintIndex, attempt: currentAttempt },
+      });
+      if (error) throw error;
+      if (!ok) {
+        alert('Not enough points to buy this hint.');
+        return;
+      }
+
+      // Optional analytics event
+      await supabase.rpc('record_event', {
+        p_user: user.id,
+        p_type: 'HINT_PURCHASED',
+        p_meta: { game: 'SWIRDLE', hint_index: hintIndex, cost: HINT_COST },
+      });
+
+      // unlock and refresh header points
+      useHint(hintIndex);
+      await refreshPoints();
+    } catch (e: any) {
+      console.error('buyHint failed:', e);
+      alert(e.message ?? 'Purchase failed.');
+    } finally {
+      setPurchaseBusy(false);
+    }
+  }
+
+  // Input -> submit
   const handleSubmitGuess = () => {
     if (!todaysWord || currentGuess.length !== todaysWord.word.length || gameComplete) return;
 
@@ -207,8 +248,7 @@ const Swirdle: React.FC = () => {
       generateShareText(newAttemptCount, true);
       if (user) {
         saveAttempt({ completed: true, won: true, attempts: newAttemptCount });
-        // ✅ award points + badges on win
-        void handleWinAward(newAttemptCount);
+        void handleWinAward(newAttemptCount); // ✅ award
       }
     } else if (newAttemptCount === maxGuesses) {
       setGameComplete(true);
@@ -233,7 +273,7 @@ const Swirdle: React.FC = () => {
     if (!hintsUsed.includes(hintIndex)) {
       setHintsUsed((prev) => [...prev, hintIndex]);
       setShowHintModal(false);
-      if (user) saveAttempt(); // just persist hints
+      if (user) saveAttempt(); // persist hints
     }
   };
 
@@ -368,7 +408,6 @@ const Swirdle: React.FC = () => {
       if (error) throw error;
       setTodaysWord({ ...todaysWord, date_scheduled: today, is_published: true });
     } catch (e: any) {
-      // Likely the unique partial index was hit (another word already published today)
       alert(`Set as today failed: ${e.message || e}`);
     } finally {
       setAdminBusy(false);
@@ -431,7 +470,7 @@ const Swirdle: React.FC = () => {
             </span>
           </div>
 
-          {/* Login prompt for non-users */}
+          {/* Login prompt */}
           {!user && (
             <div className="mt-4 bg-blue-50 border border-blue-200 rounded-lg p-4">
               <p className="text-blue-800 text-sm">
@@ -441,7 +480,7 @@ const Swirdle: React.FC = () => {
           )}
         </div>
 
-        {/* Admin tools (visible to admins only) */}
+        {/* Admin tools */}
         {isAdmin && (
           <div className="max-w-4xl mx-auto mb-8">
             <div className="bg-white border border-purple-200 rounded-lg p-4 shadow-sm">
@@ -628,7 +667,20 @@ const Swirdle: React.FC = () => {
                       <span className="font-medium">Hint {index + 1}:</span>
                       <span className="ml-2">{isUnlocked ? hint : '???'}</span>
                     </div>
-                    {isUnlocked && <CheckCircle className="w-4 h-4 text-blue-600" />}
+
+                    {isUnlocked ? (
+                      <CheckCircle className="w-4 h-4 text-blue-600" />
+                    ) : user ? (
+                      <button
+                        onClick={() => buyHint(index)}
+                        disabled={purchaseBusy}
+                        className="text-xs px-2 py-1 rounded border bg-white hover:bg-gray-50"
+                      >
+                        {purchaseBusy ? '...' : `Buy (-${HINT_COST} pts)`}
+                      </button>
+                    ) : (
+                      <a href="/signin" className="text-xs text-blue-600 underline">Sign in</a>
+                    )}
                   </div>
                 </div>
               );
@@ -636,7 +688,7 @@ const Swirdle: React.FC = () => {
           </div>
         </div>
 
-        {/* User Stats (only for logged in users) */}
+        {/* User Stats */}
         {user && userStats && (
           <div className="max-w-lg mx-auto">
             <div className="bg-white rounded-lg shadow-lg border border-gray-200 p-6">
@@ -719,15 +771,25 @@ const Swirdle: React.FC = () => {
               </div>
 
               <div className="flex space-x-3">
-                <button
-                  onClick={() => {
-                    const hintIndex = currentAttempt - 3;
-                    useHint(hintIndex);
-                  }}
-                  className="flex-1 bg-amber-600 hover:bg-amber-700 text-white py-2 px-4 rounded-lg font-medium transition-colors"
-                >
-                  Use Hint
-                </button>
+                {user ? (
+                  <button
+                    onClick={() => {
+                      const hintIndex = currentAttempt - 3; // 0..2
+                      buyHint(hintIndex);
+                    }}
+                    disabled={purchaseBusy}
+                    className="flex-1 bg-amber-600 hover:bg-amber-700 text-white py-2 px-4 rounded-lg font-medium transition-colors disabled:opacity-50"
+                  >
+                    {purchaseBusy ? 'Processing…' : `Buy Hint (-${HINT_COST} pts)`}
+                  </button>
+                ) : (
+                  <a
+                    href="/signin"
+                    className="flex-1 bg-amber-600 hover:bg-amber-700 text-white py-2 px-4 rounded-lg font-medium text-center"
+                  >
+                    Sign in to buy hint
+                  </a>
+                )}
                 <button
                   onClick={() => setShowHintModal(false)}
                   className="flex-1 border border-gray-300 text-gray-700 hover:bg-gray-50 py-2 px-4 rounded-lg font-medium transition-colors"
