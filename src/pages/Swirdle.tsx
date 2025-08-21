@@ -18,7 +18,6 @@ import { useAuth } from '@/context/AuthContext';
 import { usePoints } from '@/context/PointsContext';
 import { supabase } from '@/lib/supabase';
 
-// keep these relative paths as in your project
 import { computeStatuses } from '../features/swirdle/utils';
 import {
   getWordForDate,
@@ -31,8 +30,8 @@ import {
   UserStats,
 } from '../features/swirdle/swirdle.service';
 
-const HINT_COST = 5;        // ✅ cost to buy a hint
-const WIN_POINTS = 15;      // ✅ points for a Swirdle win
+const HINT_COST = 5;        // cost to buy a hint
+const WIN_POINTS = 15;      // points for a Swirdle win
 const maxGuesses = 6;
 
 const Spinner = () => (
@@ -45,7 +44,7 @@ const Spinner = () => (
 );
 
 const Swirdle: React.FC = () => {
-  // 🔧 Local no-op translator so we don’t depend on LanguageProvider
+  // Local no-op translator so we don’t depend on LanguageProvider
   const t = (_key: string, fallback?: string) => fallback ?? '';
 
   const { user } = useAuth();
@@ -84,86 +83,87 @@ const Swirdle: React.FC = () => {
     loadTodaysGame();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.id]);
-const loadTodaysGame = async () => {
-  const today = new Date().toISOString().split('T')[0];
 
-  // Safe mock for preview (if no DB word is scheduled/published)
-  const mockWord: SwirdleWord = {
-    id: 'mock-1',
-    word: 'TERROIR',
-    definition: 'The complete natural environment in which a wine is produced',
-    difficulty: 'intermediate',
-    category: 'tasting_term',
-    hints: [
-      'This French concept relates to wine character',
-      'It includes soil, climate, and topography',
-      'Essential for understanding wine regions',
-    ],
-    date_scheduled: today,
-    is_published: true,
-  };
+  const loadTodaysGame = async () => {
+    const today = new Date().toISOString().split('T')[0];
 
-  const mockStats: UserStats = {
-    user_id: 'mock',
-    current_streak: 7,
-    max_streak: 15,
-    games_played: 23,
-    games_won: 18,
-    average_attempts: 4.2,
-    last_played: null,
-    updated_at: null,
-  };
+    // Safe mock for preview (if no DB word is scheduled/published)
+    const mockWord: SwirdleWord = {
+      id: 'mock-1',
+      word: 'TERROIR',
+      definition: 'The complete natural environment in which a wine is produced',
+      difficulty: 'intermediate',
+      category: 'tasting_term',
+      hints: [
+        'This French concept relates to wine character',
+        'It includes soil, climate, and topography',
+        'Essential for understanding wine regions',
+      ],
+      date_scheduled: today,
+      is_published: true,
+    };
 
-  try {
-    setLoading(true);
+    const mockStats: UserStats = {
+      user_id: 'mock',
+      current_streak: 7,
+      max_streak: 15,
+      games_played: 23,
+      games_won: 18,
+      average_attempts: 4.2,
+      last_played: null,
+      updated_at: null,
+    };
 
-    // 1) Today’s published word
-    const { data: wordData, error: wordErr } = await getWordForDate(today);
-    if (wordErr) console.error('getWordForDate error:', wordErr);
-    setDbWordAvailable(!!wordData);
-    setTodaysWord(wordData ?? mockWord);
+    try {
+      setLoading(true);
 
-    // 2) Admin check
-    if (user) {
-      const { data: adminRow, error: adminErr } = await supabase
-        .from('admins')
-        .select('user_id')
-        .eq('user_id', user.id)
-        .maybeSingle();
-      if (adminErr) console.error('admin check error:', adminErr);
-      setIsAdmin(!!adminRow);
-    } else {
-      setIsAdmin(false);
-    }
+      // 1) Today’s published word
+      const { data: wordData, error: wordErr } = await getWordForDate(today);
+      if (wordErr) console.error('getWordForDate error:', wordErr);
+      setDbWordAvailable(!!wordData);
+      setTodaysWord(wordData ?? mockWord);
 
-    // 3) User attempt + stats (only when signed in)
-    if (user && wordData) {
-      const { data: attempt } = await getAttempt(user.id, wordData.id);
-      if (attempt) {
-        setUserAttempt(attempt);
-        setGuesses(attempt.guesses || Array(maxGuesses).fill(''));
-        setCurrentAttempt(attempt.attempts || 0);
-        setGameComplete(!!attempt.completed);
-        setGameWon(!!attempt.completed && !!attempt.won);
-        setHintsUsed(attempt.hints_used || []);
+      // 2) Admin check
+      if (user) {
+        const { data: adminRow, error: adminErr } = await supabase
+          .from('admins')
+          .select('user_id')
+          .eq('user_id', user.id)
+          .maybeSingle();
+        if (adminErr) console.error('admin check error:', adminErr);
+        setIsAdmin(!!adminRow);
+      } else {
+        setIsAdmin(false);
       }
 
-      const { data: stats } = await getUserStats(user.id);
-      setUserStats(stats ?? mockStats);
-    } else if (user) {
-      // logged-in but no real word today → show mock stats
-      setUserStats(mockStats);
-    } else {
-      // guest user → no stats
-      setUserStats(null);
+      // 3) User attempt + stats (only when signed in)
+      if (user && wordData) {
+        const { data: attempt } = await getAttempt(user.id, wordData.id);
+        if (attempt) {
+          setUserAttempt(attempt);
+          setGuesses(attempt.guesses || Array(maxGuesses).fill(''));
+          setCurrentAttempt(attempt.attempts || 0);
+          setGameComplete(!!attempt.completed);
+          setGameWon(!!attempt.completed && !!(attempt as any).won);
+          setHintsUsed(attempt.hints_used || []);
+        }
+
+        const { data: stats } = await getUserStats(user.id);
+        setUserStats(stats ?? mockStats);
+      } else if (user) {
+        // logged-in but no real word today → show mock stats
+        setUserStats(mockStats);
+      } else {
+        // guest user → no stats
+        setUserStats(null);
+      }
+    } catch (e) {
+      console.error('Error loading Swirdle game:', e);
+      setError("Failed to load today's game");
+    } finally {
+      setLoading(false);
     }
-  } catch (e) {
-    console.error('Error loading Swirdle game:', e);
-    setError("Failed to load today's game");
-  } finally {
-    setLoading(false);
-  }
-};
+  };
 
   // Persist attempt (with override to avoid async state race)
   const saveAttempt = async (override?: { completed?: boolean; won?: boolean; attempts?: number }) => {
@@ -199,7 +199,7 @@ const loadTodaysGame = async () => {
     }
   };
 
-  // ✅ Award on win: event → +points → badges → refresh header
+  // Award on win: event → +points → badges → refresh header
   const handleWinAward = async (guessesCount: number) => {
     if (!user?.id || awardBusy) return;
     setAwardBusy(true);
@@ -219,7 +219,7 @@ const loadTodaysGame = async () => {
     }
   };
 
-  // ✅ Buy a hint with points
+  // Buy a hint with points
   async function buyHint(hintIndex: number) {
     if (!user?.id || purchaseBusy) return;
     setPurchaseBusy(true);
@@ -274,7 +274,7 @@ const loadTodaysGame = async () => {
       generateShareText(newAttemptCount, true);
       if (user) {
         saveAttempt({ completed: true, won: true, attempts: newAttemptCount });
-        void handleWinAward(newAttemptCount); // ✅ award
+        void handleWinAward(newAttemptCount);
       }
     } else if (newAttemptCount === maxGuesses) {
       setGameComplete(true);
@@ -440,13 +440,13 @@ const loadTodaysGame = async () => {
     }
   };
 
+  // ===== Early returns (guards) =====
   if (loading) {
     return (
-    return (
-  <div className="min-h-screen flex items-center justify-center">
-    <Spinner />
-  </div>
-);
+      <div className="min-h-screen flex items-center justify-center">
+        <Spinner />
+      </div>
+    );
   }
 
   if (error) {
@@ -473,6 +473,7 @@ const loadTodaysGame = async () => {
     );
   }
 
+  // ===== Main render =====
   return (
     <div className="min-h-screen bg-gradient-to-br from-purple-50 via-white to-amber-50">
       <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
@@ -610,7 +611,7 @@ const loadTodaysGame = async () => {
                   type="text"
                   value={currentGuess}
                   onChange={(e) => setCurrentGuess(e.target.value.slice(0, todaysWord.word.length).toUpperCase())}
-                  onKeyPress={(e) => e.key === 'Enter' && handleSubmitGuess()}
+                  onKeyDown={(e) => e.key === 'Enter' && handleSubmitGuess()}
                   className="flex-1 px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent font-mono text-lg text-center uppercase"
                   placeholder={`Enter ${todaysWord.word.length}-letter wine term`}
                   maxLength={todaysWord.word.length}
