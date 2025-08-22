@@ -1,153 +1,84 @@
 // netlify/functions/label-ocr.ts
 import type { Handler } from '@netlify/functions';
-import { parse as parseMultipart } from 'parse-multipart-data';
+import parse from 'parse-multipart-data';
+import vision from '@google-cloud/vision';
 
-type OCRResponse = {
-  text: string;
-  labelHints: {
-    vintage_year?: number | null;
-    is_non_vintage?: boolean;
-    inferred_variety?: string | null;
-  };
-};
-
-const VARIETY_HINTS = [
-  'CHARDONNAY',
-  'PINOT NOIR',
-  'PINOT MEUNIER',
-  'MERLOT',
-  'CABERNET',
-  'SYRAH',
-  'SHIRAZ',
-  'SANGIOVESE',
-  'TEMPRANILLO',
-  'ZINFANDEL',
-  'PRIMITIVO',
-  'RIESLING',
-  'GEWURZTRAMINER',
-  'SAUVIGNON',
-  'ALBARINO',
-  'CHENIN',
-  'GRUNER',
-  'NEBBIOLO',
-  'BARBERA',
-  'GAMAY',
-];
-
-function extractBase64FromDataUrl(dataUrl: string) {
-  const m = dataUrl.match(/^data:(?:image\/[a-zA-Z0-9.+-]+);base64,(.+)$/);
-  return m ? m[1] : null;
-}
-
-function normalizeText(raw: string) {
-  // collapse repeated whitespace, keep newlines
-  return raw
-    .replace(/\r/g, '')
-    .split('\n')
-    .map((l) => l.trim())
-    .filter(Boolean)
-    .join('\n');
-}
-
-function inferHints(text: string): OCRResponse['labelHints'] {
-  const U = text.toUpperCase();
-
-  // Vintage: find a plausible 19xx/20xx year
-  const yearMatch = U.match(/\b(19[5-9]\d|20[0-4]\d)\b/);
-  const vintage_year = yearMatch ? Number(yearMatch[1]) : null;
-
-  // NV detection (non-vintage)
-  const is_non_vintage =
-    /\bNV\b/.test(U) || /\bNON[\s-]?VINTAGE\b/.test(U) || (!vintage_year && /\bCHAMPAGNE\b/.test(U));
-
-  // Variety hints: find closest “single word” match in our shortlist
-  const inferred_variety =
-    VARIETY_HINTS.find((v) => U.includes(v)) || null;
-
-  return { vintage_year, is_non_vintage, inferred_variety };
-}
-
-async function callVision(base64: string, apiKey: string) {
-  const url = `https://vision.googleapis.com/v1/images:annotate?key=${apiKey}`;
-  const body = {
-    requests: [
-      {
-        image: { content: base64 },
-        features: [{ type: 'TEXT_DETECTION' }],
-      },
-    ],
-  };
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+function json(status: number, body: any) {
+  return {
+    statusCode: status,
+    headers: { 'content-type': 'application/json' },
     body: JSON.stringify(body),
-  });
+  };
+}
 
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`Vision API error ${res.status}: ${text}`);
-  }
-
-  const json = (await res.json()) as any;
-  const fullText = json?.responses?.[0]?.fullTextAnnotation?.text || '';
-  return fullText as string;
+function getVisionClient() {
+  // Expect a base64-encoded service account JSON in env var GCP_SA_KEY
+  const b64 = process.env.GCP_SA_KEY;
+  if (!b64) throw new Error('Missing env var GCP_SA_KEY (base64 of service account JSON)');
+  const json = Buffer.from(b64, 'base64').toString('utf8');
+  const creds = JSON.parse(json);
+  return new vision.ImageAnnotatorClient({ credentials: creds });
 }
 
 export const handler: Handler = async (event) => {
   try {
-    const apiKey = process.env.GOOGLE_CLOUD_API_KEY;
-    if (!apiKey) {
-      return {
-        statusCode: 500,
-        body: JSON.stringify({ error: 'GOOGLE_CLOUD_API_KEY not set' }),
-      };
+    if (event.httpMethod !== 'POST') {
+      return json(405, { error: 'Method Not Allowed' });
     }
 
-    let base64: string | null = null;
-
-    // 1) multipart form (file upload)
-    const contentType = event.headers['content-type'] || event.headers['Content-Type'] || '';
-    if (contentType.startsWith('multipart/form-data')) {
-      const boundaryMatch = contentType.match(/boundary=([^;]+)/i);
-      if (!boundaryMatch) {
-        return { statusCode: 400, body: JSON.stringify({ error: 'Boundary not found' }) };
-      }
-      const boundary = boundaryMatch[1];
-      const raw = event.isBase64Encoded && event.body ? Buffer.from(event.body, 'base64') : Buffer.from(event.body || '');
-      const parts = parseMultipart(raw, boundary);
-
-      const filePart = parts.find((p) => p.name === 'file' || (p.filename && p.type?.startsWith('image/')));
-      if (!filePart || !filePart.data) {
-        return { statusCode: 400, body: JSON.stringify({ error: 'No file provided' }) };
-      }
-      base64 = Buffer.from(filePart.data).toString('base64');
-    } else if (event.body) {
-      // 2) JSON payload with imageBase64 (data URL or bare base64)
-      const json = JSON.parse(event.body);
-      if (json.imageBase64) {
-        base64 = extractBase64FromDataUrl(json.imageBase64) ?? json.imageBase64;
-      }
+    const contentType = event.headers['content-type'] || event.headers['Content-Type'];
+    if (!contentType || !contentType.includes('multipart/form-data')) {
+      return json(400, { error: 'Expected multipart/form-data' });
     }
 
-    if (!base64) {
-      return { statusCode: 400, body: JSON.stringify({ error: 'No image provided' }) };
+    const boundaryMatch = contentType.match(/boundary=([^\s;]+)/i);
+    if (!boundaryMatch) return json(400, { error: 'No multipart boundary' });
+
+    const bodyBuffer = Buffer.from(event.body || '', event.isBase64Encoded ? 'base64' : 'utf8');
+    const parts = parse.parse(bodyBuffer, boundaryMatch[1]);
+
+    const filePart =
+      parts.find((p) => p.filename && p.type && p.data) ||
+      parts.find((p) => p.name?.toLowerCase() === 'file');
+
+    if (!filePart) return json(400, { error: 'No file uploaded (field name "file")' });
+
+    // Guardrails
+    if (filePart.data.length > 8 * 1024 * 1024) {
+      return json(413, { error: 'File too large (max 8MB)' });
     }
 
-    const rawText = await callVision(base64, apiKey);
-    const text = normalizeText(rawText);
-    const labelHints = inferHints(text);
+    // Call Google Vision
+    const client = getVisionClient();
+    const [result] = await client.textDetection({ image: { content: filePart.data } });
+    const text = result?.fullTextAnnotation?.text || '';
 
-    const payload: OCRResponse = { text, labelHints };
+    // Very simple label “signal” extraction
+    const yearMatch = text.match(/\b(20\d{2}|19\d{2})\b/);
+    const nv = /\bNV\b/i.test(text) || /non[-\s]?vintage/i.test(text);
+    const varHint = ((): string | null => {
+      const candidates = [
+        'Chardonnay','Pinot Noir','Pinot Meunier','Merlot','Cabernet','Sauvignon','Riesling','Shiraz','Syrah',
+        'Nebbiolo','Sangiovese','Tempranillo','Zinfandel','Primitivo','Malbec','Barbera','Grenache','Gamay',
+      ];
+      const found = candidates.find((c) => new RegExp(`\\b${c}\\b`, 'i').test(text));
+      return found || null;
+    })();
 
-    return {
-      statusCode: 200,
-      body: JSON.stringify(payload),
-      headers: { 'Content-Type': 'application/json' },
-    };
+    return json(200, {
+      ok: true,
+      text,
+      labelHints: {
+        vintage_year: yearMatch ? Number(yearMatch[0]) : null,
+        is_non_vintage: nv,
+        inferred_variety: varHint,
+      },
+    });
   } catch (err: any) {
-    return {
-      statusCode: 500,
-      body: JSON.stringify({ error: err.message || 'Unknown error' }),
-    };
+    // Log full error to Netlify function logs
+    console.error('OCR error:', err);
+    return json(500, { error: 'OCR failed', detail: String(err?.message || err) });
   }
 };
+
+export default handler;
