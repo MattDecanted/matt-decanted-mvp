@@ -25,6 +25,7 @@ import TrialQuizManager from '@/pages/admin/TrialQuizManager';
 import DashboardLite from './pages/DashboardLite';
 import Swirdle from '@/pages/Swirdle';
 import SwirdleAdmin from '@/pages/admin/SwirdleAdmin';
+import WineOptionsGame from '@/pages/WineOptionsGame';
 
 // ⛔ Removed TrialQuizWidget from the homepage
 // import TrialQuizWidget from '@/components/TrialQuizWidget';
@@ -129,6 +130,9 @@ function App() {
                 <Route path="/admin/quizzes" element={<QuizManager />} />
                 <Route path="/admin/trial-quizzes" element={<TrialQuizManager />} />
                 <Route path="/admin/swirdle" element={<SwirdleAdmin />} />
+
+                {/* Options */}
+                <Route path="/wine-options" element={<WineOptionsGame />} />
 
                 {/* Dashboard / Account */}
                 <Route path="/dashboard" element={<DashboardLite />} />
