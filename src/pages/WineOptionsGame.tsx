@@ -1,772 +1,406 @@
-// src/pages/WineOptionsGame.tsx
-import React, { useCallback, useMemo, useRef, useState } from 'react';
+import React from 'react';
+import { Share2, Wine, Search, Loader2, CheckCircle2, AlertTriangle, Camera } from 'lucide-react';
+import OCRUpload from '@/components/OCRUpload';
 import { supabase } from '@/lib/supabase';
-import { Camera, Image as ImageIcon, Loader2, Share2, Copy, Check, RefreshCw } from 'lucide-react';
-
-/**
- * ---------- IMPORTANT SETUP ----------
- * 1) OCR_ENDPOINT should point to your Google Vision proxy (serverless function).
- *    If you already have a function, just put its path here (Netlify/Cloudflare/AWS).
- *    Example Netlify function name: `/.netlify/functions/label-ocr`
- * 2) Supabase table assumed: `wines`
- *    Columns used (adapt to your schema):
- *      id (uuid)
- *      display_name (text)
- *      producer (text)
- *      country (text)
- *      region (text)
- *      subregion (text)          -- nullable
- *      appellation (text)        -- nullable
- *      variety (text)            -- e.g. "Chardonnay", "Cabernet", "Zinfandel"
- *      color (text)              -- e.g. "White", "Red", "Rosé", "Sparkling"
- *      is_sparkling (boolean)    -- e.g. Champagne/Traditional Method
- *      is_fortified (boolean)
- *      old_world (boolean)       -- simple flag for Old vs New
- *      style (text)              -- e.g. "Blanc de Blancs", "Brut", "Barrel-fermented"
- *      vintage (int)             -- nullable (use NULL for NV)
- *      alt_names (text[])        -- nullable (brand/alternate spellings)
- *
- * If you use different names, adjust the type + queries below.
- */
-
-const OCR_ENDPOINT = '/.netlify/functions/label-ocr'; // <-- change to your existing Vision function path
 
 type WineRow = {
   id: string;
   display_name: string;
-  producer?: string | null;
   country?: string | null;
-  region?: string | null;
-  subregion?: string | null;
-  appellation?: string | null;
-  variety?: string | null;
-  color?: string | null;
-  is_sparkling?: boolean | null;
-  is_fortified?: boolean | null;
-  old_world?: boolean | null;
-  style?: string | null;
-  vintage?: number | null; // NV => null
-  alt_names?: string[] | null;
+  region?: string | null;        // e.g. "Burgundy" or "Marlborough"
+  appellation?: string | null;   // e.g. "Epernay", "Barolo DOCG"
+  variety?: string | null;       // e.g. "Chardonnay" or "Blend"
+  vintage?: number | null;       // 4-digit; null = NV
+  is_nv?: boolean | null;        // optional flag if you store it
+  world?: 'old' | 'new' | null;  // optional: precomputed
 };
 
 type LabelHints = {
   vintage_year?: number | null;
   is_non_vintage?: boolean;
-  inferred_variety?: string | null;
-  likely_origin?: string | null; // e.g., "Champagne", "Burgundy", "Mendoza"
-  keywords_found: string[];
+  inferred_variety?: string | null; // e.g. "Chardonnay" from "Blanc de Blancs"
 };
 
-type MatchPayload = {
-  rawText: string;
-  cleanedText: string;
-  labelHints: LabelHints;
-};
+const TABLE_NAME = 'wine_index'; // ← change to your actual catalog table/view
 
-type Question = {
-  id: string;
-  prompt: string;
-  options: string[];
-  correctIndex: number;
-  explanation?: string;
-};
+function extractLabelHints(text: string): LabelHints {
+  const t = text.toLowerCase();
 
-const yearRegex = /\b(19[5-9]\d|20[0-4]\d)\b/; // 1950–2049 safety
-const nvRegex = /\bN\.?\s?V\.?\b|\bNon[-\s]?Vintage\b/i;
+  // 1) Vintage year
+  // we look for 19xx/20xx in a sane range
+  const years = Array.from(t.matchAll(/\b(19|20)\d{2}\b/g)).map(m => Number(m[0]));
+  const possibleYear = years.find(y => y >= 1980 && y <= new Date().getFullYear());
 
-const VARIETY_KEYWORDS = [
-  'chardonnay',
-  'pinot noir',
-  'pinot meunier',
-  'merlot',
-  'cabernet',
-  'nebbiolo',
-  'sangiovese',
-  'tempranillo',
-  'riesling',
-  'gewurztraminer',
-  'zinfandel',
-  'primitivo',
-  'syrah',
-  'shiraz',
-  'gruner veltliner',
-  'grenache',
-  'malbec',
-  'chenin',
-  'barbera',
-  'gamay',
-  'fiano',
-  'mencia',
-  'touriga',
-];
+  // 2) NV detection
+  const isNV = /\bnv\b|\bnon\s*-?\s*vintage\b/.test(t);
 
-const ORIGIN_KEYWORDS = [
-  'champagne',
-  'epernay',
-  'reims',
-  'burgundy',
-  'bourgogne',
-  'bordeaux',
-  'napa',
-  'sonoma',
-  'barossa',
-  'tuscany',
-  'rioja',
-  'rheingau',
-  'alsace',
-  'mosel',
-  'mendoza',
-  'marlborough',
-  'chianti',
-  'barolo',
-  'barbaresco',
-  'loire',
-  'rhone',
-  'douro',
-  'priorat',
-];
-
-function normalizeText(s: string) {
-  return s.replace(/\s+/g, ' ').trim();
-}
-
-function extractHints(text: string): LabelHints {
-  const cleaned = text.replace(/\s+/g, ' ').toLowerCase();
-
-  const yearMatch = cleaned.match(yearRegex);
-  const vintage_year = yearMatch ? Number(yearMatch[0]) : null;
-
-  const is_non_vintage = nvRegex.test(cleaned);
-
-  // Variety inference — look for any known variety words
-  const foundVar = VARIETY_KEYWORDS.find((k) => cleaned.includes(k));
-  // If Champagne + "blanc de blancs" → chardonnay hint
-  let inferred_variety: string | null = foundVar || null;
-  if (!inferred_variety && cleaned.includes('blanc de blancs')) {
-    inferred_variety = 'chardonnay';
+  // 3) Variety inference
+  // Champagne: "blanc de blancs" -> Chardonnay
+  // "blanc de noirs" -> Pinot Noir / Meunier (we'll say Pinot Noir)
+  // Otherwise try a simple dictionary of common grapes.
+  let inferredVariety: string | null = null;
+  if (/blanc\s+de\s+blancs/.test(t)) {
+    inferredVariety = 'Chardonnay';
+  } else if (/blanc\s+de\s+noirs/.test(t)) {
+    inferredVariety = 'Pinot Noir';
+  } else {
+    const grapeList = [
+      'chardonnay', 'pinot noir', 'pinot meunier', 'riesling', 'sauvignon', 'cabernet',
+      'merlot', 'syrah', 'shiraz', 'malbec', 'tempranillo', 'nebbiolo', 'sangiovese',
+      'grenache', 'zinfandel', 'primitivo', 'chenin', 'viognier', 'gewurztraminer',
+      'gruner', 'barbera', 'mencía', 'touriga', 'gamay', 'aligoté'
+    ];
+    const found = grapeList.find(g => t.includes(g));
+    inferredVariety = found ? titleCase(found) : null;
   }
 
-  // Origin inference — look for place words
-  const foundOrigin = ORIGIN_KEYWORDS.find((k) => cleaned.includes(k));
-
-  // Keep track of all matched keywords (debug)
-  const keywords_found = [
-    ...(foundVar ? [foundVar] : []),
-    ...(foundOrigin ? [foundOrigin] : []),
-    ...(is_non_vintage ? ['nv'] : []),
-    ...(vintage_year ? [String(vintage_year)] : []),
-    ...(cleaned.includes('blanc de blancs') ? ['blanc de blancs'] : []),
-  ];
-
   return {
-    vintage_year,
-    is_non_vintage,
-    inferred_variety,
-    likely_origin: foundOrigin || null,
-    keywords_found,
+    vintage_year: isNV ? null : (possibleYear ?? null),
+    is_non_vintage: isNV,
+    inferred_variety: inferredVariety,
   };
 }
 
-function buildQuestions(w: WineRow, hints: LabelHints): Question[] {
-  const qs: Question[] = [];
-  const isChampagne =
-    (w.region?.toLowerCase().includes('champagne') ||
-      w.appellation?.toLowerCase().includes('champagne') ||
-      hints.likely_origin === 'champagne') ??
-    false;
-
-  // 1) Old vs New World
-  if (typeof w.old_world === 'boolean') {
-    qs.push({
-      id: 'old-world',
-      prompt: 'Old world or new world?',
-      options: ['Old world', 'New world'],
-      correctIndex: w.old_world ? 0 : 1,
-      explanation:
-        'Old world generally refers to Europe (and nearby), while new world is places like the US, Australia, NZ, South America, South Africa.',
-    });
-  }
-
-  // 2) Region or Country
-  if (w.country) {
-    const wrongs = ['France', 'Italy', 'Spain', 'USA', 'Australia', 'New Zealand', 'Argentina', 'Chile'].filter(
-      (c) => c.toLowerCase() !== w.country?.toLowerCase()
-    );
-    const opts = shuffleUnique([w.country, ...pickN(wrongs, 3)]);
-    qs.push({
-      id: 'country',
-      prompt: 'Which country is this wine from?',
-      options: opts,
-      correctIndex: opts.findIndex((x) => x === w.country),
-      explanation: 'Country of origin appears on the label and is a core part of wine identity.',
-    });
-  }
-
-  // 3) Variety (handle Champagne uncertainty)
-  if (w.variety || isChampagne || w.is_sparkling) {
-    let prompt = 'What is the primary grape variety?';
-    if (isChampagne || w.is_sparkling) {
-      prompt = 'For this Champagne, what is the most likely composition?';
-    }
-
-    const correct = (() => {
-      if (isChampagne || w.is_sparkling) {
-        if (w.style?.toLowerCase().includes('blanc de blancs')) return 'Chardonnay';
-        // If style indeterminate, accept “Pinot Noir & Chardonnay blend” as likely
-        return 'Pinot Noir & Chardonnay blend';
-      }
-      return properCase(w.variety || 'Chardonnay');
-    })();
-
-    const distractors = isChampagne || w.is_sparkling
-      ? ['Pinot Meunier only', 'Sauvignon Blanc', 'Syrah']
-      : ['Merlot', 'Riesling', 'Sauvignon Blanc', 'Syrah', 'Grenache'];
-
-    const options = shuffleUnique([correct, ...pickN(distractors, 3)]);
-    qs.push({
-      id: 'variety',
-      prompt,
-      options,
-      correctIndex: options.findIndex((x) => x === correct),
-      explanation:
-        isChampagne || w.is_sparkling
-          ? 'Most non-vintage Champagne is a blend dominated by Pinot Noir and Chardonnay; Blanc de Blancs indicates 100% Chardonnay.'
-          : 'Variety determines flavor, structure, and style; it’s often signaled on new-world labels.',
-    });
-  }
-
-  // 4) Vintage vs NV
-  {
-    const isNV = w.vintage == null;
-    const opts = isNV
-      ? ['Non-Vintage (NV)', '2018', '2016', '2020']
-      : [String(w.vintage), 'Non-Vintage (NV)', '2017', '2021'];
-
-    qs.push({
-      id: 'vintage',
-      prompt: 'What is the vintage?',
-      options: shuffleUnique(opts),
-      correctIndex: isNV ? opts.indexOf('Non-Vintage (NV)') : opts.indexOf(String(w.vintage)),
-      explanation:
-        'Vintage on a bottle is the year the grapes were harvested. NV (non-vintage) is common in traditional sparkling wine where multiple years are blended for a house style.',
-    });
-  }
-
-  // 5) Style/Color if we have it
-  if (w.color) {
-    const correct = properCase(w.color);
-    const all = ['Red', 'White', 'Rosé', 'Sparkling', 'Orange', 'Fortified'];
-    const distractors = all.filter((c) => c.toLowerCase() !== w.color?.toLowerCase());
-    const options = shuffleUnique([correct, ...pickN(distractors, 3)]);
-    qs.push({
-      id: 'color',
-      prompt: 'What is the wine style?',
-      options,
-      correctIndex: options.findIndex((x) => x === correct),
-      explanation: 'Style refers to broad categories like red, white, rosé, sparkling, etc.',
-    });
-  }
-
-  return qs.slice(0, 5);
+function titleCase(s: string) {
+  return s.replace(/\w\S*/g, (w) => w.charAt(0).toUpperCase() + w.slice(1));
 }
 
-function properCase(s?: string | null) {
-  if (!s) return '';
-  return s
-    .split(/\s+/)
-    .map((w) => w[0] ? w[0].toUpperCase() + w.slice(1).toLowerCase() : w)
-    .join(' ');
-}
-
-function pickN<T>(arr: T[], n: number): T[] {
-  const c = [...arr];
-  const out: T[] = [];
-  while (out.length < n && c.length) {
-    const i = Math.floor(Math.random() * c.length);
-    out.push(c.splice(i, 1)[0]);
-  }
-  return out;
-}
-function shuffleUnique<T>(arr: T[]): T[] {
-  return [...arr].sort(() => Math.random() - 0.5);
-}
-
-async function ocrFile(file: File): Promise<string> {
-  const body = new FormData();
-  body.append('file', file);
-  const res = await fetch(OCR_ENDPOINT, { method: 'POST', body });
-  if (!res.ok) throw new Error(`OCR failed: ${res.status} ${res.statusText}`);
-  const json = await res.json();
-  // Expect { text: "..." } back from your function
-  return String(json.text || '');
-}
-
-async function findWineCandidates(payload: MatchPayload): Promise<WineRow[]> {
-  // Try progressively: alt_names, display_name, producer, region/appellation, variety
-  const terms: string[] = [];
-
-  // from hints
-  if (payload.labelHints.likely_origin) terms.push(payload.labelHints.likely_origin);
-  if (payload.labelHints.inferred_variety) terms.push(payload.labelHints.inferred_variety);
-
-  // first line tokens
-  const lines = payload.rawText.split(/\n+/).map((l) => l.trim()).filter(Boolean);
-  if (lines.length) terms.push(lines[0]);
-
-  // unique-ish tokens > 2 chars, from cleaned text
-  const tokens = Array.from(
-    new Set(
-      payload.cleanedText
-        .split(/[^a-z0-9]+/i)
-        .filter((t) => t.length >= 3)
-    )
-  ).slice(0, 10);
-  terms.push(...tokens);
-
-  // Limit to 5 distinct terms for network sanity
-  const queryTerms = Array.from(new Set(terms)).slice(0, 5);
-
-  // 1) Try a single broad OR query with ilike on multiple fields
-  const { data, error } = await supabase
-    .from('wines')
-    .select('*')
-    .or(
-      queryTerms
-        .map((t) =>
-          [
-            `display_name.ilike.%${t}%`,
-            `producer.ilike.%${t}%`,
-            `region.ilike.%${t}%`,
-            `subregion.ilike.%${t}%`,
-            `appellation.ilike.%${t}%`,
-            `variety.ilike.%${t}%`,
-          ].join(',')
-        )
-        .join(',')
-    )
-    .limit(25);
-
-  if (error) {
-    console.error('Wine search error:', error);
-    return [];
-  }
-
-  // Simple score: count matched fields
-  const scored = (data || []).map((w) => {
-    const hay = [
-      w.display_name,
-      w.producer,
-      w.region,
-      w.subregion,
-      w.appellation,
-      w.variety,
-      w.country,
-      w.style,
-    ]
-      .filter(Boolean)
-      .join(' ')
-      .toLowerCase();
-    const score =
-      (payload.labelHints.inferred_variety && hay.includes(payload.labelHints.inferred_variety)) ? 3 : 0 +
-      (payload.labelHints.likely_origin && hay.includes(payload.labelHints.likely_origin)) ? 2 : 0 +
-      queryTerms.reduce((s, t) => (hay.includes(t.toLowerCase()) ? s + 1 : s), 0);
-
-    return { wine: w as WineRow, score };
-  });
-
-  return scored.sort((a, b) => b.score - a.score).map((s) => s.wine);
+function worldFromCountry(country?: string | null): 'old' | 'new' | null {
+  if (!country) return null;
+  const c = country.toLowerCase();
+  const OLD = ['france', 'italy', 'spain', 'germany', 'portugal', 'austria', 'greece', 'hungary'];
+  const NEW = ['usa', 'united states', 'new zealand', 'australia', 'chile', 'argentina', 'south africa', 'canada'];
+  if (OLD.includes(c)) return 'old';
+  if (NEW.includes(c)) return 'new';
+  return null;
 }
 
 const WineOptionsGame: React.FC = () => {
-  const inputRef = useRef<HTMLInputElement | null>(null);
-  const [file, setFile] = useState<File | null>(null);
-  const [imageUrl, setImageUrl] = useState<string | null>(null);
+  const [labelText, setLabelText] = React.useState('');
+  const [labelHints, setLabelHints] = React.useState<LabelHints | null>(null);
 
-  const [payload, setPayload] = useState<MatchPayload | null>(null);
-  const [wine, setWine] = useState<WineRow | null>(null);
-  const [candidates, setCandidates] = useState<WineRow[]>([]);
+  const [busy, setBusy] = React.useState(false);
+  const [error, setError] = React.useState<string | null>(null);
 
-  const [loading, setLoading] = useState(false);
-  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [wine, setWine] = React.useState<WineRow | null>(null);
 
-  const [questions, setQuestions] = useState<Question[]>([]);
-  const [answers, setAnswers] = useState<Record<string, number>>({});
-  const [shareDone, setShareDone] = useState(false);
-  const [copied, setCopied] = useState(false);
+  // user selections
+  const [guessWorld, setGuessWorld] = React.useState<'old' | 'new' | ''>('');
+  const [guessVariety, setGuessVariety] = React.useState<string>('');
+  const [guessCountry, setGuessCountry] = React.useState<string>('');
+  const [guessRegion, setGuessRegion] = React.useState<string>('');
+  const [guessVintage, setGuessVintage] = React.useState<string>(''); // 'NV' or 'YYYY'
 
-  const onPick = useCallback(async (f: File) => {
-    setFile(f);
-    setImageUrl(URL.createObjectURL(f));
-    setErrorMsg(null);
+  const [checked, setChecked] = React.useState(false);
+
+  const onOCR = (text: string) => {
+    setLabelText(text);
+    setLabelHints(extractLabelHints(text));
+    // reset state
     setWine(null);
-    setCandidates([]);
-    setQuestions([]);
-    setAnswers({});
-    setPayload(null);
+    setChecked(false);
+    setGuessWorld('');
+    setGuessVariety('');
+    setGuessCountry('');
+    setGuessRegion('');
+    setGuessVintage('');
+    setError(null);
+  };
 
-    setLoading(true);
+  const findMatch = async () => {
+    setBusy(true);
+    setError(null);
+    setWine(null);
     try {
-      const text = await ocrFile(f);
-      const cleanedText = normalizeText(text);
-      const labelHints = extractHints(text);
-      const p: MatchPayload = { rawText: text, cleanedText, labelHints };
-      setPayload(p);
+      // Simple matching heuristic:
+      // 1) Gather search terms from label (brand-like words + hints).
+      // 2) Do one or two ILIKE filters against your catalog table.
+      //
+      // ⚠️ Adjust `TABLE_NAME` and field names to match YOUR schema.
+      const t = labelText;
+      const hints = extractLabelHints(t);
+      setLabelHints(hints);
 
-      const found = await findWineCandidates(p);
-      setCandidates(found);
-      setWine(found[0] || null);
+      // naive tokenization: words >= 3 chars (skip years)
+      const tokens = Array.from(t.matchAll(/[A-Za-zÀ-ÖØ-öø-ÿ]{3,}/g)).map(m => m[0]);
+      const unique = Array.from(new Set(tokens)).slice(0, 8); // limit for safety
 
-      if (found[0]) {
-        const qs = buildQuestions(found[0], labelHints);
-        setQuestions(qs);
+      // Build a filtered query:
+      let query = supabase.from(TABLE_NAME).select('*').limit(10);
+
+      // If you store producer/brand/display_name, try that first
+      if (unique.length) {
+        // Use the first 2–3 tokens to avoid overly broad search
+        const primary = unique.slice(0, 3);
+        // We’ll OR-chain with ilike over display_name
+        // Supabase JS doesn’t have a direct "OR over same column" helper,
+        // so we can concatenate a filter with .or() using raw filters:
+        const ors = primary.map(tok => `display_name.ilike.%${tok}%`).join(',');
+        query = query.or(ors);
       }
-    } catch (e: any) {
-      console.error(e);
-      setErrorMsg(e.message || 'Label OCR failed. Try a clearer photo.');
-    } finally {
-      setLoading(false);
-    }
-  }, []);
 
-  const onShare = async () => {
-    const url = window.location.href;
-    const title = wine?.display_name ? `Wine Options: ${wine.display_name}` : 'Wine Options';
-    const text = wine
-      ? `I just played Wine Options on ${wine.display_name}! Think you can beat my score?`
-      : 'I just played Wine Options! Think you can beat my score?';
+      // Refine by country/variety if we inferred something likely
+      if (hints.inferred_variety) {
+        query = query.ilike('variety', `%${hints.inferred_variety}%`);
+      }
+      // If we detected NV vs year, we can hint:
+      if (hints.is_non_vintage) {
+        query = query.is('vintage', null);
+      } else if (hints.vintage_year) {
+        query = query.eq('vintage', hints.vintage_year);
+      }
 
-    // Prefer native share if available
-    if (navigator.share) {
-      try {
-        await navigator.share({ title, text, url });
-        setShareDone(true);
+      const { data, error: qErr } = await query;
+      if (qErr) throw qErr;
+
+      // Pick the first as the candidate (you can add ranking here)
+      const candidate: WineRow | undefined = (data ?? [])[0];
+      if (!candidate) {
+        setError('No close match found. You can still play by choosing options manually.');
+        setWine(null);
         return;
-      } catch {
-        // ignore and fall back to copy
       }
-    }
-    try {
-      await navigator.clipboard.writeText(url);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1200);
-    } catch {
-      // noop
+
+      // fill blanks with world inference if not stored
+      if (!candidate.world) {
+        candidate.world = worldFromCountry(candidate.country);
+      }
+
+      setWine(candidate);
+
+      // pre-seed guess with label hints (user can change)
+      if (!guessVintage) {
+        if (hints.is_non_vintage) setGuessVintage('NV');
+        else if (hints.vintage_year) setGuessVintage(String(hints.vintage_year));
+      }
+      if (!guessVariety && hints.inferred_variety) setGuessVariety(hints.inferred_variety);
+
+    } catch (e: any) {
+      setError(e?.message ?? 'Search failed');
+    } finally {
+      setBusy(false);
     }
   };
 
-  const score = useMemo(() => {
-    let s = 0;
-    for (const q of questions) {
-      if (answers[q.id] === q.correctIndex) s += 1;
-    }
-    return s;
-  }, [answers, questions]);
+  const checkAnswers = () => {
+    setChecked(true);
+  };
 
-  const reset = () => {
-    setFile(null);
-    setImageUrl(null);
-    setPayload(null);
-    setWine(null);
-    setCandidates([]);
-    setQuestions([]);
-    setAnswers({});
-    setErrorMsg(null);
-    setShareDone(false);
-    setCopied(false);
+  const doShare = async () => {
+    const shareText = `Wine Options — my picks:
+World: ${guessWorld || '—'} • Variety: ${guessVariety || '—'} • Country: ${guessCountry || '—'} • Region: ${guessRegion || '—'} • Vintage: ${guessVintage || '—'}
+${wine ? `Target: ${wine.display_name}` : ''}`;
+
+    try {
+      if (navigator.share) {
+        await navigator.share({
+          title: 'Wine Options',
+          text: shareText,
+          url: window.location.href,
+        });
+      } else {
+        await navigator.clipboard.writeText(`${shareText}\n${window.location.href}`);
+        alert('Copied to clipboard!');
+      }
+    } catch {
+      // ignore
+    }
+  };
+
+  const correctWorld = wine?.world ?? worldFromCountry(wine?.country);
+  const correctVariety = wine?.variety || '';
+  const correctCountry = wine?.country || '';
+  const correctRegion = wine?.region || wine?.appellation || '';
+  const correctVintage = wine?.vintage ? String(wine.vintage) : 'NV';
+
+  const isCorrect = (user: string | '' , truth: string | null | undefined) => {
+    if (!user || !truth) return false;
+    return user.trim().toLowerCase() === String(truth).trim().toLowerCase();
   };
 
   return (
-    <div className="max-w-4xl mx-auto">
-      <div className="mb-6">
-        <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">Wine Options</h1>
-        <p className="text-gray-600">Snap a label. We’ll do the rest — identify the wine and quiz you like a pro.</p>
-      </div>
+    <div className="max-w-4xl mx-auto space-y-6">
+      <header className="flex items-center gap-3">
+        <Wine className="w-6 h-6 text-purple-600" />
+        <h1 className="text-2xl font-bold">Wine Options</h1>
+      </header>
 
-      {/* Upload panel */}
-      <div className="bg-white border rounded-xl p-4 mb-6">
-        <div className="flex flex-wrap items-center gap-3">
+      {/* 1) Upload & OCR */}
+      <section className="bg-white border rounded-lg p-4 space-y-3">
+        <div className="flex items-center gap-2 text-sm font-medium">
+          <Camera className="w-4 h-4" />
+          Upload a label (photo/screenshot)
+        </div>
+        <OCRUpload
+          onText={(txt) => onOCR(txt)}
+        />
+        {labelText && (
+          <div className="text-xs text-gray-600">
+            {labelHints?.is_non_vintage ? 'NV detected' :
+              labelHints?.vintage_year ? `Vintage candidate: ${labelHints.vintage_year}` : 'No vintage found'} •
+            {labelHints?.inferred_variety ? ` Variety hint: ${labelHints.inferred_variety}` : ' No variety hint'}
+          </div>
+        )}
+
+        <div>
           <button
-            onClick={() => inputRef.current?.click()}
-            className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-black text-white"
+            onClick={findMatch}
+            disabled={!labelText || busy}
+            className="inline-flex items-center gap-2 px-3 py-2 rounded-md bg-black text-white disabled:opacity-50"
           >
-            <ImageIcon className="w-4 h-4" />
-            Upload label
+            {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Search className="w-4 h-4" />}
+            {busy ? 'Searching…' : 'Find a likely match'}
           </button>
-          <label className="cursor-pointer inline-flex items-center gap-2 px-4 py-2 rounded-lg border">
-            <Camera className="w-4 h-4" />
-            <span>Take photo</span>
-            <input
-              type="file"
-              accept="image/*"
-              capture="environment"
-              className="hidden"
-              onChange={(e) => {
-                const f = e.target.files?.[0];
-                if (f) onPick(f);
-              }}
-            />
-          </label>
-          <input
-            ref={inputRef}
-            type="file"
-            accept="image/*"
-            className="hidden"
-            onChange={(e) => {
-              const f = e.target.files?.[0];
-              if (f) onPick(f);
-            }}
-          />
+        </div>
 
-          {file && (
+        {error && (
+          <div className="flex items-center gap-2 text-red-700 bg-red-50 border border-red-200 rounded p-2 text-sm">
+            <AlertTriangle className="w-4 h-4" />
+            {error}
+          </div>
+        )}
+      </section>
+
+      {/* 2) Candidate (optional) */}
+      <section className="bg-white border rounded-lg p-4">
+        <div className="text-sm font-semibold mb-2">Candidate (you can still choose different answers)</div>
+
+        {!wine ? (
+          <div className="text-sm text-gray-600">No candidate yet. Upload a label and click “Find a likely match”.</div>
+        ) : (
+          <div className="text-sm text-gray-800">
+            <div><span className="font-medium">Matched:</span> {wine.display_name}</div>
+            <div className="text-gray-700 mt-1">
+              Variety: {wine.variety || '—'} • Country: {wine.country || '—'} • Region: {wine.region || wine.appellation || '—'}
+              {typeof wine.vintage === 'number' ? <> • Vintage: {wine.vintage}</> : <> • Vintage: NV</>}
+            </div>
+            {labelHints && (
+              <div className="text-xs text-gray-500 mt-1">
+                Label signals: {labelHints.is_non_vintage ? 'NV' : (labelHints.vintage_year ? `Year ${labelHints.vintage_year}` : '—')}
+                {labelHints.inferred_variety ? ` • Var hint: ${labelHints.inferred_variety}` : ''}
+              </div>
+            )}
+          </div>
+        )}
+      </section>
+
+      {/* 3) Questions */}
+      <section className="bg-white border rounded-lg p-4 space-y-4">
+        <div className="font-semibold">Your picks</div>
+
+        {/* World */}
+        <div className="grid gap-2 sm:grid-cols-2">
+          <div>
+            <div className="text-xs text-gray-600 mb-1">World</div>
+            <div className="flex gap-2">
+              <button
+                className={`px-3 py-2 rounded border ${guessWorld === 'old' ? 'bg-purple-600 text-white border-purple-600' : ''}`}
+                onClick={() => setGuessWorld('old')}
+              >Old World</button>
+              <button
+                className={`px-3 py-2 rounded border ${guessWorld === 'new' ? 'bg-purple-600 text-white border-purple-600' : ''}`}
+                onClick={() => setGuessWorld('new')}
+              >New World</button>
+            </div>
+            {checked && (
+              <AnswerBadge ok={isCorrect(guessWorld, correctWorld)} truth={correctWorld || '—'} />
+            )}
+          </div>
+
+          {/* Variety */}
+          <div>
+            <div className="text-xs text-gray-600 mb-1">Variety</div>
+            <input
+              type="text"
+              className="w-full px-3 py-2 border rounded"
+              placeholder="e.g. Chardonnay"
+              value={guessVariety}
+              onChange={(e) => setGuessVariety(e.target.value)}
+            />
+            {checked && (
+              <AnswerBadge ok={isCorrect(guessVariety, correctVariety)} truth={correctVariety || '—'} />
+            )}
+          </div>
+        </div>
+
+        {/* Country / Region */}
+        <div className="grid gap-2 sm:grid-cols-2">
+          <div>
+            <div className="text-xs text-gray-600 mb-1">Country</div>
+            <input
+              type="text"
+              className="w-full px-3 py-2 border rounded"
+              placeholder="e.g. France"
+              value={guessCountry}
+              onChange={(e) => setGuessCountry(e.target.value)}
+            />
+            {checked && (
+              <AnswerBadge ok={isCorrect(guessCountry, correctCountry)} truth={correctCountry || '—'} />
+            )}
+          </div>
+
+          <div>
+            <div className="text-xs text-gray-600 mb-1">Region/Appellation</div>
+            <input
+              type="text"
+              className="w-full px-3 py-2 border rounded"
+              placeholder="e.g. Epernay, Burgundy, Marlborough"
+              value={guessRegion}
+              onChange={(e) => setGuessRegion(e.target.value)}
+            />
+            {checked && (
+              <AnswerBadge ok={isCorrect(guessRegion, correctRegion)} truth={correctRegion || '—'} />
+            )}
+          </div>
+        </div>
+
+        {/* Vintage */}
+        <div>
+          <div className="text-xs text-gray-600 mb-1">Vintage</div>
+          <div className="flex gap-2">
+            <input
+              type="text"
+              className="px-3 py-2 border rounded w-36"
+              placeholder="YYYY or NV"
+              value={guessVintage}
+              onChange={(e) => setGuessVintage(e.target.value.toUpperCase())}
+            />
             <button
-              onClick={reset}
-              className="ml-auto inline-flex items-center gap-2 px-3 py-2 rounded-lg border text-sm"
+              className={`px-3 py-2 rounded border ${guessVintage === 'NV' ? 'bg-purple-600 text-white border-purple-600' : ''}`}
+              onClick={() => setGuessVintage('NV')}
             >
-              <RefreshCw className="w-4 h-4" />
-              New label
+              NV
             </button>
+          </div>
+          {checked && (
+            <AnswerBadge ok={isCorrect(guessVintage, correctVintage)} truth={correctVintage} />
           )}
         </div>
 
-        {imageUrl && (
-          <div className="mt-3">
-            <img
-              src={imageUrl}
-              alt="Uploaded label"
-              className="max-h-64 rounded-lg object-contain border"
-            />
-          </div>
-        )}
-
-        {loading && (
-          <div className="mt-4 flex items-center gap-2 text-gray-600">
-            <Loader2 className="w-4 h-4 animate-spin" />
-            Processing label…
-          </div>
-        )}
-
-        {errorMsg && (
-          <div className="mt-4 text-sm text-red-600">
-            {errorMsg}
-          </div>
-        )}
-      </div>
-
-      {/* Candidate chooser (if multiple) */}
-      {candidates.length > 1 && (
-        <div className="bg-white border rounded-xl p-4 mb-6">
-          <div className="font-semibold mb-2">We found a few matches. Pick the right one:</div>
-          <div className="grid gap-2 sm:grid-cols-2">
-            {candidates.slice(0, 6).map((c) => (
-              <button
-                key={c.id}
-                onClick={() => {
-                  setWine(c);
-                  if (payload) setQuestions(buildQuestions(c, payload.labelHints));
-                }}
-                className={`border rounded-lg p-3 text-left hover:shadow transition ${
-                  wine?.id === c.id ? 'ring-2 ring-purple-600' : ''
-                }`}
-              >
-                <div className="font-medium">{c.display_name}</div>
-                <div className="text-xs text-gray-600">
-                  {[
-                    c.producer,
-                    [c.country, c.region].filter(Boolean).join(', '),
-                    c.appellation,
-                    c.variety,
-                    typeof c.vintage === 'number' ? c.vintage : 'NV',
-                  ]
-                    .filter(Boolean)
-                    .join(' • ')}
-                </div>
-              </button>
-            ))}
-          </div>
+        <div className="flex flex-wrap gap-2 pt-2">
+          <button
+            onClick={checkAnswers}
+            className="px-4 py-2 rounded bg-black text-white"
+          >
+            Check answers
+          </button>
+          <button
+            onClick={doShare}
+            className="px-4 py-2 rounded border flex items-center gap-2"
+          >
+            <Share2 className="w-4 h-4" /> Share
+          </button>
         </div>
-      )}
-
-      {/* Matched + hints */}
-      {wine && (
-        <div className="bg-white border rounded-xl p-4 mb-6">
-          <div className="mb-1 text-sm text-gray-700">
-            <div>
-              <span className="font-semibold">Matched:</span> {wine.display_name}
-            </div>
-            <div>
-              Variety: {wine.variety || '—'} • Country: {wine.country || '—'} • Region: {wine.region || '—'}
-              {typeof wine.vintage === 'number' ? <> • Vintage: {wine.vintage}</> : <> • Vintage: NV</>}
-            </div>
-            {payload?.labelHints && (
-              <div className="text-xs text-gray-500 mt-1">
-                Label signals:{' '}
-                {payload.labelHints.is_non_vintage
-                  ? 'NV detected'
-                  : payload.labelHints.vintage_year
-                  ? `Year ${payload.labelHints.vintage_year}`
-                  : 'No vintage found'}
-                {payload.labelHints.inferred_variety ? ` • Var hint: ${properCase(payload.labelHints.inferred_variety)}` : ''}
-                {payload.labelHints.likely_origin ? ` • Origin hint: ${properCase(payload.labelHints.likely_origin)}` : ''}
-              </div>
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* Questions */}
-      {wine && questions.length > 0 && (
-        <div className="bg-white border rounded-xl p-4 mb-6">
-          <div className="mb-4">
-            <div className="text-sm text-gray-500">Score: <span className="font-semibold">{score}</span> / {questions.length}</div>
-          </div>
-
-          <div className="space-y-4">
-            {questions.map((q) => (
-              <div key={q.id} className="border rounded-lg p-3">
-                <div className="font-medium mb-2">{q.prompt}</div>
-                <div className="grid sm:grid-cols-2 gap-2">
-                  {q.options.map((opt, i) => {
-                    const chosen = answers[q.id];
-                    const isCorrect = i === q.correctIndex;
-                    const selected = chosen === i;
-                    const tone =
-                      chosen != null
-                        ? isCorrect
-                          ? 'border-green-600 text-green-700 bg-green-50'
-                          : selected
-                          ? 'border-red-600 text-red-700 bg-red-50'
-                          : 'border-gray-300'
-                        : 'border-gray-300 hover:bg-gray-50';
-                    return (
-                      <button
-                        key={i}
-                        onClick={() => setAnswers((prev) => ({ ...prev, [q.id]: i }))}
-                        disabled={chosen != null}
-                        className={`text-left border rounded-lg px-3 py-2 transition ${tone}`}
-                      >
-                        {opt}
-                      </button>
-                    );
-                  })}
-                </div>
-                {answers[q.id] != null && q.explanation && (
-                  <div className="text-xs text-gray-600 mt-2">{q.explanation}</div>
-                )}
-              </div>
-            ))}
-          </div>
-
-          {/* Share */}
-          <div className="mt-4 flex items-center gap-2">
-            <button
-              onClick={onShare}
-              className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-purple-600 text-white"
-            >
-              <Share2 className="w-4 h-4" />
-              Share my run
-            </button>
-            {copied && (
-              <span className="inline-flex items-center text-sm text-gray-600">
-                <Check className="w-4 h-4 mr-1" /> Link copied
-              </span>
-            )}
-            {shareDone && <span className="text-sm text-gray-600">Shared 🎉</span>}
-          </div>
-        </div>
-      )}
-
-      {/* Manual override / no match */}
-      {!loading && !wine && imageUrl && (
-        <div className="bg-white border rounded-xl p-4">
-          <div className="font-semibold mb-2">Didn’t find the right bottle?</div>
-          <p className="text-sm text-gray-600 mb-3">
-            Try a clearer photo, or type a few key words from the label (producer / region / grape).
-          </p>
-          <ManualMatch
-            onSelect={(w) => {
-              setWine(w);
-              if (payload) setQuestions(buildQuestions(w, payload.labelHints));
-            }}
-          />
-        </div>
-      )}
+      </section>
     </div>
   );
 };
 
-const ManualMatch: React.FC<{ onSelect: (w: WineRow) => void }> = ({ onSelect }) => {
-  const [q, setQ] = useState('');
-  const [rows, setRows] = useState<WineRow[]>([]);
-  const [loading, setLoading] = useState(false);
-
-  const search = async () => {
-    if (!q.trim()) return;
-    setLoading(true);
-    try {
-      const { data, error } = await supabase
-        .from('wines')
-        .select('*')
-        .or(
-          [
-            `display_name.ilike.%${q}%`,
-            `producer.ilike.%${q}%`,
-            `region.ilike.%${q}%`,
-            `appellation.ilike.%${q}%`,
-            `variety.ilike.%${q}%`,
-            `country.ilike.%${q}%`,
-          ].join(',')
-        )
-        .limit(25);
-
-      if (error) throw error;
-      setRows((data || []) as WineRow[]);
-    } catch (e) {
-      setRows([]);
-    } finally {
-      setLoading(false);
-    }
-  };
-
+const AnswerBadge: React.FC<{ ok: boolean; truth: string }> = ({ ok, truth }) => {
   return (
-    <div>
-      <div className="flex gap-2">
-        <input
-          value={q}
-          onChange={(e) => setQ(e.target.value)}
-          placeholder="e.g., 'Bollinger Brut NV', 'Epernay', 'Cabernet Napa'"
-          className="flex-1 px-3 py-2 border rounded-lg"
-        />
-        <button onClick={search} className="px-3 py-2 rounded-lg border">
-          Search
-        </button>
-      </div>
-
-      {loading && <div className="text-sm text-gray-600 mt-2">Searching…</div>}
-
-      {rows.length > 0 && (
-        <div className="grid gap-2 sm:grid-cols-2 mt-3">
-          {rows.map((w) => (
-            <button
-              key={w.id}
-              onClick={() => onSelect(w)}
-              className="border rounded-lg p-3 text-left hover:shadow transition"
-            >
-              <div className="font-medium">{w.display_name}</div>
-              <div className="text-xs text-gray-600">
-                {[
-                  w.producer,
-                  [w.country, w.region].filter(Boolean).join(', '),
-                  w.appellation,
-                  w.variety,
-                  typeof w.vintage === 'number' ? w.vintage : 'NV',
-                ]
-                  .filter(Boolean)
-                  .join(' • ')}
-              </div>
-            </button>
-          ))}
-        </div>
-      )}
+    <div className={`mt-2 inline-flex items-center gap-2 text-xs px-2 py-1 rounded border ${ok ? 'bg-green-50 border-green-200 text-green-800' : 'bg-red-50 border-red-200 text-red-800'}`}>
+      <CheckCircle2 className="w-3 h-3" />
+      {ok ? 'Correct' : <>Answer: <span className="font-semibold">{truth}</span></>}
     </div>
   );
 };
