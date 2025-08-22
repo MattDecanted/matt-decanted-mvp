@@ -51,7 +51,5 @@
     "vite": "^5.4.2",
     "netlify-cli": "^17.26.1"
   },
-  "engines": {
-    "node": ">=18"
-  }
+  "engines": { "node": ">=18" }
 }
