@@ -1,19 +1,33 @@
+# netlify.toml
+
 [build]
-  command = "npm run build"
-  publish = "dist"
+  command  = "npm run build"
+  publish  = "dist"
   functions = "netlify/functions"
 
-[functions]
-  # Ensure Node 18 runtime
-  node_bundler = "esbuild"
-  external_node_modules = ["@google-cloud/vision", "parse-multipart-data"]
+  # Pin Node to ensure global fetch support in functions
+  [build.environment]
+    NODE_VERSION = "20"   # or "18" if you prefer
 
+[functions]
+  node_bundler = "esbuild"
+  # Only include what you actually need to bundle
+  external_node_modules = ["parse-multipart-data"]
+
+# Optional: if your app is a SPA, uncomment to route all paths to index.html
+# [[redirects]]
+#   from = "/*"
+#   to = "/index.html"
+#   status = 200
+
+# Local dev settings
+[dev]
+  command      = "vite"
+  port         = 5173        # your Vite dev server
+  targetPort   = 8888        # Netlify dev proxy target
+  functionsPort = 9999
+  publish      = "dist"
+
+# This plugin is fine but not strictly required; safe to keep or remove.
 [[plugins]]
   package = "@netlify/plugin-functions-install-core"
-
-[dev]
-  command = "vite"
-  port = 5173
-  targetPort = 8888
-  functionsPort = 9999
-  publish = "dist"
