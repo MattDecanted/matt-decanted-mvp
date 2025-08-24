@@ -1,5 +1,5 @@
 import React from 'react';
-import { Share2, Wine, Search, Loader2, CheckCircle2, AlertTriangle, Camera } from 'lucide-react';
+import { Share2, Wine, Search, Loader2, CheckCircle2, AlertTriangle, Camera, BookOpen } from 'lucide-react';
 import OCRUpload from '@/components/OCRUpload';
 import { supabase } from '@/lib/supabase';
 
@@ -12,35 +12,48 @@ type WineRow = {
   producer?: string | null;
   country?: string | null;
   region?: string | null;        // e.g. "Burgundy", "Marlborough"
-  appellation?: string | null;   // sub-region / AOC / AVA (e.g. "Chassagne-Montrachet")
-  variety?: string | null;       // "Chardonnay", "Blend", "Cabernet Sauvignon/Merlot" etc.
-  vintage?: number | null;       // 4-digit; null = NV
+  appellation?: string | null;   // sub-region / AOC / AVA
+  variety?: string | null;       // "Chardonnay" or "Cabernet Sauvignon / Merlot"
+  vintage?: number | null;
   is_nv?: boolean | null;
-  world?: 'old' | 'new' | null;  // optional, inferred if missing
+  world?: 'old' | 'new' | null;
 };
 
 type LabelHints = {
   vintage_year?: number | null;
   is_non_vintage?: boolean;
-  inferred_variety?: string | null; // e.g. Chardonnay inferred from “blanc de blancs”
+  inferred_variety?: string | null;
 };
 
 type QuizQ = { id: string; prompt: string; answer: string; options: string[] };
 
-const TABLE_NAME = 'wine_index';
+type Terroir = {
+  id: string;
+  country: string;
+  region: string;
+  subregion: string | null;
+  varieties: string | null;
+  style_notes: string | null;
+  blend_rules: string | null;
+  climate: string | null;
+  typical_soil: string | null;
+};
 
 /* =========================
-   Utilities
+   Utils
    ========================= */
 function titleCase(s: string) {
-  return s.replace(/\w\S*/g, w => w.charAt(0).toUpperCase() + w.slice(1));
+  return (s || '').replace(/\w\S*/g, (w) => w.charAt(0).toUpperCase() + w.slice(1));
 }
-function normalize(s: string) {
+function normalize(s?: string | null) {
   return (s || '').toLowerCase().normalize('NFKD').replace(/\p{Diacritic}/gu, '');
 }
 function eqi(a?: string | null, b?: string | null) {
-  return normalize(String(a || '')) === normalize(String(b || ''));
+  return normalize(a) === normalize(b);
 }
+function uniq<T>(arr: T[]) { return [...new Set(arr)]; }
+function shuffle<T>(arr: T[]) { return [...arr].sort(() => Math.random() - 0.5); }
+
 function worldFromCountry(country?: string | null): 'old' | 'new' | null {
   if (!country) return null;
   const c = normalize(country);
@@ -84,70 +97,41 @@ function extractLabelHints(text: string): LabelHints {
 }
 
 /* =========================
-   Smart MCQ builders (per slot)
+   Supabase helpers (wine_terroir)
    ========================= */
-// Pools for plausible distractors
-const GRAPES = [
-  'Chardonnay','Pinot Noir','Sauvignon Blanc','Riesling','Syrah','Shiraz','Merlot','Cabernet Sauvignon',
-  'Grenache','Tempranillo','Nebbiolo','Sangiovese','Chenin Blanc','Viognier','Zinfandel','Pinot Meunier','Gamay','Barbera'
-];
-const COUNTRIES = ['France','Italy','Spain','Germany','USA','Australia','New Zealand','Chile','Argentina','Portugal','Austria','South Africa','Canada'];
-const REGIONS_BY_COUNTRY: Record<string, string[]> = {
-  France: ['Burgundy','Bordeaux','Loire','Rhône','Champagne','Alsace','Languedoc'],
-  Italy: ['Piedmont','Tuscany','Veneto','Sicily','Trentino-Alto Adige','Friuli'],
-  Spain: ['Rioja','Ribera del Duero','Priorat','Rías Baixas','Rueda'],
-  Germany: ['Mosel','Rheingau','Pfalz','Nahe'],
-  USA: ['Napa Valley','Sonoma','Willamette Valley','Walla Walla'],
-  Australia: ['Barossa Valley','Margaret River','Yarra Valley','Adelaide Hills'],
-  'New Zealand': ['Marlborough','Central Otago','Hawke’s Bay'],
-  Chile: ['Maipo Valley','Colchagua','Casablanca'],
-  Argentina: ['Mendoza','Patagonia','Salta'],
-  Portugal: ['Douro','Dão','Alentejo','Vinho Verde'],
-  Austria: ['Wachau','Kamptal','Burgenland'],
-  'South Africa': ['Stellenbosch','Swartland','Hemel-en-Aarde'],
-  Canada: ['Okanagan','Niagara Peninsula']
-};
-function uniq<T>(arr: T[]) { return [...new Set(arr)]; }
-function shuffle<T>(arr: T[]) { return [...arr].sort(() => Math.random() - 0.5); }
+async function terroirByPlace(country?: string | null, region?: string | null, subregion?: string | null): Promise<Terroir[]> {
+  let q = supabase.from('wine_terroir').select('*').limit(50);
+  if (country) q = q.ilike('country', `%${country}%`);
+  if (region) q = q.ilike('region', `%${region}%`);
+  if (subregion) q = q.ilike('subregion', `%${subregion}%`);
+  const { data, error } = await q;
+  if (error) throw error;
+  return data || [];
+}
 
-function makeWorldQ(country?: string | null): QuizQ {
-  const world = worldFromCountry(country) === 'new' ? 'New World' : 'Old World';
-  return { id: 'world', prompt: '1) Old World or New World?', answer: world, options: ['Old World','New World'] };
+async function terroirByGrape(grape: string): Promise<Terroir[]> {
+  const { data, error } = await supabase
+    .from('wine_terroir')
+    .select('*')
+    .ilike('varieties', `%${grape}%`)
+    .limit(50);
+  if (error) throw error;
+  return data || [];
 }
 
 function parseBlend(variety?: string | null): string[] {
   if (!variety) return [];
-  // split on / , + & or the word "blend"
-  const raw = variety.replace(/blend/i, '').split(/[/,+&]| and /i).map(s => s.trim()).filter(Boolean);
-  const cleaned = raw.map(v => titleCase(v));
-  return uniq(cleaned);
+  const raw = variety
+    .replace(/\bblend\b/ig, '')
+    .split(/[/,+&]| and /i)
+    .map(s => s.trim())
+    .filter(Boolean);
+  return uniq(raw.map(titleCase));
 }
 
-function makeVarietyQ(variety?: string | null, inferred?: string | null): QuizQ {
-  // Priority: explicit variety/blend from DB → inferred from OCR → fallback generic MCQ
-  const isBlend = variety && /blend|\/|,| and /i.test(variety);
-  const grapes = isBlend ? parseBlend(variety) : (variety ? [titleCase(variety)] : (inferred ? [inferred] : []));
-
-  let answer = isBlend ? `${grapes.join(' / ')}` : (grapes[0] || 'Chardonnay');
-
-  // Option set: if blend, include “Blend” variants and distractor single grapes
-  let baseOptions: string[] = [];
-  if (isBlend && grapes.length >= 2) {
-    baseOptions = [
-      `${grapes.join(' / ')}`,
-      grapes[0],
-      grapes[1],
-      'Bordeaux Blend',
-      ...shuffle(GRAPES).slice(0, 4)
-    ];
-  } else {
-    baseOptions = [answer, ...shuffle(GRAPES.filter(g => g !== answer)).slice(0, 5)];
-  }
-  const options = shuffle(uniq(baseOptions)).slice(0, 4);
-
-  return { id: 'variety', prompt: '2) Variety / Blend?', answer, options };
-}
-
+/* =========================
+   Fixed-order quiz builders (async; pulls from wine_terroir)
+   ========================= */
 function makeVintageOptions(targetYear: number, now = new Date().getFullYear()): string[] {
   const min = 1980;
   const close = uniq([targetYear - 1, targetYear, targetYear + 1]).filter(y => y >= min && y <= now);
@@ -160,7 +144,33 @@ function makeVintageOptions(targetYear: number, now = new Date().getFullYear()):
   return shuffle(pick.map(String));
 }
 
-function makeVintageQ(hints: LabelHints, matchedVintage?: number | null): QuizQ {
+async function buildWorldQ(country?: string | null): Promise<QuizQ> {
+  const world = worldFromCountry(country) === 'new' ? 'New World' : 'Old World';
+  return { id: 'world', prompt: '1) Old World or New World?', answer: world, options: ['Old World','New World'] };
+}
+
+async function buildVarietyQ(variety?: string | null, inferred?: string | null): Promise<QuizQ> {
+  const isBlend = !!(variety && /blend|\/|,| and /i.test(variety));
+  const grapes = isBlend ? parseBlend(variety) : (variety ? [titleCase(variety)] : (inferred ? [inferred] : []));
+  const answer = isBlend && grapes.length >= 2 ? grapes.join(' / ') : (grapes[0] || 'Chardonnay');
+
+  // Distractors from terroir table (grapes listed in varieties) if we can infer country/region later;
+  // here we’ll just mix in common grapes as fallback.
+  const COMMON = [
+    'Chardonnay','Pinot Noir','Sauvignon Blanc','Riesling','Syrah','Shiraz','Merlot',
+    'Cabernet Sauvignon','Grenache','Tempranillo','Nebbiolo','Sangiovese','Chenin Blanc','Viognier','Zinfandel','Gamay'
+  ];
+  let options = [answer];
+  if (isBlend && grapes.length >= 2) {
+    options.push(grapes[0], grapes[1], 'Bordeaux Blend', ...shuffle(COMMON).slice(0, 2));
+  } else {
+    options.push(...shuffle(COMMON.filter(g => normalize(g) !== normalize(answer))).slice(0, 5));
+  }
+  options = shuffle(uniq(options)).slice(0, 4);
+  return { id: 'variety', prompt: '2) Variety / Blend?', answer, options };
+}
+
+async function buildVintageQ(hints: LabelHints, matchedVintage?: number | null): Promise<QuizQ> {
   if (matchedVintage) {
     return { id: 'vintage', prompt: '3) Vintage?', answer: String(matchedVintage), options: makeVintageOptions(matchedVintage) };
   }
@@ -170,43 +180,78 @@ function makeVintageQ(hints: LabelHints, matchedVintage?: number | null): QuizQ 
   if (hints.vintage_year) {
     return { id: 'vintage', prompt: '3) Vintage?', answer: String(hints.vintage_year), options: makeVintageOptions(hints.vintage_year) };
   }
-  // Fallback: gentle NV vs year
   return { id: 'vintage', prompt: '3) Vintage?', answer: 'NV', options: ['NV','2021','2019','2016'] };
 }
 
-function makeCountryQ(country?: string | null): QuizQ {
+async function buildCountryQ(country?: string | null): Promise<QuizQ> {
   const ans = country ? titleCase(country) : 'France';
-  const options = shuffle(uniq([ans, ...COUNTRIES])).slice(0, 4);
+  // Derive distractors from DB (top countries present)
+  let options = [ans];
+  try {
+    const { data, error } = await supabase
+      .from('wine_terroir')
+      .select('country')
+      .limit(200);
+    if (error) throw error;
+    const pool = uniq((data || []).map(r => titleCase(r.country))).filter(c => c);
+    options.push(...shuffle(pool.filter(c => !eqi(c, ans))).slice(0, 6));
+  } catch {
+    // fallback if query fails
+    options.push('Italy','Spain','Germany','USA','Australia','New Zealand');
+  }
+  options = shuffle(uniq(options)).slice(0, 4);
   return { id: 'country', prompt: '4) Country?', answer: ans, options };
 }
 
-function makeRegionQ(region?: string | null, country?: string | null): QuizQ {
+async function buildRegionQ(region?: string | null, country?: string | null): Promise<QuizQ> {
   const ans = region ? titleCase(region) : 'Burgundy';
-  const pool = REGIONS_BY_COUNTRY[titleCase(country || '')] || Object.values(REGIONS_BY_COUNTRY).flat();
-  const options = shuffle(uniq([ans, ...pool])).slice(0, 4);
+  let options = [ans];
+
+  try {
+    let q = supabase.from('wine_terroir').select('region,country').limit(200);
+    if (country) q = q.ilike('country', `%${country}%`);
+    const { data, error } = await q;
+    if (error) throw error;
+    const pool = uniq((data || []).map(r => titleCase(r.region))).filter(Boolean);
+    options.push(...shuffle(pool.filter(r => !eqi(r, ans))).slice(0, 8));
+  } catch {
+    // safe fallback
+    options.push('Bordeaux','Loire Valley','Rhône Valley','Champagne','Alsace','Piedmont','Tuscany');
+  }
+
+  options = shuffle(uniq(options)).slice(0, 4);
   return { id: 'region', prompt: '5) Region?', answer: ans, options };
 }
 
-function makeSubRegionQ(appellation?: string | null, region?: string | null): QuizQ | null {
+async function buildSubRegionQ(appellation?: string | null, region?: string | null, country?: string | null): Promise<QuizQ | null> {
   const sub = appellation && !eqi(appellation, region) ? titleCase(appellation) : '';
   if (!sub) return null;
-  // Build distractors from common sub-regions plus region name
-  const commonSubs = [
-    'Chassagne-Montrachet','Puligny-Montrachet','Meursault','Gevrey-Chambertin','Vosne-Romanée',
-    'Chianti Classico','Barolo','Barbaresco','Ribera del Duero','Napa Valley','Marlborough'
-  ];
-  const options = shuffle(uniq([sub, titleCase(region || ''), ...commonSubs])).slice(0, 4);
+  let options = [sub];
+
+  try {
+    let q = supabase.from('wine_terroir').select('subregion,region,country').not('subregion','is','null').limit(200);
+    if (country) q = q.ilike('country', `%${country}%`);
+    if (region) q = q.ilike('region', `%${region}%`);
+    const { data, error } = await q;
+    if (error) throw error;
+    const pool = uniq((data || []).map(r => titleCase(r.subregion || ''))).filter(Boolean);
+    options.push(...shuffle(pool.filter(s => !eqi(s, sub))).slice(0, 8));
+  } catch {
+    // fallback
+    options.push('Meursault','Puligny-Montrachet','Gevrey-Chambertin','Vosne-Romanée','Napa Valley','Marlborough');
+  }
+
+  options = shuffle(uniq(options)).slice(0, 4);
   return { id: 'subregion', prompt: '6) Sub-region / Appellation?', answer: sub, options };
 }
 
-/** Build the 6-slot quiz in the fixed order */
-function generateFixedOrderQuiz(labelText: string, hints: LabelHints, matched?: WineRow): QuizQ[] {
-  const worldQ = makeWorldQ(matched?.country);
-  const varietyQ = makeVarietyQ(matched?.variety, hints.inferred_variety);
-  const vintageQ = makeVintageQ(hints, matched?.vintage ?? null);
-  const countryQ = makeCountryQ(matched?.country);
-  const regionQ = makeRegionQ(matched?.region, matched?.country);
-  const subQ = makeSubRegionQ(matched?.appellation, matched?.region);
+async function buildFixedOrderQuiz(hints: LabelHints, matched?: WineRow): Promise<QuizQ[]> {
+  const worldQ   = await buildWorldQ(matched?.country);
+  const varietyQ = await buildVarietyQ(matched?.variety, hints.inferred_variety || undefined);
+  const vintageQ = await buildVintageQ(hints, matched?.vintage ?? null);
+  const countryQ = await buildCountryQ(matched?.country);
+  const regionQ  = await buildRegionQ(matched?.region, matched?.country);
+  const subQ     = await buildSubRegionQ(matched?.appellation, matched?.region, matched?.country);
 
   const quiz: QuizQ[] = [worldQ, varietyQ, vintageQ, countryQ, regionQ];
   if (subQ) quiz.push(subQ);
@@ -216,57 +261,59 @@ function generateFixedOrderQuiz(labelText: string, hints: LabelHints, matched?: 
 /* =========================
    Component
    ========================= */
+const TABLE_NAME = 'wine_index';
+
 const WineOptionsGame: React.FC = () => {
-  // Label + hints
+  // OCR & hints
   const [labelText, setLabelText] = React.useState('');
   const [labelHints, setLabelHints] = React.useState<LabelHints | null>(null);
+  const [ocrText, setOcrText] = React.useState<string>('');
 
-  // Supabase
+  // Supabase search
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const [wine, setWine] = React.useState<WineRow | null>(null);
 
-  // Display OCR text
-  const [ocrText, setOcrText] = React.useState<string>('');
-
-  // Fixed-order Quiz
+  // Quiz
   const [quiz, setQuiz] = React.useState<QuizQ[]>([]);
   const [answers, setAnswers] = React.useState<Record<string, string>>({});
   const [checked, setChecked] = React.useState(false);
 
-  // Your manual picks (kept, if you still want them)
-  const [guessWorld, setGuessWorld] = React.useState<'old' | 'new' | ''>('');
-  const [guessVariety, setGuessVariety] = React.useState<string>('');
-  const [guessCountry, setGuessCountry] = React.useState<string>('');
-  const [guessRegion, setGuessRegion] = React.useState<string>('');
-  const [guessVintage, setGuessVintage] = React.useState<string>('');
+  // Learn card
+  const [learn, setLearn] = React.useState<Terroir | null>(null);
 
-  const onOCR = (text: string) => {
+  const onOCR = async (text: string) => {
     const trimmed = (text || '').trim();
     setOcrText(trimmed);
     setLabelText(trimmed);
     const hints = extractLabelHints(trimmed);
     setLabelHints(hints);
-
-    // Build fixed-order quiz from OCR only (no match yet)
-    setQuiz(generateFixedOrderQuiz(trimmed, hints, undefined));
+    setError(null);
+    setWine(null);
+    setLearn(null);
     setAnswers({});
     setChecked(false);
-    setWine(null);
-    setGuessWorld(''); setGuessVariety(''); setGuessCountry(''); setGuessRegion(''); setGuessVintage('');
-    setError(null);
+    try {
+      // Build OCR-only quiz (no matched wine yet)
+      const q = await buildFixedOrderQuiz(hints, undefined);
+      setQuiz(q);
+    } catch (e: any) {
+      // fallback to empty quiz if something odd happens
+      setQuiz([]);
+      setError(e?.message ?? 'Could not build quiz');
+    }
   };
 
   const findMatch = async () => {
     setBusy(true);
     setError(null);
     setWine(null);
+    setLearn(null);
     try {
       const t = labelText;
       const hints = extractLabelHints(t);
       setLabelHints(hints);
 
-      // tokenization: words >= 3 letters
       const tokens = Array.from(t.matchAll(/[A-Za-zÀ-ÖØ-öø-ÿ]{3,}/g)).map(m => m[0].toLowerCase());
       const unique = Array.from(new Set(tokens));
       const strong = [...unique].sort((a, b) => b.length - a.length).slice(0, 4);
@@ -300,7 +347,6 @@ const WineOptionsGame: React.FC = () => {
 
       if (!candidate) {
         setError('No close match found. You can still play by choosing options manually.');
-        setWine(null);
         // keep OCR-only quiz
         return;
       }
@@ -308,8 +354,15 @@ const WineOptionsGame: React.FC = () => {
       if (!candidate.world) candidate.world = worldFromCountry(candidate.country);
       setWine(candidate);
 
-      // Rebuild quiz with matched wine fields for higher confidence
-      setQuiz(generateFixedOrderQuiz(labelText, hints, candidate));
+      // Build quiz with matched wine (better answers/distractors)
+      const q = await buildFixedOrderQuiz(hints, candidate);
+      setQuiz(q);
+
+      // Load "Learn" from terroir table (prefer exact subregion, else region)
+      const terroirRows =
+        (await terroirByPlace(candidate.country, candidate.region, candidate.appellation)) ||
+        (await terroirByPlace(candidate.country, candidate.region || undefined, undefined));
+      if (terroirRows.length) setLearn(terroirRows[0]);
     } catch (e: any) {
       setError(e?.message ?? 'Search failed');
     } finally {
@@ -447,6 +500,25 @@ const WineOptionsGame: React.FC = () => {
             <button onClick={doShare} className="px-4 py-2 rounded border flex items-center gap-2">
               <Share2 className="w-4 h-4" /> Share
             </button>
+          </div>
+        </section>
+      )}
+
+      {/* 4) Learn card (from terroir DB) */}
+      {learn && (
+        <section className="bg-white border rounded-lg p-4">
+          <div className="flex items-center gap-2 text-sm font-semibold mb-2">
+            <BookOpen className="w-4 h-4" />
+            Learn about the region
+          </div>
+          <div className="text-sm text-gray-800">
+            <div className="font-medium">
+              {learn.country} • {learn.region}{learn.subregion ? ` • ${learn.subregion}` : ''}
+            </div>
+            {learn.style_notes && <div className="mt-1"><span className="text-gray-600">Style:</span> {learn.style_notes}</div>}
+            {learn.blend_rules && <div className="mt-1"><span className="text-gray-600">Blend rules:</span> {learn.blend_rules}</div>}
+            {learn.climate && <div className="mt-1"><span className="text-gray-600">Climate:</span> {learn.climate}</div>}
+            {learn.typical_soil && <div className="mt-1"><span className="text-gray-600">Soils:</span> {learn.typical_soil}</div>}
           </div>
         </section>
       )}
