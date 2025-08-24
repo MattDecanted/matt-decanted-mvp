@@ -83,6 +83,28 @@ const WineOptionsGame: React.FC = () => {
   const [error, setError] = React.useState<string | null>(null);
 
   const [wine, setWine] = React.useState<WineRow | null>(null);
+// ① at the top of your component:
+const [ocrText, setOcrText] = useState<string>('');
+const [uploading, setUploading] = useState(false);
+const [error, setError] = useState<string>('');
+
+// ② in your JSX:
+<div className="space-y-3">
+  <input
+    type="file"
+    accept="image/*"
+    name="file"
+    onChange={handleFileChange}
+  />
+
+  {uploading && <div>Running OCR…</div>}
+  {error && <div style={{ color: 'crimson' }}>Error: {error}</div>}
+  {ocrText && (
+    <pre style={{ whiteSpace: 'pre-wrap', background: '#f6f6f6', padding: 8 }}>
+      {ocrText}
+    </pre>
+  )}
+</div>
 
   // user selections
   const [guessWorld, setGuessWorld] = React.useState<'old' | 'new' | ''>('');
