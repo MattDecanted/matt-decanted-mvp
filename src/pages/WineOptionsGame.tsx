@@ -1,6 +1,8 @@
 import React from 'react';
 import { Share2, Wine, Search, Loader2, CheckCircle2, AlertTriangle, Camera } from 'lucide-react';
-import OCRUpload from '@/components/OCRUpload';
+// If you want to keep using your OCRUpload component later, you can re-add it,
+// but for reliability we use a plain <input type="file"> here.
+// import OCRUpload from '@/components/OCRUpload';
 import { supabase } from '@/lib/supabase';
 
 type WineRow = {
@@ -26,8 +28,7 @@ const TABLE_NAME = 'wine_index'; // ← change to your actual catalog table/view
 function extractLabelHints(text: string): LabelHints {
   const t = text.toLowerCase();
 
-  // 1) Vintage year
-  // we look for 19xx/20xx in a sane range
+  // 1) Vintage year (19xx/20xx)
   const years = Array.from(t.matchAll(/\b(19|20)\d{2}\b/g)).map(m => Number(m[0]));
   const possibleYear = years.find(y => y >= 1980 && y <= new Date().getFullYear());
 
@@ -35,9 +36,6 @@ function extractLabelHints(text: string): LabelHints {
   const isNV = /\bnv\b|\bnon\s*-?\s*vintage\b/.test(t);
 
   // 3) Variety inference
-  // Champagne: "blanc de blancs" -> Chardonnay
-  // "blanc de noirs" -> Pinot Noir / Meunier (we'll say Pinot Noir)
-  // Otherwise try a simple dictionary of common grapes.
   let inferredVariety: string | null = null;
   if (/blanc\s+de\s+blancs/.test(t)) {
     inferredVariety = 'Chardonnay';
@@ -83,28 +81,11 @@ const WineOptionsGame: React.FC = () => {
   const [error, setError] = React.useState<string | null>(null);
 
   const [wine, setWine] = React.useState<WineRow | null>(null);
-// ① at the top of your component:
-const [ocrText, setOcrText] = useState<string>('');
-const [uploading, setUploading] = useState(false);
-const [error, setError] = useState<string>('');
 
-// ② in your JSX:
-<div className="space-y-3">
-  <input
-    type="file"
-    accept="image/*"
-    name="file"
-    onChange={handleFileChange}
-  />
-
-  {uploading && <div>Running OCR…</div>}
-  {error && <div style={{ color: 'crimson' }}>Error: {error}</div>}
-  {ocrText && (
-    <pre style={{ whiteSpace: 'pre-wrap', background: '#f6f6f6', padding: 8 }}>
-      {ocrText}
-    </pre>
-  )}
-</div>
+  // --- OCR UI state (Step 3) ---
+  const [ocrText, setOcrText] = React.useState<string>('');
+  const [uploading, setUploading] = React.useState(false);
+  const [ocrError, setOcrError] = React.useState<string>('');
 
   // user selections
   const [guessWorld, setGuessWorld] = React.useState<'old' | 'new' | ''>('');
@@ -115,6 +96,7 @@ const [error, setError] = useState<string>('');
 
   const [checked, setChecked] = React.useState(false);
 
+  // When OCR returns text, feed it into existing game logic
   const onOCR = (text: string) => {
     setLabelText(text);
     setLabelHints(extractLabelHints(text));
@@ -127,6 +109,64 @@ const [error, setError] = useState<string>('');
     setGuessRegion('');
     setGuessVintage('');
     setError(null);
+  };
+
+  // --- Step 3.3: OCR call helper ---
+  const runOCR = async (file: File): Promise<string> => {
+    // Guard: image + reasonable size
+    if (!file.type.startsWith('image/')) {
+      throw new Error('Please choose an image file');
+    }
+    if (file.size > 8 * 1024 * 1024) {
+      throw new Error('Image is too large; please choose a file under 8MB');
+    }
+
+    const fd = new FormData();
+    fd.append('file', file); // key MUST be "file"
+
+    const res = await fetch('/.netlify/functions/ocr-label', {
+      method: 'POST',
+      body: fd
+      // Do not set Content-Type manually; the browser sets multipart boundary
+    });
+
+    const raw = await res.text();
+
+    if (!res.ok) {
+      try {
+        const data = JSON.parse(raw);
+        throw new Error(data?.error || `OCR failed (${res.status})`);
+      } catch {
+        throw new Error(raw || `OCR failed (${res.status})`);
+      }
+    }
+
+    const { text } = JSON.parse(raw);
+    return text || '';
+  };
+
+  // --- Step 3.2: File input handler ---
+  const handleOCRFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setOcrError('');
+    setOcrText('');
+    setUploading(true);
+
+    try {
+      const text = await runOCR(file);
+      const trimmed = (text || '').trim();
+      setOcrText(trimmed || '(no text detected)');
+      onOCR(trimmed);
+    } catch (err: any) {
+      setOcrError(err?.message || 'OCR failed');
+      console.error('OCR error:', err);
+    } finally {
+      setUploading(false);
+      // allow re-uploading the same file
+      e.target.value = '';
+    }
   };
 
   const findMatch = async () => {
@@ -154,14 +194,12 @@ const [error, setError] = useState<string>('');
       if (unique.length) {
         // Use the first 2–3 tokens to avoid overly broad search
         const primary = unique.slice(0, 3);
-        // We’ll OR-chain with ilike over display_name
-        // Supabase JS doesn’t have a direct "OR over same column" helper,
-        // so we can concatenate a filter with .or() using raw filters:
+        // OR-chain with ilike over display_name using .or() raw filters
         const ors = primary.map(tok => `display_name.ilike.%${tok}%`).join(',');
         query = query.or(ors);
       }
 
-      // Refine by country/variety if we inferred something likely
+      // Refine by variety if we inferred something likely
       if (hints.inferred_variety) {
         query = query.ilike('variety', `%${hints.inferred_variety}%`);
       }
@@ -253,9 +291,28 @@ ${wine ? `Target: ${wine.display_name}` : ''}`;
           <Camera className="w-4 h-4" />
           Upload a label (photo/screenshot)
         </div>
-        <OCRUpload
-          onText={(txt) => onOCR(txt)}
+
+        {/* Simple, reliable OCR input */}
+        <input
+          type="file"
+          accept="image/*"
+          name="file"
+          onChange={handleOCRFileChange}
+          className="block"
         />
+
+        {uploading && <div className="text-sm text-gray-500">Running OCR…</div>}
+        {ocrError && (
+          <div className="text-sm text-red-600">
+            Error: {ocrError}
+          </div>
+        )}
+        {ocrText && (
+          <pre className="text-xs bg-gray-100 p-2 mt-2 whitespace-pre-wrap max-h-40 overflow-auto">
+            {ocrText}
+          </pre>
+        )}
+
         {labelText && (
           <div className="text-xs text-gray-600">
             {labelHints?.is_non_vintage ? 'NV detected' :
