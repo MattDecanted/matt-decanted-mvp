@@ -272,64 +272,86 @@ const WineOptionsGame: React.FC = () => {
     setError(null);
   };
 
-  const findMatch = async () => {
-    setBusy(true);
-    setError(null);
-    setWine(null);
-    try {
-      const t = labelText;
-      const hints = extractLabelHints(t);
-      setLabelHints(hints);
+const findMatch = async () => {
+  setBusy(true);
+  setError(null);
+  setWine(null);
 
-      // naive tokenization: words >= 3 chars (skip years)
-      const tokens = Array.from(t.matchAll(/[A-Za-zÀ-ÖØ-öø-ÿ]{3,}/g)).map(m => m[0]);
-      const unique = Array.from(new Set(tokens)).slice(0, 8); // limit for safety
+  try {
+    const t = labelText;
+    const hints = extractLabelHints(t);
+    setLabelHints(hints);
 
-      // Build a filtered query:
-      let query = supabase.from(TABLE_NAME).select('*').limit(10);
+    // Words >= 3 letters (skip years)
+    const tokens = Array.from(t.matchAll(/[A-Za-zÀ-ÖØ-öø-ÿ]{3,}/g)).map(m => m[0]);
+    const unique = Array.from(new Set(tokens.map(x => x.toLowerCase())));
 
-      if (unique.length) {
-        const primary = unique.slice(0, 3);
-        const ors = primary.map(tok => `display_name.ilike.%${tok}%`).join(',');
-        query = query.or(ors);
+    // Narrow to ~4 “strong” tokens (longer words first)
+    const strong = [...unique].sort((a, b) => b.length - a.length).slice(0, 4);
+
+    let query = supabase.from(TABLE_NAME).select('*').limit(25);
+
+    if (strong.length) {
+      const ors: string[] = [];
+      for (const tok of strong) {
+        // search across multiple columns
+        ors.push(`display_name.ilike.%${tok}%`);
+        ors.push(`producer.ilike.%${tok}%`);
+        ors.push(`appellation.ilike.%${tok}%`);
       }
-
-      if (hints.inferred_variety) {
-        query = query.ilike('variety', `%${hints.inferred_variety}%`);
-      }
-      if (hints.is_non_vintage) {
-        query = query.is('vintage', null);
-      } else if (hints.vintage_year) {
-        query = query.eq('vintage', hints.vintage_year);
-      }
-
-      const { data, error: qErr } = await query;
-      if (qErr) throw qErr;
-
-      const candidate: WineRow | undefined = (data ?? [])[0];
-      if (!candidate) {
-        setError('No close match found. You can still play by choosing options manually.');
-        setWine(null);
-        return;
-      }
-
-      if (!candidate.world) {
-        candidate.world = worldFromCountry(candidate.country);
-      }
-      setWine(candidate);
-
-      if (!guessVintage) {
-        if (hints.is_non_vintage) setGuessVintage('NV');
-        else if (hints.vintage_year) setGuessVintage(String(hints.vintage_year));
-      }
-      if (!guessVariety && hints.inferred_variety) setGuessVariety(hints.inferred_variety);
-
-    } catch (e: any) {
-      setError(e?.message ?? 'Search failed');
-    } finally {
-      setBusy(false);
+      query = query.or(ors.join(','));
     }
-  };
+
+    if (hints.inferred_variety) {
+      query = query.ilike('variety', `%${hints.inferred_variety}%`);
+    }
+    if (hints.is_non_vintage) {
+      query = query.is('vintage', null);
+    } else if (hints.vintage_year) {
+      query = query.eq('vintage', hints.vintage_year);
+    }
+
+    const { data, error: qErr } = await query;
+    if (qErr) throw qErr;
+
+    const rows: WineRow[] = (data ?? []);
+
+    // Rank by "hits" — how many of our strong tokens appear across key fields
+    const score = (row: WineRow) => {
+      const hay = [
+        row.display_name, row.producer, row.appellation, row.region, row.country
+      ].join(' ').toLowerCase();
+      return strong.reduce((acc, tok) => acc + (hay.includes(tok) ? 1 : 0), 0);
+    };
+
+    rows.sort((a, b) => score(b) - score(a));
+
+    const candidate = rows[0];
+    if (!candidate) {
+      setError('No close match found. You can still play by choosing options manually.');
+      setWine(null);
+      return;
+    }
+
+    if (!candidate.world) {
+      candidate.world = worldFromCountry(candidate.country);
+    }
+    setWine(candidate);
+
+    // pre-seed guesses with hints
+    if (!guessVintage) {
+      if (hints.is_non_vintage) setGuessVintage('NV');
+      else if (hints.vintage_year) setGuessVintage(String(hints.vintage_year));
+    }
+    if (!guessVariety && hints.inferred_variety) setGuessVariety(hints.inferred_variety);
+
+  } catch (e: any) {
+    setError(e?.message ?? 'Search failed');
+  } finally {
+    setBusy(false);
+  }
+};
+
 
   const checkAnswers = () => {
     setChecked(true);
