@@ -1,10 +1,13 @@
 import React from 'react';
 import { Share2, Wine, Search, Loader2, CheckCircle2, AlertTriangle, Camera } from 'lucide-react';
-// If you want to keep using your OCRUpload component later, you can re-add it,
-// but for reliability we use a plain <input type="file"> here.
+// We’ll use a simple <input type="file"> to keep OCR robust.
+// If you want to use your OCRUpload component again, you can replace the input and call onOCR(txt).
 // import OCRUpload from '@/components/OCRUpload';
 import { supabase } from '@/lib/supabase';
 
+/* =========================
+   Types
+   ========================= */
 type WineRow = {
   id: string;
   display_name: string;
@@ -23,46 +26,24 @@ type LabelHints = {
   inferred_variety?: string | null; // e.g. "Chardonnay" from "Blanc de Blancs"
 };
 
+type Hint = {
+  grapes?: Array<{ name: string; confidence: number }>;
+  color?: 'red' | 'white' | 'rosé';
+  style?: string[]; // e.g. ['sparkling', 'dry']
+  country?: string;
+  region?: string;  // normalized region/family
+};
+
+type Q = { id: string; prompt: string; answer: string; options?: string[] };
+
 const TABLE_NAME = 'wine_index'; // ← change to your actual catalog table/view
 
-function extractLabelHints(text: string): LabelHints {
-  const t = text.toLowerCase();
-
-  // 1) Vintage year (19xx/20xx)
-  const years = Array.from(t.matchAll(/\b(19|20)\d{2}\b/g)).map(m => Number(m[0]));
-  const possibleYear = years.find(y => y >= 1980 && y <= new Date().getFullYear());
-
-  // 2) NV detection
-  const isNV = /\bnv\b|\bnon\s*-?\s*vintage\b/.test(t);
-
-  // 3) Variety inference
-  let inferredVariety: string | null = null;
-  if (/blanc\s+de\s+blancs/.test(t)) {
-    inferredVariety = 'Chardonnay';
-  } else if (/blanc\s+de\s+noirs/.test(t)) {
-    inferredVariety = 'Pinot Noir';
-  } else {
-    const grapeList = [
-      'chardonnay', 'pinot noir', 'pinot meunier', 'riesling', 'sauvignon', 'cabernet',
-      'merlot', 'syrah', 'shiraz', 'malbec', 'tempranillo', 'nebbiolo', 'sangiovese',
-      'grenache', 'zinfandel', 'primitivo', 'chenin', 'viognier', 'gewurztraminer',
-      'gruner', 'barbera', 'mencía', 'touriga', 'gamay', 'aligoté'
-    ];
-    const found = grapeList.find(g => t.includes(g));
-    inferredVariety = found ? titleCase(found) : null;
-  }
-
-  return {
-    vintage_year: isNV ? null : (possibleYear ?? null),
-    is_non_vintage: isNV,
-    inferred_variety: inferredVariety,
-  };
-}
-
+/* =========================
+   Utilities
+   ========================= */
 function titleCase(s: string) {
-  return s.replace(/\w\S*/g, (w) => w.charAt(0).toUpperCase() + w.slice(1));
+  return s.replace(/\w\S*/g, w => w.charAt(0).toUpperCase() + w.slice(1));
 }
-
 function worldFromCountry(country?: string | null): 'old' | 'new' | null {
   if (!country) return null;
   const c = country.toLowerCase();
@@ -73,33 +54,206 @@ function worldFromCountry(country?: string | null): 'old' | 'new' | null {
   return null;
 }
 
+/* =========================
+   OCR → Label Hints
+   ========================= */
+function extractLabelHints(text: string): LabelHints {
+  const t = text.toLowerCase();
+
+  // 1) Vintage year (19xx/20xx) in a sane range
+  const years = Array.from(t.matchAll(/\b(19|20)\d{2}\b/g)).map(m => Number(m[0]));
+  const possibleYear = years.find(y => y >= 1980 && y <= new Date().getFullYear());
+
+  // 2) NV detection
+  const isNV = /\bnv\b|\bnon\s*-?\s*vintage\b/.test(t);
+
+  // 3) Variety inference (basic keywords)
+  let inferredVariety: string | null = null;
+  if (/blanc\s+de\s+blancs/.test(t)) {
+    inferredVariety = 'Chardonnay';
+  } else if (/blanc\s+de\s+noirs/.test(t)) {
+    inferredVariety = 'Pinot Noir';
+  } else {
+    const grapeList = [
+      'chardonnay', 'pinot noir', 'pinot meunier', 'riesling', 'sauvignon', 'cabernet',
+      'merlot', 'syrah', 'shiraz', 'malbec', 'tempranillo', 'nebbiolo', 'sangiovese',
+      'grenache', 'zinfandel', 'primitivo', 'chenin', 'viognier', 'gewurztraminer',
+      'gruner', 'barbera', 'mencía', 'touriga', 'gamay', 'aligoté', 'aligote'
+    ];
+    const found = grapeList.find(g => t.includes(g));
+    inferredVariety = found ? titleCase(found.normalize('NFKD').replace(/\p{Diacritic}/gu, '')) : null;
+  }
+
+  return {
+    vintage_year: isNV ? null : (possibleYear ?? null),
+    is_non_vintage: isNV,
+    inferred_variety: inferredVariety,
+  };
+}
+
+/* =========================
+   Old World Inference Map
+   (grow this over time)
+   ========================= */
+const OLD_WORLD_MAP: Record<string, Hint> = {
+  // France / Burgundy
+  'chassagne montrachet': { country: 'France', region: 'Burgundy', color: 'white', grapes: [{ name: 'Chardonnay', confidence: 0.9 }] },
+  'puligny montrachet': { country: 'France', region: 'Burgundy', color: 'white', grapes: [{ name: 'Chardonnay', confidence: 0.95 }] },
+  'meursault': { country: 'France', region: 'Burgundy', color: 'white', grapes: [{ name: 'Chardonnay', confidence: 0.9 }] },
+  'gevrey chambertin': { country: 'France', region: 'Burgundy', color: 'red', grapes: [{ name: 'Pinot Noir', confidence: 0.98 }] },
+  'vosne romanee': { country: 'France', region: 'Burgundy', color: 'red', grapes: [{ name: 'Pinot Noir', confidence: 0.98 }] },
+  'beaune': { country: 'France', region: 'Burgundy', color: 'red', grapes: [{ name: 'Pinot Noir', confidence: 0.8 }] },
+
+  // France / Loire
+  'sancerre': { country: 'France', region: 'Loire', color: 'white', grapes: [{ name: 'Sauvignon Blanc', confidence: 0.98 }] },
+  'vouvray': { country: 'France', region: 'Loire', color: 'white', grapes: [{ name: 'Chenin Blanc', confidence: 0.95 }] },
+
+  // France / Rhône
+  'cote rotie': { country: 'France', region: 'Northern Rhône', color: 'red', grapes: [{ name: 'Syrah', confidence: 0.95 }] },
+  'hermitage': { country: 'France', region: 'Northern Rhône', color: 'red', grapes: [{ name: 'Syrah', confidence: 0.95 }] },
+
+  // France / Champagne
+  'champagne': { country: 'France', region: 'Champagne', style: ['sparkling', 'dry'], grapes: [
+    { name: 'Pinot Noir', confidence: 0.4 }, { name: 'Chardonnay', confidence: 0.4 }, { name: 'Meunier', confidence: 0.2 }
+  ]},
+
+  // Italy
+  'barolo': { country: 'Italy', region: 'Piedmont', color: 'red', grapes: [{ name: 'Nebbiolo', confidence: 0.98 }] },
+  'barbaresco': { country: 'Italy', region: 'Piedmont', color: 'red', grapes: [{ name: 'Nebbiolo', confidence: 0.98 }] },
+  'chianti': { country: 'Italy', region: 'Tuscany', color: 'red', grapes: [{ name: 'Sangiovese', confidence: 0.9 }] },
+  'brunello di montalcino': { country: 'Italy', region: 'Tuscany', color: 'red', grapes: [{ name: 'Sangiovese', confidence: 0.98 }] },
+  'soave': { country: 'Italy', region: 'Veneto', color: 'white', grapes: [{ name: 'Garganega', confidence: 0.8 }] },
+
+  // Spain / Portugal
+  'rioja': { country: 'Spain', region: 'Rioja', color: 'red', grapes: [{ name: 'Tempranillo', confidence: 0.8 }] },
+  'rías baixas': { country: 'Spain', region: 'Galicia', color: 'white', grapes: [{ name: 'Albariño', confidence: 0.9 }] },
+  'rias baixas': { country: 'Spain', region: 'Galicia', color: 'white', grapes: [{ name: 'Albariño', confidence: 0.9 }] },
+  'priorat': { country: 'Spain', region: 'Catalonia', color: 'red', grapes: [{ name: 'Garnacha', confidence: 0.6 }] },
+  'douro': { country: 'Portugal', region: 'Douro', color: 'red', grapes: [{ name: 'Touriga Nacional', confidence: 0.4 }] },
+
+  // Germany / Austria
+  'mosel': { country: 'Germany', region: 'Mosel', color: 'white', grapes: [{ name: 'Riesling', confidence: 0.9 }] },
+  'wachau': { country: 'Austria', region: 'Wachau', color: 'white', grapes: [
+    { name: 'Grüner Veltliner', confidence: 0.6 }, { name: 'Riesling', confidence: 0.4 }
+  ] },
+};
+
+function normalizeForMatch(s: string) {
+  return s
+    .toLowerCase()
+    .normalize('NFKD')
+    .replace(/\p{Diacritic}/gu, '')
+    .replace(/[-']/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function inferOldWorld(text: string): Hint | null {
+  const hay = normalizeForMatch(text);
+  let best: { key: string; score: number } | null = null;
+
+  for (const key of Object.keys(OLD_WORLD_MAP)) {
+    const needle = normalizeForMatch(key);
+    if (hay.includes(needle)) {
+      const score = needle.length; // crude heuristic: longer match wins
+      if (!best || score > best.score) best = { key, score };
+    }
+  }
+
+  return best ? OLD_WORLD_MAP[best.key] : null;
+}
+
+/* =========================
+   Question Generation
+   ========================= */
+function makeDistractors(correct: string, pool: string[], n = 3): string[] {
+  const choices = pool.filter(x => normalizeForMatch(x) !== normalizeForMatch(correct));
+  const shuffled = [...choices].sort(() => Math.random() - 0.5);
+  return shuffled.slice(0, n);
+}
+
+function generateQuestionsFromOldWorld(text: string): Q[] {
+  const hint = inferOldWorld(text) || {};
+  const qs: Q[] = [];
+
+  // Q1: World (always solvable)
+  qs.push({ id: 'world', prompt: 'Old World or New World?', answer: 'Old World', options: ['Old World', 'New World'] });
+
+  // Q2: Country if we have it
+  if (hint.country) {
+    qs.push({ id: 'country', prompt: 'What country is this wine from?', answer: hint.country });
+  }
+
+  // Q3: Region/Appellation if we have it
+  if (hint.region) {
+    qs.push({ id: 'region', prompt: 'What region/appellation is it from?', answer: hint.region });
+  }
+
+  // Q4: Color if we know it
+  if (hint.color) {
+    qs.push({ id: 'color', prompt: 'Is this wine red, white, or rosé?', answer: titleCase(hint.color) });
+  }
+
+  // Q5: Style if applicable
+  if (hint.style?.includes('sparkling')) {
+    qs.push({ id: 'style', prompt: 'What is the style?', answer: 'Sparkling', options: ['Sparkling', 'Still', 'Fortified'] });
+  }
+
+  // Q6: Grape — ask when confident; otherwise MCQ with realistic distractors
+  const topGrape = hint.grapes?.[0];
+  if (topGrape) {
+    if (topGrape.confidence >= 0.8) {
+      qs.push({ id: 'grape', prompt: 'What grape is this wine made from?', answer: topGrape.name });
+    } else {
+      const regionPool = (hint.grapes || []).map(g => g.name);
+      const basePool = regionPool.length >= 4 ? regionPool : [...regionPool, 'Merlot', 'Cabernet Sauvignon', 'Syrah', 'Pinot Noir'];
+      const distractors = makeDistractors(topGrape.name, basePool);
+      const options = [topGrape.name, ...distractors].sort(() => Math.random() - 0.5);
+      qs.push({ id: 'grape_mcq', prompt: 'What grape is most likely used?', answer: topGrape.name, options });
+    }
+  }
+
+  // Cap at 5 questions to keep it fun
+  return qs.slice(0, 5);
+}
+
+/* =========================
+   Component
+   ========================= */
 const WineOptionsGame: React.FC = () => {
+  // Label + hints
   const [labelText, setLabelText] = React.useState('');
   const [labelHints, setLabelHints] = React.useState<LabelHints | null>(null);
 
+  // Supabase search state
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
-
   const [wine, setWine] = React.useState<WineRow | null>(null);
 
-  // --- OCR UI state (Step 3) ---
+  // OCR UI state
   const [ocrText, setOcrText] = React.useState<string>('');
   const [uploading, setUploading] = React.useState(false);
   const [ocrError, setOcrError] = React.useState<string>('');
 
-  // user selections
+  // Quiz state
+  const [quiz, setQuiz] = React.useState<Q[]>([]);
+  const [answers, setAnswers] = React.useState<Record<string, string>>({});
+
+  // Your existing manual-guess UI
   const [guessWorld, setGuessWorld] = React.useState<'old' | 'new' | ''>('');
   const [guessVariety, setGuessVariety] = React.useState<string>('');
   const [guessCountry, setGuessCountry] = React.useState<string>('');
   const [guessRegion, setGuessRegion] = React.useState<string>('');
   const [guessVintage, setGuessVintage] = React.useState<string>(''); // 'NV' or 'YYYY'
-
   const [checked, setChecked] = React.useState(false);
 
-  // When OCR returns text, feed it into existing game logic
+  // When OCR returns text, feed it into existing game logic + generate quiz
   const onOCR = (text: string) => {
     setLabelText(text);
-    setLabelHints(extractLabelHints(text));
+    const hints = extractLabelHints(text);
+    setLabelHints(hints);
+    setQuiz(generateQuestionsFromOldWorld(text));
+    setAnswers({});
     // reset state
     setWine(null);
     setChecked(false);
@@ -111,25 +265,15 @@ const WineOptionsGame: React.FC = () => {
     setError(null);
   };
 
-  // --- Step 3.3: OCR call helper ---
+  // OCR call helper
   const runOCR = async (file: File): Promise<string> => {
-    // Guard: image + reasonable size
-    if (!file.type.startsWith('image/')) {
-      throw new Error('Please choose an image file');
-    }
-    if (file.size > 8 * 1024 * 1024) {
-      throw new Error('Image is too large; please choose a file under 8MB');
-    }
+    if (!file.type.startsWith('image/')) throw new Error('Please choose an image file');
+    if (file.size > 8 * 1024 * 1024) throw new Error('Image is too large; please choose a file under 8MB');
 
     const fd = new FormData();
     fd.append('file', file); // key MUST be "file"
 
-    const res = await fetch('/.netlify/functions/ocr-label', {
-      method: 'POST',
-      body: fd
-      // Do not set Content-Type manually; the browser sets multipart boundary
-    });
-
+    const res = await fetch('/.netlify/functions/ocr-label', { method: 'POST', body: fd });
     const raw = await res.text();
 
     if (!res.ok) {
@@ -145,15 +289,13 @@ const WineOptionsGame: React.FC = () => {
     return text || '';
   };
 
-  // --- Step 3.2: File input handler ---
+  // File input handler
   const handleOCRFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-
     setOcrError('');
     setOcrText('');
     setUploading(true);
-
     try {
       const text = await runOCR(file);
       const trimmed = (text || '').trim();
@@ -164,7 +306,6 @@ const WineOptionsGame: React.FC = () => {
       console.error('OCR error:', err);
     } finally {
       setUploading(false);
-      // allow re-uploading the same file
       e.target.value = '';
     }
   };
@@ -174,11 +315,6 @@ const WineOptionsGame: React.FC = () => {
     setError(null);
     setWine(null);
     try {
-      // Simple matching heuristic:
-      // 1) Gather search terms from label (brand-like words + hints).
-      // 2) Do one or two ILIKE filters against your catalog table.
-      //
-      // ⚠️ Adjust `TABLE_NAME` and field names to match YOUR schema.
       const t = labelText;
       const hints = extractLabelHints(t);
       setLabelHints(hints);
@@ -190,20 +326,15 @@ const WineOptionsGame: React.FC = () => {
       // Build a filtered query:
       let query = supabase.from(TABLE_NAME).select('*').limit(10);
 
-      // If you store producer/brand/display_name, try that first
       if (unique.length) {
-        // Use the first 2–3 tokens to avoid overly broad search
         const primary = unique.slice(0, 3);
-        // OR-chain with ilike over display_name using .or() raw filters
         const ors = primary.map(tok => `display_name.ilike.%${tok}%`).join(',');
         query = query.or(ors);
       }
 
-      // Refine by variety if we inferred something likely
       if (hints.inferred_variety) {
         query = query.ilike('variety', `%${hints.inferred_variety}%`);
       }
-      // If we detected NV vs year, we can hint:
       if (hints.is_non_vintage) {
         query = query.is('vintage', null);
       } else if (hints.vintage_year) {
@@ -213,7 +344,6 @@ const WineOptionsGame: React.FC = () => {
       const { data, error: qErr } = await query;
       if (qErr) throw qErr;
 
-      // Pick the first as the candidate (you can add ranking here)
       const candidate: WineRow | undefined = (data ?? [])[0];
       if (!candidate) {
         setError('No close match found. You can still play by choosing options manually.');
@@ -221,14 +351,11 @@ const WineOptionsGame: React.FC = () => {
         return;
       }
 
-      // fill blanks with world inference if not stored
       if (!candidate.world) {
         candidate.world = worldFromCountry(candidate.country);
       }
-
       setWine(candidate);
 
-      // pre-seed guess with label hints (user can change)
       if (!guessVintage) {
         if (hints.is_non_vintage) setGuessVintage('NV');
         else if (hints.vintage_year) setGuessVintage(String(hints.vintage_year));
@@ -250,14 +377,9 @@ const WineOptionsGame: React.FC = () => {
     const shareText = `Wine Options — my picks:
 World: ${guessWorld || '—'} • Variety: ${guessVariety || '—'} • Country: ${guessCountry || '—'} • Region: ${guessRegion || '—'} • Vintage: ${guessVintage || '—'}
 ${wine ? `Target: ${wine.display_name}` : ''}`;
-
     try {
       if (navigator.share) {
-        await navigator.share({
-          title: 'Wine Options',
-          text: shareText,
-          url: window.location.href,
-        });
+        await navigator.share({ title: 'Wine Options', text: shareText, url: window.location.href });
       } else {
         await navigator.clipboard.writeText(`${shareText}\n${window.location.href}`);
         alert('Copied to clipboard!');
@@ -278,6 +400,13 @@ ${wine ? `Target: ${wine.display_name}` : ''}`;
     return user.trim().toLowerCase() === String(truth).trim().toLowerCase();
   };
 
+  const isQuizCorrect = (qid: string) => {
+    const q = quiz.find(x => x.id === qid);
+    if (!q) return false;
+    const a = answers[qid] || '';
+    return normalizeForMatch(a) === normalizeForMatch(q.answer);
+  };
+
   return (
     <div className="max-w-4xl mx-auto space-y-6">
       <header className="flex items-center gap-3">
@@ -292,7 +421,6 @@ ${wine ? `Target: ${wine.display_name}` : ''}`;
           Upload a label (photo/screenshot)
         </div>
 
-        {/* Simple, reliable OCR input */}
         <input
           type="file"
           accept="image/*"
@@ -363,7 +491,53 @@ ${wine ? `Target: ${wine.display_name}` : ''}`;
         )}
       </section>
 
-      {/* 3) Questions */}
+      {/* 3) Old World Quiz (auto-generated) */}
+      {quiz.length > 0 && (
+        <section className="bg-white border rounded-lg p-4 space-y-4">
+          <div className="font-semibold">Quiz (based on label/place clues)</div>
+          <div className="space-y-3">
+            {quiz.map(q => (
+              <div key={q.id} className="border rounded p-3">
+                <div className="text-sm font-medium mb-2">{q.prompt}</div>
+                {q.options ? (
+                  <div className="flex flex-wrap gap-2">
+                    {q.options.map(opt => (
+                      <button
+                        key={opt}
+                        className={`px-3 py-1 rounded border ${
+                          answers[q.id] === opt ? 'bg-purple-600 text-white border-purple-600' : ''
+                        }`}
+                        onClick={() => setAnswers(a => ({ ...a, [q.id]: opt }))}
+                        type="button"
+                      >
+                        {opt}
+                      </button>
+                    ))}
+                  </div>
+                ) : (
+                  <input
+                    type="text"
+                    className="w-full px-3 py-2 border rounded"
+                    placeholder="Type your answer"
+                    value={answers[q.id] || ''}
+                    onChange={(e) => setAnswers(a => ({ ...a, [q.id]: e.target.value }))}
+                  />
+                )}
+                {checked && (
+                  <div className={`mt-2 inline-flex items-center gap-2 text-xs px-2 py-1 rounded border ${
+                    isQuizCorrect(q.id) ? 'bg-green-50 border-green-200 text-green-800' : 'bg-red-50 border-red-200 text-red-800'
+                  }`}>
+                    <CheckCircle2 className="w-3 h-3" />
+                    {isQuizCorrect(q.id) ? 'Correct' : <>Answer: <span className="font-semibold">{q.answer}</span></>}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {/* 4) Your original manual Questions */}
       <section className="bg-white border rounded-lg p-4 space-y-4">
         <div className="font-semibold">Your picks</div>
 
