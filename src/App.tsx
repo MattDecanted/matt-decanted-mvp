@@ -26,9 +26,7 @@ import DashboardLite from './pages/DashboardLite';
 import Swirdle from '@/pages/Swirdle';
 import SwirdleAdmin from '@/pages/admin/SwirdleAdmin';
 import WineOptionsGame from '@/pages/WineOptionsGame';
-
-// ⛔ Removed TrialQuizWidget from the homepage
-// import TrialQuizWidget from '@/components/TrialQuizWidget';
+import GamePage from '@/pages/GamePage'; // ✅ add this import
 
 import { supabase } from '@/lib/supabase';
 
@@ -103,7 +101,7 @@ function App() {
           <Router>
             <Layout>
               <Routes>
-                {/* 👇 Home now renders ONLY the homepage (no quiz injected) */}
+                {/* Home */}
                 <Route path="/" element={<Home />} />
 
                 {/* Games */}
@@ -113,6 +111,23 @@ function App() {
                   element={
                     <RouteErrorBoundary>
                       <Swirdle />
+                    </RouteErrorBoundary>
+                  }
+                />
+                <Route
+                  path="/play"
+                  element={
+                    <RouteErrorBoundary>
+                      <GamePage />
+                    </RouteErrorBoundary>
+                  }
+                />
+                {/* Invite links / multiplayer rooms */}
+                <Route
+                  path="/game/:slug"
+                  element={
+                    <RouteErrorBoundary>
+                      <GamePage />
                     </RouteErrorBoundary>
                   }
                 />
@@ -131,12 +146,9 @@ function App() {
                 <Route path="/admin/trial-quizzes" element={<TrialQuizManager />} />
                 <Route path="/admin/swirdle" element={<SwirdleAdmin />} />
 
-                {/* Options */}
+                {/* Options (solo) */}
                 <Route path="/wine-options" element={<WineOptionsGame />} />
-                
-                {/* Game Play */}
-               <Route path="/play" element={<GamePage />} />
-                
+
                 {/* Dashboard / Account */}
                 <Route path="/dashboard" element={<DashboardLite />} />
                 <Route path="/Dashboard" element={<Navigate to="/dashboard" replace />} />
@@ -152,6 +164,12 @@ function App() {
 
                 {/* Pricing */}
                 <Route path="/pricing" element={<PricingPage />} />
+
+                {/* (Optional) Legacy demo route */}
+                <Route path="/demo" element={<BrandedDemo />} />
+
+                {/* 404 fallback (optional) */}
+                <Route path="*" element={<Navigate to="/" replace />} />
               </Routes>
             </Layout>
             <Toaster />
