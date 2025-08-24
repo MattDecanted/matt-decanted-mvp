@@ -133,7 +133,10 @@ function App() {
 
                 {/* Options */}
                 <Route path="/wine-options" element={<WineOptionsGame />} />
-
+                
+                {/* Game Play */}
+               <Route path="/play" element={<GamePage />} />
+                
                 {/* Dashboard / Account */}
                 <Route path="/dashboard" element={<DashboardLite />} />
                 <Route path="/Dashboard" element={<Navigate to="/dashboard" replace />} />
