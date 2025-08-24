@@ -1,8 +1,6 @@
 import React from 'react';
 import { Share2, Wine, Search, Loader2, CheckCircle2, AlertTriangle, Camera } from 'lucide-react';
-// We’ll use a simple <input type="file"> to keep OCR robust.
-// If you want to use your OCRUpload component again, you can replace the input and call onOCR(txt).
-// import OCRUpload from '@/components/OCRUpload';
+import OCRUpload from '@/components/OCRUpload';
 import { supabase } from '@/lib/supabase';
 
 /* =========================
@@ -53,6 +51,15 @@ function worldFromCountry(country?: string | null): 'old' | 'new' | null {
   if (NEW.includes(c)) return 'new';
   return null;
 }
+function normalizeForMatch(s: string) {
+  return s
+    .toLowerCase()
+    .normalize('NFKD')
+    .replace(/\p{Diacritic}/gu, '')
+    .replace(/[-']/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
 
 /* =========================
    OCR → Label Hints
@@ -78,7 +85,7 @@ function extractLabelHints(text: string): LabelHints {
       'chardonnay', 'pinot noir', 'pinot meunier', 'riesling', 'sauvignon', 'cabernet',
       'merlot', 'syrah', 'shiraz', 'malbec', 'tempranillo', 'nebbiolo', 'sangiovese',
       'grenache', 'zinfandel', 'primitivo', 'chenin', 'viognier', 'gewurztraminer',
-      'gruner', 'barbera', 'mencía', 'touriga', 'gamay', 'aligoté', 'aligote'
+      'gruner', 'barbera', 'mencía', 'mencia', 'touriga', 'gamay', 'aligoté', 'aligote'
     ];
     const found = grapeList.find(g => t.includes(g));
     inferredVariety = found ? titleCase(found.normalize('NFKD').replace(/\p{Diacritic}/gu, '')) : null;
@@ -138,16 +145,6 @@ const OLD_WORLD_MAP: Record<string, Hint> = {
   ] },
 };
 
-function normalizeForMatch(s: string) {
-  return s
-    .toLowerCase()
-    .normalize('NFKD')
-    .replace(/\p{Diacritic}/gu, '')
-    .replace(/[-']/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
-
 function inferOldWorld(text: string): Hint | null {
   const hay = normalizeForMatch(text);
   let best: { key: string; score: number } | null = null;
@@ -159,27 +156,28 @@ function inferOldWorld(text: string): Hint | null {
       if (!best || score > best.score) best = { key, score };
     }
   }
-
   return best ? OLD_WORLD_MAP[best.key] : null;
 }
 
 /* =========================
    Question Generation
    ========================= */
+type QuizQ = Q; // alias
+
 function makeDistractors(correct: string, pool: string[], n = 3): string[] {
   const choices = pool.filter(x => normalizeForMatch(x) !== normalizeForMatch(correct));
   const shuffled = [...choices].sort(() => Math.random() - 0.5);
   return shuffled.slice(0, n);
 }
 
-function generateQuestionsFromOldWorld(text: string): Q[] {
+function generateQuestionsFromOldWorld(text: string): QuizQ[] {
   const hint = inferOldWorld(text) || {};
-  const qs: Q[] = [];
+  const qs: QuizQ[] = [];
 
   // Q1: World (always solvable)
   qs.push({ id: 'world', prompt: 'Old World or New World?', answer: 'Old World', options: ['Old World', 'New World'] });
 
-  // Q2: Country if we have it
+  // Q2: Country if we have it (else we’ll ask it as MCQ later)
   if (hint.country) {
     qs.push({ id: 'country', prompt: 'What country is this wine from?', answer: hint.country });
   }
@@ -213,6 +211,16 @@ function generateQuestionsFromOldWorld(text: string): Q[] {
     }
   }
 
+  // If we didn’t recognize anything Old-Worldy, add a gentle fallback MCQ for country
+  if (!hint.country) {
+    qs.push({
+      id: 'country_mcq',
+      prompt: 'Which country is most likely?',
+      answer: 'France',
+      options: ['France', 'Italy', 'Spain', 'Germany'] // generic but fair fallback
+    });
+  }
+
   // Cap at 5 questions to keep it fun
   return qs.slice(0, 5);
 }
@@ -230,16 +238,14 @@ const WineOptionsGame: React.FC = () => {
   const [error, setError] = React.useState<string | null>(null);
   const [wine, setWine] = React.useState<WineRow | null>(null);
 
-  // OCR UI state
+  // OCR UI state (display only; OCRUpload handles network)
   const [ocrText, setOcrText] = React.useState<string>('');
-  const [uploading, setUploading] = React.useState(false);
-  const [ocrError, setOcrError] = React.useState<string>('');
 
   // Quiz state
   const [quiz, setQuiz] = React.useState<Q[]>([]);
   const [answers, setAnswers] = React.useState<Record<string, string>>({});
 
-  // Your existing manual-guess UI
+  // Your original manual-guess UI
   const [guessWorld, setGuessWorld] = React.useState<'old' | 'new' | ''>('');
   const [guessVariety, setGuessVariety] = React.useState<string>('');
   const [guessCountry, setGuessCountry] = React.useState<string>('');
@@ -249,6 +255,7 @@ const WineOptionsGame: React.FC = () => {
 
   // When OCR returns text, feed it into existing game logic + generate quiz
   const onOCR = (text: string) => {
+    setOcrText((text || '').trim());
     setLabelText(text);
     const hints = extractLabelHints(text);
     setLabelHints(hints);
@@ -263,51 +270,6 @@ const WineOptionsGame: React.FC = () => {
     setGuessRegion('');
     setGuessVintage('');
     setError(null);
-  };
-
-  // OCR call helper
-  const runOCR = async (file: File): Promise<string> => {
-    if (!file.type.startsWith('image/')) throw new Error('Please choose an image file');
-    if (file.size > 8 * 1024 * 1024) throw new Error('Image is too large; please choose a file under 8MB');
-
-    const fd = new FormData();
-    fd.append('file', file); // key MUST be "file"
-
-    const res = await fetch('/.netlify/functions/ocr-label', { method: 'POST', body: fd });
-    const raw = await res.text();
-
-    if (!res.ok) {
-      try {
-        const data = JSON.parse(raw);
-        throw new Error(data?.error || `OCR failed (${res.status})`);
-      } catch {
-        throw new Error(raw || `OCR failed (${res.status})`);
-      }
-    }
-
-    const { text } = JSON.parse(raw);
-    return text || '';
-  };
-
-  // File input handler
-  const handleOCRFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    setOcrError('');
-    setOcrText('');
-    setUploading(true);
-    try {
-      const text = await runOCR(file);
-      const trimmed = (text || '').trim();
-      setOcrText(trimmed || '(no text detected)');
-      onOCR(trimmed);
-    } catch (err: any) {
-      setOcrError(err?.message || 'OCR failed');
-      console.error('OCR error:', err);
-    } finally {
-      setUploading(false);
-      e.target.value = '';
-    }
   };
 
   const findMatch = async () => {
@@ -421,20 +383,9 @@ ${wine ? `Target: ${wine.display_name}` : ''}`;
           Upload a label (photo/screenshot)
         </div>
 
-        <input
-          type="file"
-          accept="image/*"
-          name="file"
-          onChange={handleOCRFileChange}
-          className="block"
-        />
+        {/* Your OCR component — it should call onText(text) when done */}
+        <OCRUpload onText={(txt) => onOCR(txt)} />
 
-        {uploading && <div className="text-sm text-gray-500">Running OCR…</div>}
-        {ocrError && (
-          <div className="text-sm text-red-600">
-            Error: {ocrError}
-          </div>
-        )}
         {ocrText && (
           <pre className="text-xs bg-gray-100 p-2 mt-2 whitespace-pre-wrap max-h-40 overflow-auto">
             {ocrText}
