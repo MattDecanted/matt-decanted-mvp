@@ -1,6 +1,5 @@
 import React from 'react';
-import { useLocation } from 'react-router-dom';
-import { Share2, Wine, Search, Loader2, CheckCircle2, AlertTriangle, Camera, Link as LinkIcon, Copy } from 'lucide-react';
+import { Share2, Wine, Search, Loader2, CheckCircle2, AlertTriangle, Camera } from 'lucide-react';
 import OCRUpload from '@/components/OCRUpload';
 import { supabase } from '@/lib/supabase';
 
@@ -9,10 +8,10 @@ type WineRow = {
   display_name: string;
   producer?: string | null;
   country?: string | null;
-  region?: string | null;        // e.g. "Burgundy" or "Marlborough"
-  appellation?: string | null;   // e.g. "Chassagne-Montrachèt", "Rioja Alta"
-  variety?: string | null;       // e.g. "Chardonnay" or "Blend"
-  vintage?: number | null;       // 4-digit; null = NV
+  region?: string | null;
+  appellation?: string | null;   // e.g. “Chassagne-Montrachet”, “Rioja Alta”
+  variety?: string | null;       // e.g. “Chardonnay”, “Blend”
+  vintage?: number | null;       // 4-digit; null => NV
   is_nv?: boolean | null;
   world?: 'old' | 'new' | null;
 };
@@ -23,16 +22,9 @@ type LabelHints = {
   inferred_variety?: string | null;
 };
 
-type GameSession = {
-  id: string;
-  invite_code: string;
-  host_user_id: string | null;
-  is_active: boolean;
-  created_at: string;
-};
+const TABLE_NAME = 'wine_index';
 
-const TABLE_NAME = 'wine_index'; // adjust if needed
-const SESSIONS_TABLE = 'game_sessions'; // make sure you've created this table in Supabase
+/* -------------------- helpers -------------------- */
 
 function titleCase(s: string) {
   return s.replace(/\w\S*/g, (w) => w.charAt(0).toUpperCase() + w.slice(1));
@@ -41,8 +33,8 @@ function titleCase(s: string) {
 function worldFromCountry(country?: string | null): 'old' | 'new' | null {
   if (!country) return null;
   const c = country.toLowerCase();
-  const OLD = ['france', 'italy', 'spain', 'germany', 'portugal', 'austria', 'greece', 'hungary'];
-  const NEW = ['usa', 'united states', 'new zealand', 'australia', 'chile', 'argentina', 'south africa', 'canada'];
+  const OLD = ['france','italy','spain','germany','portugal','austria','greece','hungary'];
+  const NEW = ['usa','united states','new zealand','australia','chile','argentina','south africa','canada'];
   if (OLD.includes(c)) return 'old';
   if (NEW.includes(c)) return 'new';
   return null;
@@ -50,6 +42,7 @@ function worldFromCountry(country?: string | null): 'old' | 'new' | null {
 
 function extractLabelHints(text: string): LabelHints {
   const t = text.toLowerCase();
+
   const years = Array.from(t.matchAll(/\b(19|20)\d{2}\b/g)).map(m => Number(m[0]));
   const possibleYear = years.find(y => y >= 1980 && y <= new Date().getFullYear());
   const isNV = /\bnv\b|\bnon\s*-?\s*vintage\b/.test(t);
@@ -61,10 +54,9 @@ function extractLabelHints(text: string): LabelHints {
     inferredVariety = 'Pinot Noir';
   } else {
     const grapeList = [
-      'chardonnay', 'pinot noir', 'pinot meunier', 'riesling', 'sauvignon', 'cabernet',
-      'merlot', 'syrah', 'shiraz', 'malbec', 'tempranillo', 'nebbiolo', 'sangiovese',
-      'grenache', 'zinfandel', 'primitivo', 'chenin', 'viognier', 'gewurztraminer',
-      'gruner', 'barbera', 'mencía', 'touriga', 'gamay', 'aligoté', 'semillon', 'cabernet franc'
+      'chardonnay','pinot noir','pinot meunier','riesling','sauvignon','cabernet','merlot','syrah','shiraz','malbec',
+      'tempranillo','nebbiolo','sangiovese','grenache','zinfandel','primitivo','chenin','viognier','gewurztraminer',
+      'gruner','barbera','mencía','touriga','gamay','aligoté','semillon','cabernet franc'
     ];
     const found = grapeList.find(g => t.includes(g));
     inferredVariety = found ? titleCase(found) : null;
@@ -93,6 +85,32 @@ function pickDistractors(pool: string[], correct: string, n: number) {
   return shuffle(filtered).slice(0, n);
 }
 
+function buildVintageChoices(wine: WineRow | null, hints: LabelHints | null): string[] {
+  // Prefer actual catalog vintage, fallback to OCR year
+  const target = (typeof wine?.vintage === 'number' ? wine!.vintage : null)
+              ?? (hints?.vintage_year ?? null);
+
+  if (target) {
+    const pool = [
+      String(target),
+      String(target - 1),
+      String(target + 1),
+      String(target - 2),
+      String(target + 2),
+      'NV',
+    ];
+    const unique = Array.from(new Set(pool));
+    const shuffled = shuffle(unique);
+    if (!shuffled.includes(String(target))) shuffled[0] = String(target);
+    return shuffled.slice(0, 4);
+  } else {
+    const now = new Date().getFullYear();
+    const pool = ['NV', String(now), String(now - 1), String(now - 2), String(now - 3)];
+    const unique = Array.from(new Set(pool));
+    return shuffle(unique).slice(0, 4);
+  }
+}
+
 const AnswerBadge: React.FC<{ ok: boolean; truth: string }> = ({ ok, truth }) => (
   <div className={`mt-2 inline-flex items-center gap-2 text-xs px-2 py-1 rounded border ${ok ? 'bg-green-50 border-green-200 text-green-800' : 'bg-red-50 border-red-200 text-red-800'}`}>
     <CheckCircle2 className="w-3 h-3" />
@@ -100,14 +118,14 @@ const AnswerBadge: React.FC<{ ok: boolean; truth: string }> = ({ ok, truth }) =>
   </div>
 );
 
-const WineOptionsGame: React.FC = () => {
-  const location = useLocation();
+/* -------------------- component -------------------- */
 
+const WineOptionsGame: React.FC = () => {
   // OCR + hints
   const [labelText, setLabelText] = React.useState('');
   const [labelHints, setLabelHints] = React.useState<LabelHints | null>(null);
 
-  // search/match state
+  // search / match
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const [wine, setWine] = React.useState<WineRow | null>(null);
@@ -118,7 +136,7 @@ const WineOptionsGame: React.FC = () => {
   const [guessCountry, setGuessCountry] = React.useState<string>('');
   const [guessRegion, setGuessRegion] = React.useState<string>('');
   const [guessSubregion, setGuessSubregion] = React.useState<string>('');
-  const [guessVintage, setGuessVintage] = React.useState<string>(''); // 'NV' or 'YYYY'
+  const [guessVintage, setGuessVintage] = React.useState<string>(''); // keep EMPTY initially
   const [checked, setChecked] = React.useState(false);
 
   // MCQ choices
@@ -128,93 +146,21 @@ const WineOptionsGame: React.FC = () => {
   const [vintageChoices, setVintageChoices] = React.useState<string[]>([]);
   const [varietyChoices, setVarietyChoices] = React.useState<string[]>([]);
 
-  // Multiplayer
-  const [session, setSession] = React.useState<GameSession | null>(null);
-  const [inviteUrl, setInviteUrl] = React.useState<string | null>(null);
-  const [creatingSession, setCreatingSession] = React.useState(false);
-
-  // capture invite code from URL (join flow)
-  React.useEffect(() => {
-    const params = new URLSearchParams(location.search);
-    const code = params.get('code');
-    if (!code) return;
-
-    (async () => {
-      try {
-        const { data, error } = await supabase
-          .from<GameSession>(SESSIONS_TABLE)
-          .select('*')
-          .eq('invite_code', code)
-          .eq('is_active', true)
-          .limit(1)
-          .maybeSingle();
-
-        if (error) throw error;
-        if (data) {
-          setSession(data);
-          setInviteUrl(`${window.location.origin}/play?code=${data.invite_code}`);
-        } else {
-          setSession(null);
-        }
-      } catch (e: any) {
-        console.error(e);
-      }
-    })();
-  }, [location.search]);
-
-  async function handleCreateSession() {
-    try {
-      setCreatingSession(true);
-      const { data: auth } = await supabase.auth.getUser();
-      const host_user_id = auth?.user?.id ?? null;
-
-      // Generate a short invite code (6-8 chars) — use Postgres gen_random_uuid() sliced or custom server function.
-      // For client-side: quick random base36
-      const code = Math.random().toString(36).slice(2, 8).toUpperCase();
-
-      const { data, error } = await supabase
-        .from<GameSession>(SESSIONS_TABLE)
-        .insert([{ invite_code: code, host_user_id, is_active: true }])
-        .select('*')
-        .single();
-
-      if (error) throw error;
-      setSession(data);
-      const url = `${window.location.origin}/play?code=${data.invite_code}`;
-      setInviteUrl(url);
-    } catch (e: any) {
-      alert(e?.message ?? 'Could not create session');
-    } finally {
-      setCreatingSession(false);
-    }
-  }
-
-  async function copyInvite() {
-    if (!inviteUrl) return;
-    try {
-      await navigator.clipboard.writeText(inviteUrl);
-      alert('Invite link copied!');
-    } catch {
-      // fallback
-      prompt('Copy this link:', inviteUrl);
-    }
-  }
-
   // OCR callback
   const onOCR = (text: string) => {
     setLabelText(text);
     const hints = extractLabelHints(text);
     setLabelHints(hints);
 
-    // reset state
+    // full reset (no pre-seeding)
     setWine(null);
     setChecked(false);
     setGuessWorld('');
-    setGuessVariety(hints.inferred_variety ?? '');
+    setGuessVariety('');
     setGuessCountry('');
     setGuessRegion('');
     setGuessSubregion('');
-    setGuessVintage(hints.is_non_vintage ? 'NV' : (hints.vintage_year ? String(hints.vintage_year) : ''));
+    setGuessVintage(''); // IMPORTANT: do not prefill
     setError(null);
   };
 
@@ -236,18 +182,12 @@ const WineOptionsGame: React.FC = () => {
       if (unique.length) {
         const primary = unique.slice(0, 3);
         const ors = primary.map(tok => `display_name.ilike.%${tok}%`).join(',');
-        // @ts-ignore - Supabase .or accepts a raw OR filter string
         query = query.or(ors);
       }
 
-      if (hints.inferred_variety) {
-        query = query.ilike('variety', `%${hints.inferred_variety}%`);
-      }
-      if (hints.is_non_vintage) {
-        query = query.is('vintage', null);
-      } else if (hints.vintage_year) {
-        query = query.eq('vintage', hints.vintage_year);
-      }
+      if (hints.inferred_variety) query = query.ilike('variety', `%${hints.inferred_variety}%`);
+      if (hints.is_non_vintage) query = query.is('vintage', null);
+      else if (hints.vintage_year) query = query.eq('vintage', hints.vintage_year);
 
       const { data, error: qErr } = await query;
       if (qErr) throw qErr;
@@ -268,7 +208,7 @@ const WineOptionsGame: React.FC = () => {
     }
   };
 
-  // build MCQs once a wine is matched
+  // Build MCQs after a match (and whenever hints update)
   React.useEffect(() => {
     const loadOptions = async () => {
       if (!wine) {
@@ -277,21 +217,19 @@ const WineOptionsGame: React.FC = () => {
         return;
       }
 
-      // Countries
+      // Country choices
       try {
-        const { data: countries, error } = await supabase.rpc('get_countries');
-        if (!error && countries) {
+        const { data: countries } = await supabase.rpc('get_countries');
+        if (countries) {
           const correct = wine.country || '';
           const distractors = pickDistractors(countries.map((c: { country: string }) => c.country), correct, 3);
           setCountryChoices(shuffle(uniqStrings([correct, ...distractors])));
-        } else {
-          setCountryChoices(uniqStrings([wine.country || '']));
         }
       } catch {
         setCountryChoices(uniqStrings([wine.country || '']));
       }
 
-      // Regions
+      // Region choices
       try {
         if (wine.country) {
           const { data: regions } = await supabase.rpc('get_regions', { p_country: wine.country });
@@ -300,18 +238,16 @@ const WineOptionsGame: React.FC = () => {
             const correct = wine.region || wine.appellation || '';
             const distractors = pickDistractors(list, correct, 3);
             setRegionChoices(shuffle(uniqStrings([correct, ...distractors])));
-          } else {
-            setRegionChoices(uniqStrings([wine.region || wine.appellation || '']));
           }
         }
       } catch {
         setRegionChoices(uniqStrings([wine.region || wine.appellation || '']));
       }
 
-      // Subregions
+      // Subregion choices (optional)
       try {
-        const baseRegion = wine.region || wine.appellation || '';
-        if (wine.country && baseRegion) {
+        if (wine.country && (wine.region || wine.appellation)) {
+          const baseRegion = wine.region || wine.appellation!;
           const { data: subs } = await supabase.rpc('get_subregions', { p_country: wine.country, p_region: baseRegion });
           if (subs && subs.length) {
             const list = subs.map((s: { subregion: string }) => s.subregion);
@@ -332,28 +268,11 @@ const WineOptionsGame: React.FC = () => {
         setSubregionChoices([]);
       }
 
-      // Vintage
-      const correctYear = typeof wine.vintage === 'number' ? wine.vintage : null;
-      if (correctYear) {
-        const yearPool = uniqStrings([
-          String(correctYear),
-          String(correctYear - 1),
-          String(correctYear + 1),
-          String(correctYear - 2),
-          String(correctYear + 2),
-          'NV'
-        ]);
-        const pick = shuffle(yearPool).slice(0, 4);
-        if (!pick.includes(String(correctYear))) pick[0] = String(correctYear);
-        setVintageChoices(shuffle(Array.from(new Set(pick))));
-      } else {
-        const now = new Date().getFullYear();
-        const years = [now, now - 1, now - 2].map(String);
-        setVintageChoices(shuffle(Array.from(new Set(['NV', ...years]))).slice(0, 4));
-      }
+      // Vintage choices (key fix)
+      setVintageChoices(buildVintageChoices(wine, labelHints));
 
-      // Variety
-      const correctVar = (wine.variety || labelHints?.inferred_variety || '').trim();
+      // Variety choices
+      const correctVar = (wine.variety || '').trim() || (labelHints?.inferred_variety || '').trim();
       const commonGrapes = [
         'Chardonnay','Pinot Noir','Sauvignon Blanc','Riesling','Cabernet Sauvignon',
         'Merlot','Syrah','Shiraz','Grenache','Tempranillo','Nebbiolo','Sangiovese',
@@ -375,12 +294,12 @@ World: ${guessWorld || '—'} • Variety: ${guessVariety || '—'} • Vintage:
 ${wine ? `Target: ${wine.display_name}` : ''}`;
     try {
       if (navigator.share) {
-        await navigator.share({ title: 'Wine Options', text: shareText, url: inviteUrl ?? window.location.href });
+        await navigator.share({ title: 'Wine Options', text: shareText, url: window.location.href });
       } else {
-        await navigator.clipboard.writeText(`${shareText}\n${inviteUrl ?? window.location.href}`);
+        await navigator.clipboard.writeText(`${shareText}\n${window.location.href}`);
         alert('Copied to clipboard!');
       }
-    } catch {/* no-op */}
+    } catch { /* no-op */ }
   };
 
   const correctWorld = wine?.world ?? worldFromCountry(wine?.country);
@@ -388,47 +307,20 @@ ${wine ? `Target: ${wine.display_name}` : ''}`;
   const correctCountry = wine?.country || '';
   const correctRegion = wine?.region || wine?.appellation || '';
   const correctSubregion = wine?.appellation || '';
-  const correctVintage = wine?.vintage ? String(wine.vintage) : 'NV';
+  const correctVintage = wine?.vintage ? String(wine.vintage) : (labelHints?.vintage_year ? String(labelHints.vintage_year) : 'NV');
 
   const isCorrect = (user: string | '', truth: string | null | undefined) => {
     if (!user || !truth) return false;
     return user.trim().toLowerCase() === String(truth).trim().toLowerCase();
   };
 
+  /* -------------------- render -------------------- */
+
   return (
     <div className="max-w-4xl mx-auto space-y-6">
-      <header className="flex items-center justify-between gap-3">
-        <div className="flex items-center gap-3">
-          <Wine className="w-6 h-6 text-purple-600" />
-          <h1 className="text-2xl font-bold">Wine Options</h1>
-        </div>
-
-        {/* Multiplayer: create or show invite */}
-        <div className="flex items-center gap-2">
-          {!session ? (
-            <button
-              onClick={handleCreateSession}
-              disabled={creatingSession}
-              className="inline-flex items-center gap-2 px-3 py-2 rounded-md border"
-              title="Create a multiplayer session and invite friends"
-            >
-              <LinkIcon className="w-4 h-4" />
-              {creatingSession ? 'Creating…' : 'Start Multiplayer'}
-            </button>
-          ) : (
-            <div className="flex items-center gap-2">
-              <span className="text-xs text-gray-600 hidden sm:inline">Invite:</span>
-              <button
-                onClick={copyInvite}
-                className="inline-flex items-center gap-2 px-3 py-2 rounded-md border"
-                title={inviteUrl ?? 'Invite link'}
-              >
-                <Copy className="w-4 h-4" />
-                Copy Link
-              </button>
-            </div>
-          )}
-        </div>
+      <header className="flex items-center gap-3">
+        <Wine className="w-6 h-6 text-purple-600" />
+        <h1 className="text-2xl font-bold">Wine Options</h1>
       </header>
 
       {/* 1) Upload & OCR */}
@@ -437,6 +329,7 @@ ${wine ? `Target: ${wine.display_name}` : ''}`;
           <Camera className="w-4 h-4" />
           Upload a label (photo/screenshot)
         </div>
+
         <OCRUpload onText={onOCR} />
 
         {labelText && (
@@ -454,7 +347,7 @@ ${wine ? `Target: ${wine.display_name}` : ''}`;
             className="inline-flex items-center gap-2 px-3 py-2 rounded-md bg-black text-white disabled:opacity-50"
           >
             {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Search className="w-4 h-4" />}
-            {busy ? 'Working…' : `Let's play`}
+            {busy ? 'Working…' : `Let’s play`}
           </button>
         </div>
 
@@ -466,9 +359,10 @@ ${wine ? `Target: ${wine.display_name}` : ''}`;
         )}
       </section>
 
-      {/* 2) Candidate */}
+      {/* 2) Candidate (optional info) */}
       <section className="bg-white border rounded-lg p-4">
         <div className="text-sm font-semibold mb-2">Candidate (you can still choose different answers)</div>
+
         {!wine ? (
           <div className="text-sm text-gray-600">No candidate yet. Upload a label and click “Let’s play”.</div>
         ) : (
@@ -488,7 +382,7 @@ ${wine ? `Target: ${wine.display_name}` : ''}`;
         )}
       </section>
 
-      {/* 3) The Game */}
+      {/* 3) Questions */}
       <section className="bg-white border rounded-lg p-4 space-y-6">
         <div className="font-semibold">Your picks</div>
 
@@ -508,7 +402,7 @@ ${wine ? `Target: ${wine.display_name}` : ''}`;
           {checked && <AnswerBadge ok={isCorrect(guessWorld, correctWorld || '')} truth={correctWorld || '—'} />}
         </div>
 
-        {/* Variety */}
+        {/* Variety / Blend */}
         <div>
           <div className="text-xs text-gray-600 mb-1">Variety / Blend</div>
           <div className="flex flex-wrap gap-2">
@@ -520,14 +414,14 @@ ${wine ? `Target: ${wine.display_name}` : ''}`;
               >{opt}</button>
             ))}
           </div>
-          {checked && <AnswerBadge ok={isCorrect(guessVariety, wine?.variety || '')} truth={wine?.variety || '—'} />}
+          {checked && <AnswerBadge ok={isCorrect(guessVariety, correctVariety)} truth={correctVariety || '—'} />}
         </div>
 
         {/* Vintage */}
         <div>
           <div className="text-xs text-gray-600 mb-1">Vintage</div>
           <div className="flex flex-wrap gap-2">
-            {(vintageChoices.length ? vintageChoices : [wine?.vintage ? String(wine.vintage) : 'NV']).map((opt) => (
+            {(vintageChoices.length ? vintageChoices : [wine?.vintage ? String(wine.vintage) : (labelHints?.vintage_year ? String(labelHints.vintage_year) : 'NV')]).map((opt) => (
               <button
                 key={`vint-${opt}`}
                 className={`px-3 py-2 rounded border ${guessVintage.toLowerCase() === opt.toLowerCase() ? 'bg-purple-600 text-white border-purple-600' : ''}`}
@@ -535,7 +429,7 @@ ${wine ? `Target: ${wine.display_name}` : ''}`;
               >{opt}</button>
             ))}
           </div>
-          {checked && <AnswerBadge ok={isCorrect(guessVintage, wine?.vintage ? String(wine.vintage) : 'NV')} truth={wine?.vintage ? String(wine.vintage) : 'NV'} />}
+          {checked && <AnswerBadge ok={isCorrect(guessVintage, correctVintage)} truth={correctVintage} />}
         </div>
 
         {/* Country */}
@@ -550,7 +444,7 @@ ${wine ? `Target: ${wine.display_name}` : ''}`;
               >{opt}</button>
             ))}
           </div>
-          {checked && <AnswerBadge ok={isCorrect(guessCountry, wine?.country || '')} truth={wine?.country || '—'} />}
+          {checked && <AnswerBadge ok={isCorrect(guessCountry, correctCountry)} truth={correctCountry || '—'} />}
         </div>
 
         {/* Region */}
@@ -565,7 +459,7 @@ ${wine ? `Target: ${wine.display_name}` : ''}`;
               >{opt}</button>
             ))}
           </div>
-          {checked && <AnswerBadge ok={isCorrect(guessRegion, wine?.region || wine?.appellation || '')} truth={wine?.region || wine?.appellation || '—'} />}
+          {checked && <AnswerBadge ok={isCorrect(guessRegion, correctRegion)} truth={correctRegion || '—'} />}
         </div>
 
         {/* Sub-region (if applicable) */}
@@ -581,7 +475,7 @@ ${wine ? `Target: ${wine.display_name}` : ''}`;
                 >{opt}</button>
               ))}
             </div>
-            {checked && <AnswerBadge ok={isCorrect(guessSubregion, wine?.appellation || '')} truth={wine?.appellation || '—'} />}
+            {checked && <AnswerBadge ok={isCorrect(guessSubregion, correctSubregion)} truth={correctSubregion || '—'} />}
           </div>
         )}
 
