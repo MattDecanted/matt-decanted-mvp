@@ -1,11 +1,11 @@
 import React from 'react';
-import { Share2, Wine, Search, Loader2, CheckCircle2, AlertTriangle, Camera } from 'lucide-react';
-import OCRUpload from '@/components/OCRUpload';
+import { Share2, Wine, Search, Loader2, CheckCircle2, AlertTriangle, Camera, Upload } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 
 // ---- constants ----
 const TABLE_NAME = 'wine_index';
 const FN_AWARD = '/.netlify/functions/award-points';
+const FN_OCR = '/.netlify/functions/ocr-label';
 
 // ---- types ----
 type WineRow = {
@@ -26,6 +26,18 @@ type LabelHints = {
   is_non_vintage?: boolean;
   inferred_variety?: string | null;
 };
+
+// ---- OCR helper (Netlify-only deployment) ----
+async function ocrLabel(file: File): Promise<{ text: string }> {
+  const form = new FormData();
+  form.append('file', file);
+  const res = await fetch(FN_OCR, { method: 'POST', body: form });
+  if (!res.ok) {
+    const detail = await res.text().catch(() => '');
+    throw new Error(`OCR failed: ${res.status} ${res.statusText} ${detail}`);
+  }
+  return res.json();
+}
 
 // ---- helpers ----
 function titleCase(s: string) {
@@ -166,6 +178,8 @@ const WineOptionsGame: React.FC = () => {
   // OCR + hints
   const [labelText, setLabelText] = React.useState('');
   const [labelHints, setLabelHints] = React.useState<LabelHints | null>(null);
+  const [uploadBusy, setUploadBusy] = React.useState(false);
+  const [uploadErr, setUploadErr] = React.useState<string | null>(null);
 
   // search / match
   const [busy, setBusy] = React.useState(false);
@@ -188,7 +202,7 @@ const WineOptionsGame: React.FC = () => {
   const [vintageChoices, setVintageChoices] = React.useState<string[]>([]);
   const [varietyChoices, setVarietyChoices] = React.useState<string[]>([]);
 
-  // OCR callback
+  // OCR handler
   const onOCR = (text: string) => {
     setLabelText(text);
     const hints = extractLabelHints(text);
@@ -204,6 +218,21 @@ const WineOptionsGame: React.FC = () => {
     setGuessSubregion('');
     setGuessVintage(''); // IMPORTANT: do not prefill
     setError(null);
+  };
+
+  // Inline upload -> OCR
+  const handleFile = async (file: File | null) => {
+    if (!file) return;
+    setUploadErr(null);
+    setUploadBusy(true);
+    try {
+      const { text } = await ocrLabel(file);
+      onOCR(text || '');
+    } catch (e: any) {
+      setUploadErr(e?.message || 'OCR failed');
+    } finally {
+      setUploadBusy(false);
+    }
   };
 
   // “Let’s play” (search a likely match)
@@ -417,7 +446,25 @@ ${wine ? `Target: ${wine.display_name}` : ''}`;
           Upload a label (photo/screenshot)
         </div>
 
-        <OCRUpload onText={onOCR} />
+        {/* Inline uploader wired to the Netlify Function */}
+        <label className="inline-flex items-center gap-2 px-3 py-2 rounded-md border cursor-pointer w-fit">
+          <Upload className="w-4 h-4" />
+          <span>{uploadBusy ? 'Reading…' : 'Choose image'}</span>
+          <input
+            type="file"
+            accept="image/*"
+            className="hidden"
+            onChange={(e) => handleFile(e.target.files?.[0] ?? null)}
+            disabled={uploadBusy}
+          />
+        </label>
+
+        {uploadErr && (
+          <div className="flex items-center gap-2 text-red-700 bg-red-50 border border-red-200 rounded p-2 text-sm">
+            <AlertTriangle className="w-4 h-4" />
+            {uploadErr}
+          </div>
+        )}
 
         {labelText && (
           <div className="text-xs text-gray-600">
