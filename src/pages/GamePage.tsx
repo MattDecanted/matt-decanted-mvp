@@ -1,11 +1,18 @@
 import React from 'react';
-import { useParams, useNavigate } from 'react-router-dom'; // swap if you use Next/Remix
+import { useParams, useNavigate } from 'react-router-dom';
 import { supabase } from '@/lib/supabase';
 import OCRUpload from '@/components/OCRUpload';
-import { Loader2, Users, Share2, Play, Trophy, Lock, Unlock, Eye, Camera, Search, Wine } from 'lucide-react';
+import {
+  Loader2, Users, Share2, Play, Trophy, Lock, Unlock, Eye, Camera, Search, Wine,
+} from 'lucide-react';
 
 /** ─────────────────────────────────────────────────────────────────────────────
- * Types (lightweight; keep in sync with your DB)
+ * Config
+ * ────────────────────────────────────────────────────────────────────────────*/
+const SEQUENTIAL = false; // set true to ask one-at-a-time
+
+/** ─────────────────────────────────────────────────────────────────────────────
+ * Types (match DB)
  * ────────────────────────────────────────────────────────────────────────────*/
 type GameSession = {
   id: string;
@@ -66,20 +73,43 @@ function makeNiceSlug() {
   const num = Math.floor(100 + Math.random() * 900);
   return `${wordsA[Math.floor(Math.random()*wordsA.length)]}-${wordsB[Math.floor(Math.random()*wordsB.length)]}-${num}`;
 }
-
 function cls(...xs: (string | false | null | undefined)[]) {
   return xs.filter(Boolean).join(' ');
+}
+function shuffle<T>(xs: T[]) {
+  const a = [...xs];
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+function uniq(xs: (string | null | undefined)[]) {
+  return Array.from(new Set(xs.filter(Boolean).map(s => s!.trim()))).filter(Boolean) as string[];
+}
+function inferWorld(country?: string | null): 'old' | 'new' | null {
+  if (!country) return null;
+  const c = country.toLowerCase();
+  const OLD = ['france','italy','spain','germany','portugal','austria','greece','hungary'];
+  const NEW = ['usa','united states','new zealand','australia','chile','argentina','south africa','canada'];
+  if (OLD.includes(c)) return 'old';
+  if (NEW.includes(c)) return 'new';
+  return null;
 }
 
 const Choice: React.FC<{
   value: string;
   chosen: string;
   onPick: (v: string) => void;
-}> = ({ value, chosen, onPick }) => (
+  disabled?: boolean;
+}> = ({ value, chosen, onPick, disabled }) => (
   <button
+    disabled={disabled}
     className={cls(
-      'px-3 py-2 rounded border text-sm',
-      chosen.toLowerCase() === value.toLowerCase() ? 'bg-purple-600 text-white border-purple-600' : 'hover:bg-gray-50'
+      'px-3 py-2 rounded border text-sm disabled:opacity-50',
+      chosen.toLowerCase() === value.toLowerCase()
+        ? 'bg-purple-600 text-white border-purple-600'
+        : 'hover:bg-gray-50'
     )}
     onClick={() => onPick(value)}
   >
@@ -91,7 +121,6 @@ const Choice: React.FC<{
  * Component
  * ────────────────────────────────────────────────────────────────────────────*/
 const GamePage: React.FC = () => {
-  // If you route as /game/:slug, we can pick it up; if no slug => “mode selector”
   const params = useParams<{ slug?: string }>();
   const navigate = useNavigate();
   const slugFromUrl = params.slug;
@@ -101,18 +130,17 @@ const GamePage: React.FC = () => {
   const [loading, setLoading] = React.useState(false);
   const [err, setErr] = React.useState<string | null>(null);
 
-  // session / players / rounds / leaderboard
   const [session, setSession] = React.useState<GameSession | null>(null);
   const [players, setPlayers] = React.useState<GamePlayer[]>([]);
   const [rounds, setRounds] = React.useState<GameRound[]>([]);
   const [scores, setScores] = React.useState<GameScore[]>([]);
   const [currentRound, setCurrentRound] = React.useState<GameRound | null>(null);
 
-  // my answers (for current round)
   const [answers, setAnswers] = React.useState<Partial<GameAnswer>>({});
   const [locked, setLocked] = React.useState(false);
+  const [revealed, setRevealed] = React.useState(false); // hide answers until reveal
 
-  // OCR text + matching result (minimal version; replace with your WineOptionsGame if you prefer)
+  // OCR host-side quick match
   const [labelText, setLabelText] = React.useState('');
   const [busy, setBusy] = React.useState(false);
   const [matched, setMatched] = React.useState<{
@@ -127,16 +155,16 @@ const GamePage: React.FC = () => {
 
   const inviteUrl = session ? `${window.location.origin}/game/${session.slug}` : '';
 
-  /** ── Realtime subscriptions ───────────────────────────────────────────────*/
+  /** Realtime */
   React.useEffect(() => {
     if (!session) return;
     const gameId = session.id;
 
     const channel = supabase
       .channel(`game:${gameId}`)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'game_players', filter: `game_id=eq.${gameId}` }, reloadPlayers)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'game_rounds',  filter: `game_id=eq.${gameId}` }, reloadRounds)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'game_scores',  filter: `game_id=eq.${gameId}` }, reloadScores)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'game_players',  filter: `game_id=eq.${gameId}` }, reloadPlayers)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'game_rounds',   filter: `game_id=eq.${gameId}` }, () => { reloadRounds(); setRevealed(false); })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'game_scores',   filter: `game_id=eq.${gameId}` }, reloadScores)
       .subscribe();
 
     return () => { supabase.removeChannel(channel); };
@@ -172,7 +200,7 @@ const GamePage: React.FC = () => {
     setScores(data || []);
   }
 
-  /** ── Create / Join ───────────────────────────────────────────────────────*/
+  /** Create / Join */
   async function createGame() {
     setErr(null); setLoading(true);
     try {
@@ -224,17 +252,15 @@ const GamePage: React.FC = () => {
   }
 
   React.useEffect(() => {
-    // If we landed directly on /game/:slug, default into join flow
     if (slugFromUrl && !session && myName) {
       joinGame(slugFromUrl, myName);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [slugFromUrl, myName]);
 
-  /** ── Host actions ────────────────────────────────────────────────────────*/
+  /** Host actions */
   async function startRoundWithOCR() {
     if (!session) return;
-    // Minimal — we create a round shell; fill correct answers from "matched"
     const nextNumber = (rounds.slice(-1)[0]?.round_number || 0) + 1;
     const correct_country   = matched?.country || null;
     const correct_region    = matched?.region || matched?.appellation || null;
@@ -246,7 +272,7 @@ const GamePage: React.FC = () => {
       game_id: session.id,
       round_number: nextNumber,
       ocr_text: labelText || null,
-      wine_id: null, // set if you have it
+      wine_id: null,
       correct_country,
       correct_region,
       correct_subregion,
@@ -259,6 +285,7 @@ const GamePage: React.FC = () => {
       await reloadRounds();
       setLocked(false);
       setAnswers({});
+      setRevealed(false);
     }
   }
 
@@ -266,10 +293,13 @@ const GamePage: React.FC = () => {
     if (!currentRound) return;
     const { error } = await supabase.rpc('score_round', { p_round: currentRound.id });
     if (error) setErr(error.message);
-    else await reloadScores();
+    else {
+      await reloadScores();
+      setRevealed(true);
+    }
   }
 
-  /** ── Player actions ──────────────────────────────────────────────────────*/
+  /** Player actions */
   async function upsertAnswer(patch: Partial<GameAnswer>) {
     if (!currentRound || !myName) return;
     const row: Partial<GameAnswer> = {
@@ -284,24 +314,21 @@ const GamePage: React.FC = () => {
       locked: false,
       ...patch
     };
-
     setAnswers(row);
-
     const { error } = await supabase.from('game_answers').upsert(row);
     if (error) setErr(error.message);
   }
-
   async function setLockedState(lock: boolean) {
     setLocked(lock);
     await upsertAnswer({ locked: lock });
   }
 
-  /** ── Minimal matching (for host). Replace with your WineOptionsGame if you like. ─*/
+  /** Minimal quick match from OCR */
   async function quickMatchFromOCR() {
     setBusy(true);
     setErr(null);
     try {
-      const tokens = Array.from(labelText.matchAll(/[A-Za-zÀ-ÖØ-öø-ÿ]{3,}/g)).map(m => m[0]);
+      const tokens = Array.from((labelText || '').matchAll(/[A-Za-zÀ-ÖØ-öø-ÿ]{3,}/g)).map(m => m[0]);
       const primary = Array.from(new Set(tokens)).slice(0, 3);
       let query = supabase.from('wine_index').select('*').limit(1);
       if (primary.length) {
@@ -332,17 +359,7 @@ const GamePage: React.FC = () => {
     }
   }
 
-  function inferWorld(country?: string | null): 'old' | 'new' | null {
-    if (!country) return null;
-    const c = country.toLowerCase();
-    const OLD = ['france','italy','spain','germany','portugal','austria','greece','hungary'];
-    const NEW = ['usa','united states','new zealand','australia','chile','argentina','south africa','canada'];
-    if (OLD.includes(c)) return 'old';
-    if (NEW.includes(c)) return 'new';
-    return null;
-  }
-
-  /** ── UI: Mode selector (first load) ───────────────────────────────────────*/
+  /** Mode selector */
   if (!slugFromUrl && !session) {
     return (
       <div className="max-w-3xl mx-auto space-y-6 p-6">
@@ -355,10 +372,7 @@ const GamePage: React.FC = () => {
           <div className="border rounded-lg p-4">
             <div className="font-semibold mb-2">Solo</div>
             <p className="text-sm text-gray-600 mb-3">Play on your own device with OCR + MCQs.</p>
-            <button
-              className="px-3 py-2 rounded bg-black text-white"
-              onClick={() => setMode('solo')}
-            >
+            <button className="px-3 py-2 rounded bg-black text-white" onClick={() => setMode('solo')}>
               Play Solo
             </button>
           </div>
@@ -366,11 +380,7 @@ const GamePage: React.FC = () => {
           <div className="border rounded-lg p-4">
             <div className="font-semibold mb-2">Host</div>
             <p className="text-sm text-gray-600 mb-3">Create a room and invite friends.</p>
-            <button
-              className="px-3 py-2 rounded bg-black text-white"
-              onClick={createGame}
-              disabled={loading}
-            >
+            <button className="px-3 py-2 rounded bg-black text-white" onClick={createGame} disabled={loading}>
               {loading ? <Loader2 className="w-4 h-4 animate-spin inline" /> : 'Create Room'}
             </button>
           </div>
@@ -387,7 +397,7 @@ const GamePage: React.FC = () => {
     );
   }
 
-  /** ── UI: In a game (/game/:slug) ─────────────────────────────────────────*/
+  /** In a room */
   return (
     <div className="max-w-5xl mx-auto p-6 space-y-6">
       <header className="flex items-center gap-3">
@@ -415,12 +425,14 @@ const GamePage: React.FC = () => {
                 <button
                   className="px-3 py-2 rounded border flex items-center gap-2"
                   onClick={async () => {
-                    if (navigator.share) {
-                      await navigator.share({ title: 'Join my Wine Options game', url: inviteUrl });
-                    } else {
-                      await navigator.clipboard.writeText(inviteUrl);
-                      alert('Invite link copied!');
-                    }
+                    try {
+                      if (navigator.share) {
+                        await navigator.share({ title: 'Join my Wine Options game', url: inviteUrl });
+                      } else {
+                        await navigator.clipboard.writeText(inviteUrl);
+                        alert('Invite link copied!');
+                      }
+                    } catch {/* no-op */}
                   }}
                 >
                   <Share2 className="w-4 h-4" /> Share invite
@@ -438,9 +450,8 @@ const GamePage: React.FC = () => {
             </div>
           </section>
 
-          {/* Host controls */}
           <HostPanel
-            visible={true} // keep simple: anyone can host actions for now; lock later if you want
+            visible={true}
             labelText={labelText}
             setLabelText={setLabelText}
             matched={matched}
@@ -450,21 +461,19 @@ const GamePage: React.FC = () => {
             onStartRound={startRoundWithOCR}
           />
 
-          {/* Current Round */}
           {currentRound && (
             <RoundPanel
               round={currentRound}
               answers={answers}
               locked={locked}
+              revealed={revealed}
               onPick={(patch) => upsertAnswer(patch)}
               onLock={() => setLockedState(true)}
               onUnlock={() => setLockedState(false)}
               onReveal={revealAndScore}
-              scores={scores}
             />
           )}
 
-          {/* Past rounds */}
           {rounds.length > 1 && (
             <section className="border rounded-lg p-4">
               <div className="text-sm font-semibold mb-2">Past Rounds</div>
@@ -577,7 +586,9 @@ const HostPanel: React.FC<{
         <div className="text-xs text-gray-700">
           <div className="font-semibold">Candidate:</div>
           <div>{matched.display_name}</div>
-          <div>Variety: {matched.variety || '—'} • Country: {matched.country || '—'} • Region: {matched.region || matched.appellation || '—'} • Vintage: {matched.vintage ?? 'NV'}</div>
+          <div>
+            Variety: {matched.variety || '—'} • Country: {matched.country || '—'} • Region: {matched.region || matched.appellation || '—'} • Vintage: {matched.vintage ?? 'NV'}
+          </div>
         </div>
       )}
     </section>
@@ -588,22 +599,113 @@ const RoundPanel: React.FC<{
   round: GameRound;
   answers: Partial<GameAnswer>;
   locked: boolean;
+  revealed: boolean;
   onPick: (patch: Partial<GameAnswer>) => void;
   onLock: () => void;
   onUnlock: () => void;
   onReveal: () => void;
-  scores: GameScore[];
-}> = ({ round, answers, locked, onPick, onLock, onUnlock, onReveal, scores }) => {
-  // minimal choices; for production, pull from wine_terroir RPCs like on your single-player page
-  const worldChoices = ['old', 'new'];
-  const varietyChoices = ['Chardonnay', 'Pinot Noir', 'Sauvignon Blanc', 'Riesling']; // seed; expand with RPCs
-  const vintageChoices = [round.correct_vintage || 'NV', 'NV', '2019', '2020', '2021', '2022', '2018']
-    .filter(Boolean)
-    .slice(0,4);
-  const countryChoices = ['France', 'Italy', 'Australia', 'New Zealand', 'USA']
-    .slice(0,4);
-  const regionChoices = ['Burgundy', 'Bordeaux', 'Marlborough', 'Barossa'].slice(0,4);
-  const subChoices = (round.correct_subregion ? [round.correct_subregion, 'Côte de Nuits', 'Côte de Beaune', 'Rioja Alta'] : []).slice(0,4);
+}> = ({ round, answers, locked, revealed, onPick, onLock, onUnlock, onReveal }) => {
+  // dynamic choices
+  const [countries, setCountries] = React.useState<string[]>([]);
+  const [regions, setRegions]     = React.useState<string[]>([]);
+  const [subs, setSubs]           = React.useState<string[]>([]);
+  const [varieties, setVarieties] = React.useState<string[]>([]);
+  const [vintages, setVintages]   = React.useState<string[]>([]);
+
+  // Build choices when round changes
+  React.useEffect(() => {
+    let cancelled = false;
+
+    const load = async () => {
+      // Countries
+      try {
+        const { data } = await supabase.rpc('get_countries');
+        if (!cancelled && Array.isArray(data)) {
+          const list = data.map((r: any) => r.country).filter(Boolean);
+          const correct = round.correct_country || '';
+          const opts = shuffle(uniq([correct, ...list])).slice(0, 8);
+          setCountries(opts.length ? opts : uniq([correct]));
+        }
+      } catch {
+        const correct = round.correct_country || '';
+        setCountries(uniq([correct]));
+      }
+
+      // Regions
+      try {
+        if (round.correct_country) {
+          const { data } = await supabase.rpc('get_regions', { p_country: round.correct_country });
+          if (!cancelled && Array.isArray(data)) {
+            const list = data.map((r: any) => r.region).filter(Boolean);
+            const correct = round.correct_region || '';
+            const opts = shuffle(uniq([correct, ...list])).slice(0, 10);
+            setRegions(opts.length ? opts : uniq([correct]));
+          }
+        } else {
+          setRegions(uniq([round.correct_region || '']));
+        }
+      } catch {
+        setRegions(uniq([round.correct_region || '']));
+      }
+
+      // Subregions (only if a real subregion exists)
+      try {
+        if (round.correct_country && round.correct_region && round.correct_subregion) {
+          const { data } = await supabase.rpc('get_subregions', {
+            p_country: round.correct_country, p_region: round.correct_region
+          });
+          if (!cancelled && Array.isArray(data)) {
+            const list = data.map((r: any) => r.subregion).filter(Boolean);
+            const correct = round.correct_subregion || '';
+            const opts = shuffle(uniq([correct, ...list])).slice(0, 10);
+            setSubs(opts.length ? opts : uniq([correct].filter(Boolean)));
+          }
+        } else {
+          setSubs([]);
+        }
+      } catch {
+        setSubs(uniq([round.correct_subregion || '']).filter(Boolean));
+      }
+
+      // Variety choices
+      {
+        const correct = round.correct_variety || '';
+        const seed = [
+          'Chardonnay','Pinot Noir','Sauvignon Blanc','Riesling','Cabernet Sauvignon',
+          'Merlot','Syrah','Grenache','Tempranillo','Nebbiolo','Sangiovese',
+          'Chenin Blanc','Pinot Gris','Viognier','Malbec','Zinfandel','Gamay'
+        ];
+        const opts = shuffle(uniq([correct, ...seed])).slice(0, 6);
+        setVarieties(opts.length ? opts : uniq([correct]));
+      }
+
+      // Vintage choices (smart)
+      {
+        const cv = round.correct_vintage || 'NV';
+        const year = /^\d{4}$/.test(cv) ? parseInt(cv, 10) : null;
+        let pool: string[];
+        if (year) {
+          pool = uniq([String(year), String(year - 1), String(year + 1), String(year - 2), 'NV']);
+        } else {
+          const now = new Date().getFullYear();
+          pool = uniq(['NV', String(now), String(now - 1), String(now - 2), String(now - 3)]);
+        }
+        // ensure correct present, take 4, shuffle
+        const base = uniq([cv, ...pool]).slice(0, 4);
+        setVintages(shuffle(base));
+      }
+    };
+
+    load();
+    return () => { cancelled = true; };
+  }, [round.id, round.correct_country, round.correct_region, round.correct_subregion, round.correct_variety, round.correct_vintage]);
+
+  // Sequential gating
+  const canVariety = !SEQUENTIAL || !!answers.guess_world;
+  const canVintage = !SEQUENTIAL || !!answers.guess_variety;
+  const canCountry = !SEQUENTIAL || !!answers.guess_vintage;
+  const canRegion  = !SEQUENTIAL || !!answers.guess_country;
+  const canSub     = !SEQUENTIAL || !!answers.guess_region;
 
   return (
     <section className="border rounded-lg p-4 space-y-4">
@@ -615,7 +717,7 @@ const RoundPanel: React.FC<{
       {/* 1) World */}
       <Block title="World">
         <div className="flex flex-wrap gap-2">
-          {worldChoices.map(opt => (
+          {['old','new'].map(opt => (
             <Choice key={opt} value={opt} chosen={answers.guess_world || ''} onPick={(v) => onPick({ guess_world: v })} />
           ))}
         </div>
@@ -624,8 +726,8 @@ const RoundPanel: React.FC<{
       {/* 2) Variety */}
       <Block title="Variety / Blend">
         <div className="flex flex-wrap gap-2">
-          {varietyChoices.map(opt => (
-            <Choice key={opt} value={opt} chosen={answers.guess_variety || ''} onPick={(v) => onPick({ guess_variety: v })} />
+          {varieties.map(opt => (
+            <Choice key={opt} value={opt} chosen={answers.guess_variety || ''} onPick={(v) => onPick({ guess_variety: v })} disabled={!canVariety} />
           ))}
         </div>
       </Block>
@@ -633,8 +735,8 @@ const RoundPanel: React.FC<{
       {/* 3) Vintage */}
       <Block title="Vintage">
         <div className="flex flex-wrap gap-2">
-          {vintageChoices.map(opt => (
-            <Choice key={opt} value={opt} chosen={answers.guess_vintage || ''} onPick={(v) => onPick({ guess_vintage: v })} />
+          {vintages.map(opt => (
+            <Choice key={opt} value={opt} chosen={answers.guess_vintage || ''} onPick={(v) => onPick({ guess_vintage: v })} disabled={!canVintage} />
           ))}
         </div>
       </Block>
@@ -642,8 +744,8 @@ const RoundPanel: React.FC<{
       {/* 4) Country */}
       <Block title="Country">
         <div className="flex flex-wrap gap-2">
-          {countryChoices.map(opt => (
-            <Choice key={opt} value={opt} chosen={answers.guess_country || ''} onPick={(v) => onPick({ guess_country: v })} />
+          {countries.map(opt => (
+            <Choice key={opt} value={opt} chosen={answers.guess_country || ''} onPick={(v) => onPick({ guess_country: v })} disabled={!canCountry} />
           ))}
         </div>
       </Block>
@@ -651,18 +753,18 @@ const RoundPanel: React.FC<{
       {/* 5) Region */}
       <Block title="Region">
         <div className="flex flex-wrap gap-2">
-          {regionChoices.map(opt => (
-            <Choice key={opt} value={opt} chosen={answers.guess_region || ''} onPick={(v) => onPick({ guess_region: v })} />
+          {regions.map(opt => (
+            <Choice key={opt} value={opt} chosen={answers.guess_region || ''} onPick={(v) => onPick({ guess_region: v })} disabled={!canRegion} />
           ))}
         </div>
       </Block>
 
       {/* 6) Sub-region */}
-      {subChoices.length > 0 && (
+      {subs.length > 0 && (
         <Block title="Sub-region / Appellation">
           <div className="flex flex-wrap gap-2">
-            {subChoices.map(opt => (
-              <Choice key={opt} value={opt} chosen={answers.guess_subregion || ''} onPick={(v) => onPick({ guess_subregion: v })} />
+            {subs.map(opt => (
+              <Choice key={opt} value={opt} chosen={answers.guess_subregion || ''} onPick={(v) => onPick({ guess_subregion: v })} disabled={!canSub} />
             ))}
           </div>
         </Block>
@@ -683,29 +785,12 @@ const RoundPanel: React.FC<{
         </button>
       </div>
 
-      {/* Leaderboard */}
-      <div className="pt-2">
-        <div className="flex items-center gap-2 text-sm font-semibold mb-2">
-          <Trophy className="w-4 h-4" /> Leaderboard
+      {/* Correct answers only AFTER reveal */}
+      {revealed && (
+        <div className="text-xs text-gray-600">
+          Correct: {round.correct_variety || '—'} • {round.correct_country || '—'} • {round.correct_region || '—'} • {round.correct_subregion || '—'} • {round.correct_vintage || '—'}
         </div>
-        {scores.length === 0 ? (
-          <div className="text-sm text-gray-600">No scores yet.</div>
-        ) : (
-          <ol className="text-sm list-decimal list-inside">
-            {scores.map(s => (
-              <li key={s.player_name} className="flex justify-between">
-                <span>{s.player_name}</span>
-                <span className="font-mono">{s.total_score}</span>
-              </li>
-            ))}
-          </ol>
-        )}
-      </div>
-
-      {/* Correct answers (post reveal: you can conditionally show if you like) */}
-      <div className="text-xs text-gray-600">
-        Correct: {round.correct_variety || '—'} • {round.correct_country || '—'} • {round.correct_region || '—'} • {round.correct_subregion || '—'} • {round.correct_vintage || '—'}
-      </div>
+      )}
     </section>
   );
 };
