@@ -1,5 +1,6 @@
+// src/pages/WineOptionsGame.tsx
 import React from 'react';
-import { Share2, Wine, Search, Loader2, CheckCircle2, AlertTriangle, Camera, Upload } from 'lucide-react';
+import { Share2, Wine, Search, Loader2, CheckCircle2, AlertTriangle, Camera, Upload, ClipboardCopy, X } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 
 // ---- constants ----
@@ -14,9 +15,9 @@ type WineRow = {
   producer?: string | null;
   country?: string | null;
   region?: string | null;
-  appellation?: string | null;   // e.g. “Chassagne-Montrachet”, “Rioja Alta”
-  variety?: string | null;       // e.g. “Chardonnay”, “Blend”
-  vintage?: number | null;       // 4-digit; null => NV
+  appellation?: string | null;
+  variety?: string | null;
+  vintage?: number | null;
   is_nv?: boolean | null;
   world?: 'old' | 'new' | null;
 };
@@ -27,7 +28,7 @@ type LabelHints = {
   inferred_variety?: string | null;
 };
 
-// ---- OCR helper (Netlify deployment) ----
+// ---- OCR helper ----
 async function ocrLabel(file: File): Promise<{ text: string }> {
   const form = new FormData();
   form.append('file', file);
@@ -59,11 +60,9 @@ function extractLabelHints(text: string): LabelHints {
   const isNV = /\bnv\b|\bnon\s*-?\s*vintage\b/.test(t);
 
   let inferredVariety: string | null = null;
-  if (/blanc\s+de\s+blancs/.test(t)) {
-    inferredVariety = 'Chardonnay';
-  } else if (/blanc\s+de\s+noirs/.test(t)) {
-    inferredVariety = 'Pinot Noir';
-  } else {
+  if (/blanc\s+de\s+blancs/.test(t)) inferredVariety = 'Chardonnay';
+  else if (/blanc\s+de\s+noirs/.test(t)) inferredVariety = 'Pinot Noir';
+  else {
     const grapeList = [
       'chardonnay','pinot noir','pinot meunier','riesling','sauvignon','cabernet','merlot','syrah','shiraz','malbec',
       'tempranillo','nebbiolo','sangiovese','grenache','zinfandel','primitivo','chenin','viognier','gewurztraminer',
@@ -90,16 +89,8 @@ function shuffle<T>(arr: T[]) {
 function uniqStrings(items: (string | null | undefined)[]) {
   return Array.from(new Set(items.filter(Boolean).map(s => s!.trim()))).filter(s => s.length > 0);
 }
-function pickDistractors(
-  pool: string[],
-  correct: string,
-  n: number,
-  opts?: { filter?: (x: string) => boolean }
-) {
-  const filtered = pool
-    .filter(Boolean)
-    .filter(x => x.toLowerCase() !== (correct || '').toLowerCase())
-    .filter(x => (opts?.filter ? opts.filter(x) : true));
+function pickDistractors(pool: string[], correct: string, n: number) {
+  const filtered = pool.filter(x => x && x.toLowerCase() !== (correct || '').toLowerCase());
   return shuffle(filtered).slice(0, n);
 }
 function buildVintageChoices(wine: WineRow | null, hints: LabelHints | null): string[] {
@@ -185,6 +176,36 @@ async function awardPoints({
   return res.json();
 }
 
+// ---- simple Share Modal ----
+const ShareModal: React.FC<{ open: boolean; onClose: () => void; text: string }> = ({ open, onClose, text }) => {
+  if (!open) return null;
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(text);
+      alert('Copied!');
+    } catch {
+      // noop
+    }
+  };
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4">
+      <div className="bg-white rounded-lg shadow-lg w-full max-w-lg p-4">
+        <div className="flex items-center justify-between mb-2">
+          <div className="font-semibold">Share your picks</div>
+          <button onClick={onClose} className="p-1 rounded hover:bg-gray-100"><X className="w-4 h-4" /></button>
+        </div>
+        <textarea className="w-full border rounded p-2 text-sm h-40" readOnly value={text} />
+        <div className="mt-3 flex justify-end gap-2">
+          <button onClick={copy} className="px-3 py-2 rounded border inline-flex items-center gap-2">
+            <ClipboardCopy className="w-4 h-4" /> Copy
+          </button>
+          <button onClick={onClose} className="px-3 py-2 rounded bg-black text-white">Close</button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 // ---- component ----
 const WineOptionsGame: React.FC = () => {
   // OCR + hints
@@ -198,13 +219,13 @@ const WineOptionsGame: React.FC = () => {
   const [error, setError] = React.useState<string | null>(null);
   const [wine, setWine] = React.useState<WineRow | null>(null);
 
-  // user guesses
+  // user guesses (EMPTY by default — no pre-selects)
   const [guessWorld, setGuessWorld] = React.useState<'old' | 'new' | ''>('');
   const [guessVariety, setGuessVariety] = React.useState<string>('');
   const [guessCountry, setGuessCountry] = React.useState<string>('');
   const [guessRegion, setGuessRegion] = React.useState<string>('');
   const [guessSubregion, setGuessSubregion] = React.useState<string>('');
-  const [guessVintage, setGuessVintage] = React.useState<string>(''); // keep EMPTY initially
+  const [guessVintage, setGuessVintage] = React.useState<string>('');
   const [checked, setChecked] = React.useState(false);
 
   // MCQ choices
@@ -214,8 +235,8 @@ const WineOptionsGame: React.FC = () => {
   const [vintageChoices, setVintageChoices] = React.useState<string[]>([]);
   const [varietyChoices, setVarietyChoices] = React.useState<string[]>([]);
 
-  // preselect-run flag
-  const preselectedRef = React.useRef(false);
+  // Share modal
+  const [shareOpen, setShareOpen] = React.useState(false);
 
   const resetAll = () => {
     setLabelText('');
@@ -231,7 +252,6 @@ const WineOptionsGame: React.FC = () => {
     setGuessVintage('');
     setCountryChoices([]); setRegionChoices([]); setSubregionChoices([]);
     setVintageChoices([]); setVarietyChoices([]);
-    preselectedRef.current = false;
   };
 
   // OCR handler
@@ -240,6 +260,7 @@ const WineOptionsGame: React.FC = () => {
     const hints = extractLabelHints(text);
     setLabelHints(hints);
 
+    // clear any previous selections
     setWine(null);
     setChecked(false);
     setGuessWorld('');
@@ -249,7 +270,6 @@ const WineOptionsGame: React.FC = () => {
     setGuessSubregion('');
     setGuessVintage('');
     setError(null);
-    preselectedRef.current = false;
   };
 
   // Inline upload -> OCR
@@ -319,25 +339,19 @@ const WineOptionsGame: React.FC = () => {
         return;
       }
 
-      // Country choices (prefer same-world distractors)
+      // Countries
       try {
         const { data: countries } = await supabase.rpc('get_countries');
         if (countries) {
           const correct = wine.country || '';
-          const correctWorld = worldFromCountry(correct);
-          const distractors = pickDistractors(
-            countries.map((c: { country: string }) => c.country),
-            correct,
-            3,
-            { filter: (c) => worldFromCountry(c) === correctWorld }
-          );
+          const distractors = pickDistractors(countries.map((c: { country: string }) => c.country), correct, 3);
           setCountryChoices(shuffle(uniqStrings([correct, ...distractors])));
         }
       } catch {
         setCountryChoices(uniqStrings([wine.country || '']));
       }
 
-      // Region choices (limit to same country)
+      // Regions
       try {
         if (wine.country) {
           const { data: regions } = await supabase.rpc('get_regions', { p_country: wine.country });
@@ -352,7 +366,7 @@ const WineOptionsGame: React.FC = () => {
         setRegionChoices(uniqStrings([wine.region || wine.appellation || '']));
       }
 
-      // Subregion choices (optional; fallback to none)
+      // Subregions (optional)
       try {
         if (wine.country && (wine.region || wine.appellation)) {
           const baseRegion = wine.region || wine.appellation!;
@@ -393,23 +407,6 @@ const WineOptionsGame: React.FC = () => {
 
     loadOptions().catch(() => {});
   }, [wine, labelHints]);
-
-  // Preselect once after choices are ready
-  React.useEffect(() => {
-    if (!wine || preselectedRef.current) return;
-    const w = (wine.world ?? worldFromCountry(wine.country)) || '';
-    if (!guessWorld && w) setGuessWorld(w as 'old' | 'new');
-    const v = (wine.variety || labelHints?.inferred_variety || '').trim();
-    if (!guessVariety && v) setGuessVariety(v);
-    const vint = wine.vintage ? String(wine.vintage)
-               : (labelHints?.is_non_vintage ? 'NV'
-               : (labelHints?.vintage_year ? String(labelHints.vintage_year) : ''));
-    if (!guessVintage && vint) setGuessVintage(vint);
-    if (!guessCountry && wine.country) setGuessCountry(wine.country);
-    if (!guessRegion && (wine.region || wine.appellation)) setGuessRegion(String(wine.region || wine.appellation));
-    if (!guessSubregion && wine.appellation) setGuessSubregion(wine.appellation);
-    preselectedRef.current = true;
-  }, [wine, labelHints, guessWorld, guessVariety, guessVintage, guessCountry, guessRegion, guessSubregion]);
 
   // reveal + award
   const checkAnswers = async () => {
@@ -459,18 +456,20 @@ const WineOptionsGame: React.FC = () => {
   };
 
   // share
-  const doShare = async () => {
-    const shareText = `Wine Options — my picks:
+  const shareText = `Wine Options — my picks:
 World: ${guessWorld || '—'} • Variety: ${guessVariety || '—'} • Vintage: ${guessVintage || '—'} • Country: ${guessCountry || '—'} • Region: ${guessRegion || '—'} • Sub-region: ${guessSubregion || '—'}
 ${wine ? `Target: ${wine.display_name}` : ''}`;
+
+  const doShare = async () => {
     try {
       if (navigator.share) {
         await navigator.share({ title: 'Wine Options', text: shareText, url: window.location.href });
       } else {
-        await navigator.clipboard.writeText(`${shareText}\n${window.location.href}`);
-        alert('Copied to clipboard!');
+        setShareOpen(true); // fallback modal
       }
-    } catch { /* no-op */ }
+    } catch {
+      setShareOpen(true);
+    }
   };
 
   // truths for badges
@@ -501,7 +500,6 @@ ${wine ? `Target: ${wine.display_name}` : ''}`;
           Upload a label (photo/screenshot)
         </div>
 
-        {/* Inline uploader wired to the Netlify Function */}
         <label className="inline-flex items-center gap-2 px-3 py-2 rounded-md border cursor-pointer w-fit">
           <Upload className="w-4 h-4" />
           <span>{uploadBusy ? 'Reading…' : 'Choose image'}</span>
@@ -553,7 +551,7 @@ ${wine ? `Target: ${wine.display_name}` : ''}`;
         )}
       </section>
 
-      {/* 2) Candidate (optional info) */}
+      {/* 2) Candidate */}
       <section className="bg-white border rounded-lg p-4">
         <div className="text-sm font-semibold mb-2">Candidate (you can still choose different answers)</div>
         {!wine ? (
@@ -681,6 +679,8 @@ ${wine ? `Target: ${wine.display_name}` : ''}`;
           </button>
         </div>
       </section>
+
+      <ShareModal open={shareOpen} onClose={() => setShareOpen(false)} text={`${shareText}\n${window.location.href}`} />
     </div>
   );
 };
