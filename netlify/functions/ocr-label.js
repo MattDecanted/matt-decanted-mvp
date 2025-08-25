@@ -1,6 +1,6 @@
 // netlify/functions/ocr-label.js
-// OCR label → Google Cloud Vision (TEXT_DETECTION)
-// Expects multipart/form-data with a single field named "file"
+// Multipart image → Google Vision (DOCUMENT_TEXT_DETECTION) with language hints
+// Expects: multipart/form-data with field "file"
 
 const parseMultipart = require('parse-multipart-data');
 
@@ -8,9 +8,10 @@ const json = (status, body) => ({
   statusCode: status,
   headers: {
     'Content-Type': 'application/json; charset=utf-8',
-    'Access-Control-Allow-Origin': '*', // tighten in prod if you have a fixed origin
+    'Access-Control-Allow-Origin': '*',                  // tighten to your domain in prod
     'Access-Control-Allow-Headers': 'Content-Type, Authorization',
-    'Access-Control-Allow-Methods': 'POST, OPTIONS',
+    'Access-Control-Allow-Methods': 'OPTIONS,POST',
+    'Vary': 'Origin',
   },
   body: JSON.stringify(body),
 });
@@ -21,11 +22,7 @@ const getBoundary = (ct) => {
 };
 
 const safeText = async (res) => {
-  try {
-    return await res.text();
-  } catch {
-    return '';
-  }
+  try { return await res.text(); } catch { return ''; }
 };
 
 exports.handler = async (event) => {
@@ -37,33 +34,21 @@ exports.handler = async (event) => {
 
   try {
     // CORS preflight
-    if (event.httpMethod === 'OPTIONS') {
-      return json(200, { ok: true, dbg });
-    }
-
-    if (event.httpMethod !== 'POST') {
-      return json(405, { error: 'Method not allowed', dbg });
-    }
+    if (event.httpMethod === 'OPTIONS') return json(200, { ok: true, dbg });
+    if (event.httpMethod !== 'POST')   return json(405, { error: 'Method not allowed', dbg });
 
     const apiKey = process.env.GOOGLE_VISION_API_KEY;
-    if (!apiKey) {
-      return json(500, { error: 'GOOGLE_VISION_API_KEY missing', dbg });
-    }
+    if (!apiKey) return json(500, { error: 'GOOGLE_VISION_API_KEY missing', dbg });
 
-    const ct =
-      event.headers['content-type'] ||
-      event.headers['Content-Type'] ||
-      '';
+    const ct = event.headers['content-type'] || event.headers['Content-Type'] || '';
     if (!ct.toLowerCase().startsWith('multipart/form-data')) {
       return json(400, { error: 'Expected multipart/form-data', dbg: { ...dbg, contentType: ct } });
     }
 
     const boundary = getBoundary(ct);
-    if (!boundary) {
-      return json(400, { error: 'Missing multipart boundary', dbg: { ...dbg, contentType: ct } });
-    }
+    if (!boundary) return json(400, { error: 'Missing multipart boundary', dbg: { ...dbg, contentType: ct } });
 
-    // Netlify sends base64 for binary bodies
+    // Netlify delivers binary bodies as base64
     const bodyBuffer = Buffer.from(event.body || '', event.isBase64Encoded ? 'base64' : 'utf8');
 
     dbg.contentType = ct;
@@ -80,12 +65,10 @@ exports.handler = async (event) => {
     dbg.partsCount = parts.length;
 
     const filePart =
-      parts.find((p) => p && p.name === 'file' && p.filename && p.data) ||
-      parts.find((p) => p && p.filename && p.data);
+      parts.find(p => p && p.name === 'file' && p.filename && p.data) ||
+      parts.find(p => p && p.filename && p.data);
 
-    if (!filePart) {
-      return json(400, { error: 'No file provided (field must be "file")', dbg });
-    }
+    if (!filePart) return json(400, { error: 'No file provided (field must be "file")', dbg });
 
     dbg.file = {
       filename: filePart.filename,
@@ -95,15 +78,14 @@ exports.handler = async (event) => {
 
     const base64Content = filePart.data.toString('base64');
 
-    // Build Vision request
+    // ▶ Accuracy upgrades: DOCUMENT_TEXT_DETECTION + language hints
     const visionUrl = `https://vision.googleapis.com/v1/images:annotate?key=${encodeURIComponent(apiKey)}`;
     const payload = {
-      requests: [
-        {
-          image: { content: base64Content },
-          features: [{ type: 'TEXT_DETECTION' }],
-        },
-      ],
+      requests: [{
+        image: { content: base64Content },
+        features: [{ type: 'DOCUMENT_TEXT_DETECTION' }],
+        imageContext: { languageHints: ['fr', 'it', 'de', 'es', 'en'] },
+      }],
     };
 
     let res;
@@ -122,21 +104,12 @@ exports.handler = async (event) => {
 
     if (!res.ok) {
       const detail = await safeText(res);
-      return json(502, {
-        error: 'Vision API error',
-        status: res.status,
-        statusText: res.statusText,
-        detail,
-        dbg,
-      });
+      return json(502, { error: 'Vision API error', status: res.status, statusText: res.statusText, detail, dbg });
     }
 
     let result;
-    try {
-      result = await res.json();
-    } catch (parseErr) {
-      return json(502, { error: 'Failed to parse Vision API response', detail: String(parseErr?.message || parseErr), dbg });
-    }
+    try { result = await res.json(); }
+    catch (parseErr) { return json(502, { error: 'Failed to parse Vision API response', detail: String(parseErr?.message || parseErr), dbg }); }
 
     const text =
       result?.responses?.[0]?.fullTextAnnotation?.text ??
@@ -145,7 +118,6 @@ exports.handler = async (event) => {
 
     return json(200, { text, dbg });
   } catch (e) {
-    // final safety net
     return json(500, { error: 'Internal Server Error', detail: String(e?.message || e), dbg });
   }
 };
