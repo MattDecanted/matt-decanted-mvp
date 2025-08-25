@@ -27,7 +27,7 @@ type LabelHints = {
   inferred_variety?: string | null;
 };
 
-// ---- OCR helper (Netlify-only deployment) ----
+// ---- OCR helper (Netlify deployment) ----
 async function ocrLabel(file: File): Promise<{ text: string }> {
   const form = new FormData();
   form.append('file', file);
@@ -90,11 +90,23 @@ function shuffle<T>(arr: T[]) {
 function uniqStrings(items: (string | null | undefined)[]) {
   return Array.from(new Set(items.filter(Boolean).map(s => s!.trim()))).filter(s => s.length > 0);
 }
-function pickDistractors(pool: string[], correct: string, n: number) {
-  const filtered = pool.filter(x => x && x.toLowerCase() !== (correct || '').toLowerCase());
+function pickDistractors(
+  pool: string[],
+  correct: string,
+  n: number,
+  opts?: { filter?: (x: string) => boolean }
+) {
+  const filtered = pool
+    .filter(Boolean)
+    .filter(x => x.toLowerCase() !== (correct || '').toLowerCase())
+    .filter(x => (opts?.filter ? opts.filter(x) : true));
   return shuffle(filtered).slice(0, n);
 }
 function buildVintageChoices(wine: WineRow | null, hints: LabelHints | null): string[] {
+  if (hints?.is_non_vintage) {
+    const now = new Date().getFullYear();
+    return shuffle(['NV', String(now), String(now - 1), String(now - 2), String(now - 3)]).slice(0, 4);
+  }
   const target = (typeof wine?.vintage === 'number' ? wine!.vintage : null) ?? (hints?.vintage_year ?? null);
   if (target) {
     const pool = [String(target), String(target - 1), String(target + 1), String(target - 2), String(target + 2), 'NV'];
@@ -202,13 +214,32 @@ const WineOptionsGame: React.FC = () => {
   const [vintageChoices, setVintageChoices] = React.useState<string[]>([]);
   const [varietyChoices, setVarietyChoices] = React.useState<string[]>([]);
 
+  // preselect-run flag
+  const preselectedRef = React.useRef(false);
+
+  const resetAll = () => {
+    setLabelText('');
+    setLabelHints(null);
+    setWine(null);
+    setError(null);
+    setChecked(false);
+    setGuessWorld('');
+    setGuessVariety('');
+    setGuessCountry('');
+    setGuessRegion('');
+    setGuessSubregion('');
+    setGuessVintage('');
+    setCountryChoices([]); setRegionChoices([]); setSubregionChoices([]);
+    setVintageChoices([]); setVarietyChoices([]);
+    preselectedRef.current = false;
+  };
+
   // OCR handler
   const onOCR = (text: string) => {
     setLabelText(text);
     const hints = extractLabelHints(text);
     setLabelHints(hints);
 
-    // full reset (no pre-seeding)
     setWine(null);
     setChecked(false);
     setGuessWorld('');
@@ -216,8 +247,9 @@ const WineOptionsGame: React.FC = () => {
     setGuessCountry('');
     setGuessRegion('');
     setGuessSubregion('');
-    setGuessVintage(''); // IMPORTANT: do not prefill
+    setGuessVintage('');
     setError(null);
+    preselectedRef.current = false;
   };
 
   // Inline upload -> OCR
@@ -287,19 +319,25 @@ const WineOptionsGame: React.FC = () => {
         return;
       }
 
-      // Country choices
+      // Country choices (prefer same-world distractors)
       try {
         const { data: countries } = await supabase.rpc('get_countries');
         if (countries) {
           const correct = wine.country || '';
-          const distractors = pickDistractors(countries.map((c: { country: string }) => c.country), correct, 3);
+          const correctWorld = worldFromCountry(correct);
+          const distractors = pickDistractors(
+            countries.map((c: { country: string }) => c.country),
+            correct,
+            3,
+            { filter: (c) => worldFromCountry(c) === correctWorld }
+          );
           setCountryChoices(shuffle(uniqStrings([correct, ...distractors])));
         }
       } catch {
         setCountryChoices(uniqStrings([wine.country || '']));
       }
 
-      // Region choices
+      // Region choices (limit to same country)
       try {
         if (wine.country) {
           const { data: regions } = await supabase.rpc('get_regions', { p_country: wine.country });
@@ -314,7 +352,7 @@ const WineOptionsGame: React.FC = () => {
         setRegionChoices(uniqStrings([wine.region || wine.appellation || '']));
       }
 
-      // Subregion choices (optional)
+      // Subregion choices (optional; fallback to none)
       try {
         if (wine.country && (wine.region || wine.appellation)) {
           const baseRegion = wine.region || wine.appellation!;
@@ -338,10 +376,10 @@ const WineOptionsGame: React.FC = () => {
         setSubregionChoices([]);
       }
 
-      // Vintage choices (key fix)
+      // Vintage
       setVintageChoices(buildVintageChoices(wine, labelHints));
 
-      // Variety choices
+      // Variety
       const correctVar = (wine.variety || '').trim() || (labelHints?.inferred_variety || '').trim();
       const commonGrapes = [
         'Chardonnay','Pinot Noir','Sauvignon Blanc','Riesling','Cabernet Sauvignon',
@@ -356,6 +394,23 @@ const WineOptionsGame: React.FC = () => {
     loadOptions().catch(() => {});
   }, [wine, labelHints]);
 
+  // Preselect once after choices are ready
+  React.useEffect(() => {
+    if (!wine || preselectedRef.current) return;
+    const w = (wine.world ?? worldFromCountry(wine.country)) || '';
+    if (!guessWorld && w) setGuessWorld(w as 'old' | 'new');
+    const v = (wine.variety || labelHints?.inferred_variety || '').trim();
+    if (!guessVariety && v) setGuessVariety(v);
+    const vint = wine.vintage ? String(wine.vintage)
+               : (labelHints?.is_non_vintage ? 'NV'
+               : (labelHints?.vintage_year ? String(labelHints.vintage_year) : ''));
+    if (!guessVintage && vint) setGuessVintage(vint);
+    if (!guessCountry && wine.country) setGuessCountry(wine.country);
+    if (!guessRegion && (wine.region || wine.appellation)) setGuessRegion(String(wine.region || wine.appellation));
+    if (!guessSubregion && wine.appellation) setGuessSubregion(wine.appellation);
+    preselectedRef.current = true;
+  }, [wine, labelHints, guessWorld, guessVariety, guessVintage, guessCountry, guessRegion, guessSubregion]);
+
   // reveal + award
   const checkAnswers = async () => {
     setChecked(true);
@@ -363,7 +418,7 @@ const WineOptionsGame: React.FC = () => {
     const truths = {
       world: wine?.world ?? worldFromCountry(wine?.country),
       variety: wine?.variety ? String(wine.variety) : '',
-      vintage: wine?.vintage ? String(wine.vintage) : (labelHints?.vintage_year ? String(labelHints.vintage_year) : 'NV'),
+      vintage: wine?.vintage ? String(wine.vintage) : (labelHints?.is_non_vintage ? 'NV' : (labelHints?.vintage_year ? String(labelHints.vintage_year) : 'NV')),
       country: wine?.country ? String(wine.country) : '',
       region: (wine?.region || wine?.appellation) ? String(wine?.region || wine?.appellation) : '',
       subregion: wine?.appellation ? String(wine.appellation) : '',
@@ -483,6 +538,10 @@ ${wine ? `Target: ${wine.display_name}` : ''}`;
           >
             {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Search className="w-4 h-4" />}
             {busy ? 'Working…' : `Let’s play`}
+          </button>
+
+          <button onClick={resetAll} className="ml-2 px-3 py-2 rounded-md border">
+            Reset
           </button>
         </div>
 
