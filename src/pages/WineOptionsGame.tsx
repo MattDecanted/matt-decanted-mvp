@@ -1,8 +1,10 @@
+// src/pages/WineOptionsGame.tsx
 import React from 'react';
 import { Share2, Wine, Search, Loader2, CheckCircle2, AlertTriangle, Camera } from 'lucide-react';
 import OCRUpload from '@/components/OCRUpload';
 import { supabase } from '@/lib/supabase';
 
+/* ==================== Types ==================== */
 type WineRow = {
   id: string;
   display_name: string;
@@ -23,9 +25,9 @@ type LabelHints = {
 };
 
 const TABLE_NAME = 'wine_index';
+const FN_AWARD = '/.netlify/functions/award-points';
 
-/* -------------------- helpers -------------------- */
-
+/* ==================== Helpers ==================== */
 function titleCase(s: string) {
   return s.replace(/\w\S*/g, (w) => w.charAt(0).toUpperCase() + w.slice(1));
 }
@@ -111,6 +113,39 @@ function buildVintageChoices(wine: WineRow | null, hints: LabelHints | null): st
   }
 }
 
+function computePoints({ score, maxScore, durationSeconds }: { score: number; maxScore: number; durationSeconds?: number | null }) {
+  const streak = score === maxScore;                    // +1 if perfect
+  const timeBonus = durationSeconds != null && durationSeconds <= 60; // +1 if done ≤ 60s
+  const points = score + (streak ? 1 : 0) + (timeBonus ? 1 : 0);
+  return { points, streak, timeBonus };
+}
+
+async function awardPointsToUser(params: {
+  score: number;
+  maxScore: number;
+  durationSeconds?: number | null;
+  mode: 'solo' | 'host' | 'guest';
+}) {
+  const { data } = await supabase.auth.getUser();
+  const user_id = data?.user?.id;
+  if (!user_id) return { ok: false }; // Not signed in → skip server award
+
+  const res = await fetch(FN_AWARD, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      user_id,
+      score: params.score,
+      max_score: params.maxScore,
+      duration_seconds: params.durationSeconds ?? null,
+      streak_bonus: params.score === params.maxScore,
+      time_bonus: params.durationSeconds != null && params.durationSeconds <= 60,
+      mode: params.mode,
+    }),
+  });
+  return res.json();
+}
+
 const AnswerBadge: React.FC<{ ok: boolean; truth: string }> = ({ ok, truth }) => (
   <div className={`mt-2 inline-flex items-center gap-2 text-xs px-2 py-1 rounded border ${ok ? 'bg-green-50 border-green-200 text-green-800' : 'bg-red-50 border-red-200 text-red-800'}`}>
     <CheckCircle2 className="w-3 h-3" />
@@ -118,8 +153,7 @@ const AnswerBadge: React.FC<{ ok: boolean; truth: string }> = ({ ok, truth }) =>
   </div>
 );
 
-/* -------------------- component -------------------- */
-
+/* ==================== Component ==================== */
 const WineOptionsGame: React.FC = () => {
   // OCR + hints
   const [labelText, setLabelText] = React.useState('');
@@ -146,6 +180,13 @@ const WineOptionsGame: React.FC = () => {
   const [vintageChoices, setVintageChoices] = React.useState<string[]>([]);
   const [varietyChoices, setVarietyChoices] = React.useState<string[]>([]);
 
+  // scoring/points
+  const startRef = React.useRef<number | null>(null);
+  const [score, setScore] = React.useState<number | null>(null);
+  const [durationSeconds, setDurationSeconds] = React.useState<number | null>(null);
+  const [awarded, setAwarded] = React.useState<number | null>(null);
+  const [totalPoints, setTotalPoints] = React.useState<number | null>(null);
+
   // OCR callback
   const onOCR = (text: string) => {
     setLabelText(text);
@@ -155,6 +196,12 @@ const WineOptionsGame: React.FC = () => {
     // full reset (no pre-seeding)
     setWine(null);
     setChecked(false);
+    setScore(null);
+    setAwarded(null);
+    setTotalPoints(null);
+    setDurationSeconds(null);
+    startRef.current = null;
+
     setGuessWorld('');
     setGuessVariety('');
     setGuessCountry('');
@@ -201,6 +248,9 @@ const WineOptionsGame: React.FC = () => {
 
       if (!candidate.world) candidate.world = worldFromCountry(candidate.country);
       setWine(candidate);
+
+      // start timer on first round
+      startRef.current = Date.now();
     } catch (e: any) {
       setError(e?.message ?? 'Search failed');
     } finally {
@@ -286,7 +336,52 @@ const WineOptionsGame: React.FC = () => {
     loadOptions().catch(() => {});
   }, [wine, labelHints]);
 
-  const checkAnswers = () => setChecked(true);
+  const correctWorld = wine?.world ?? worldFromCountry(wine?.country);
+  const correctVariety = wine?.variety || '';
+  const correctCountry = wine?.country || '';
+  const correctRegion = wine?.region || wine?.appellation || '';
+  const correctSubregion = wine?.appellation || '';
+  const correctVintage = wine?.vintage
+    ? String(wine.vintage)
+    : (labelHints?.vintage_year ? String(labelHints.vintage_year) : 'NV');
+
+  const isCorrect = (user: string | '', truth: string | null | undefined) => {
+    if (!user || !truth) return false;
+    return user.trim().toLowerCase() === String(truth).trim().toLowerCase();
+  };
+
+  // Reveal & score
+  const checkAnswers = async () => {
+    setChecked(true);
+
+    const s = [
+      isCorrect(guessWorld, correctWorld || ''),
+      isCorrect(guessVariety, correctVariety || ''),
+      isCorrect(guessVintage, correctVintage || ''),
+      isCorrect(guessCountry, correctCountry || ''),
+      isCorrect(guessRegion, correctRegion || ''),
+      // subregion is optional; do NOT count it in base /5
+    ].reduce((acc, ok) => acc + (ok ? 1 : 0), 0);
+
+    setScore(s);
+    const dur = startRef.current ? Math.round((Date.now() - startRef.current) / 1000) : null;
+    setDurationSeconds(dur);
+
+    // local compute + server award (if signed in)
+    const { points } = computePoints({ score: s, maxScore: 5, durationSeconds: dur });
+    setAwarded(points);
+
+    const res = await awardPointsToUser({
+      score: s,
+      maxScore: 5,
+      durationSeconds: dur ?? undefined,
+      mode: 'solo',
+    });
+    if (res?.ok) {
+      setAwarded(res.points_awarded ?? points);
+      setTotalPoints(res.total_points ?? null);
+    }
+  };
 
   const doShare = async () => {
     const shareText = `Wine Options — my picks:
@@ -302,20 +397,7 @@ ${wine ? `Target: ${wine.display_name}` : ''}`;
     } catch { /* no-op */ }
   };
 
-  const correctWorld = wine?.world ?? worldFromCountry(wine?.country);
-  const correctVariety = wine?.variety || '';
-  const correctCountry = wine?.country || '';
-  const correctRegion = wine?.region || wine?.appellation || '';
-  const correctSubregion = wine?.appellation || '';
-  const correctVintage = wine?.vintage ? String(wine.vintage) : (labelHints?.vintage_year ? String(labelHints.vintage_year) : 'NV');
-
-  const isCorrect = (user: string | '', truth: string | null | undefined) => {
-    if (!user || !truth) return false;
-    return user.trim().toLowerCase() === String(truth).trim().toLowerCase();
-  };
-
-  /* -------------------- render -------------------- */
-
+  /* ==================== Render ==================== */
   return (
     <div className="max-w-4xl mx-auto space-y-6">
       <header className="flex items-center gap-3">
@@ -481,12 +563,24 @@ ${wine ? `Target: ${wine.display_name}` : ''}`;
 
         <div className="flex flex-wrap gap-2 pt-2">
           <button onClick={checkAnswers} className="px-4 py-2 rounded bg-black text-white">
-            Check answers
+            Reveal & score
           </button>
           <button onClick={doShare} className="px-4 py-2 rounded border flex items-center gap-2">
             <Share2 className="w-4 h-4" /> Share
           </button>
         </div>
+
+        {/* Results / Points */}
+        {checked && score != null && (
+          <div className="mt-4 p-3 rounded-md border bg-purple-50 text-purple-900 text-sm">
+            <div><strong>Score:</strong> {score}/5</div>
+            {durationSeconds != null && <div><strong>Time:</strong> {durationSeconds}s</div>}
+            <div>
+              <strong>Points:</strong> {awarded ?? score}
+              {totalPoints != null && <> • <strong>Total:</strong> {totalPoints}</>}
+            </div>
+          </div>
+        )}
       </section>
     </div>
   );
