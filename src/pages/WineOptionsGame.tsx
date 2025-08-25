@@ -1,6 +1,9 @@
 // src/pages/WineOptionsGame.tsx
 import React from 'react';
-import { Share2, Wine, Search, Loader2, CheckCircle2, AlertTriangle, Camera, Upload, ClipboardCopy, X } from 'lucide-react';
+import {
+  Share2, Wine, Search, Loader2, CheckCircle2, AlertTriangle,
+  Camera, Upload, ClipboardCopy, X
+} from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 
 // ---- constants ----
@@ -15,9 +18,9 @@ type WineRow = {
   producer?: string | null;
   country?: string | null;
   region?: string | null;
-  appellation?: string | null;
-  variety?: string | null;
-  vintage?: number | null;
+  appellation?: string | null;   // e.g. “Chassagne-Montrachet”, “Rioja Alta”
+  variety?: string | null;       // e.g. “Chardonnay”, “Blend”
+  vintage?: number | null;       // 4-digit; null => NV
   is_nv?: boolean | null;
   world?: 'old' | 'new' | null;
 };
@@ -93,10 +96,17 @@ function pickDistractors(pool: string[], correct: string, n: number) {
   const filtered = pool.filter(x => x && x.toLowerCase() !== (correct || '').toLowerCase());
   return shuffle(filtered).slice(0, n);
 }
+function ensureFourOptions(opts: string[], fallback: string[]): string[] {
+  const cleaned = uniqStrings(opts).slice(0, 4);
+  if (cleaned.length >= 4) return shuffle(cleaned);
+  const need = 4 - cleaned.length;
+  const add = fallback.filter(x => !cleaned.map(c => c.toLowerCase()).includes(x.toLowerCase())).slice(0, need);
+  return shuffle([...cleaned, ...add]);
+}
 function buildVintageChoices(wine: WineRow | null, hints: LabelHints | null): string[] {
+  const now = new Date().getFullYear();
   if (hints?.is_non_vintage) {
-    const now = new Date().getFullYear();
-    return shuffle(['NV', String(now), String(now - 1), String(now - 2), String(now - 3)]).slice(0, 4);
+    return ensureFourOptions(['NV', String(now), String(now - 1), String(now - 2)], [String(now - 3), String(now - 4)]);
   }
   const target = (typeof wine?.vintage === 'number' ? wine!.vintage : null) ?? (hints?.vintage_year ?? null);
   if (target) {
@@ -106,7 +116,6 @@ function buildVintageChoices(wine: WineRow | null, hints: LabelHints | null): st
     if (!shuffled.includes(String(target))) shuffled[0] = String(target);
     return shuffled.slice(0, 4);
   } else {
-    const now = new Date().getFullYear();
     const pool = ['NV', String(now), String(now - 1), String(now - 2), String(now - 3)];
     const unique = Array.from(new Set(pool));
     return shuffle(unique).slice(0, 4);
@@ -345,7 +354,7 @@ const WineOptionsGame: React.FC = () => {
         if (countries) {
           const correct = wine.country || '';
           const distractors = pickDistractors(countries.map((c: { country: string }) => c.country), correct, 3);
-          setCountryChoices(shuffle(uniqStrings([correct, ...distractors])));
+          setCountryChoices(ensureFourOptions([correct, ...distractors], ['France','Italy','USA','Spain','Australia']));
         }
       } catch {
         setCountryChoices(uniqStrings([wine.country || '']));
@@ -359,7 +368,7 @@ const WineOptionsGame: React.FC = () => {
             const list = regions.map((r: { region: string }) => r.region);
             const correct = wine.region || wine.appellation || '';
             const distractors = pickDistractors(list, correct, 3);
-            setRegionChoices(shuffle(uniqStrings([correct, ...distractors])));
+            setRegionChoices(ensureFourOptions([correct, ...distractors], ['Bordeaux','Burgundy','Napa','Barossa']));
           }
         }
       } catch {
@@ -376,7 +385,7 @@ const WineOptionsGame: React.FC = () => {
             const correct = wine.appellation || '';
             if (correct) {
               const distractors = pickDistractors(list, correct, 3);
-              setSubregionChoices(shuffle(uniqStrings([correct, ...distractors])));
+              setSubregionChoices(ensureFourOptions([correct, ...distractors], []));
             } else {
               setSubregionChoices([]);
             }
@@ -400,9 +409,11 @@ const WineOptionsGame: React.FC = () => {
         'Merlot','Syrah','Shiraz','Grenache','Tempranillo','Nebbiolo','Sangiovese',
         'Chenin Blanc','Pinot Gris','Viognier','Malbec','Zinfandel','Primitivo','Gamay'
       ];
-      const pool = uniqStrings([correctVar, ...commonGrapes]);
+      const pool = uniqStrings([correctVar, ...commonGrapes]).filter(Boolean);
       const distract = pickDistractors(pool, correctVar, 3);
-      setVarietyChoices(shuffle([correctVar, ...distract].filter(Boolean)));
+      const base = [correctVar, ...distract].filter(Boolean);
+      const filled = ensureFourOptions(base, commonGrapes);
+      setVarietyChoices(filled);
     };
 
     loadOptions().catch(() => {});
@@ -415,7 +426,9 @@ const WineOptionsGame: React.FC = () => {
     const truths = {
       world: wine?.world ?? worldFromCountry(wine?.country),
       variety: wine?.variety ? String(wine.variety) : '',
-      vintage: wine?.vintage ? String(wine.vintage) : (labelHints?.is_non_vintage ? 'NV' : (labelHints?.vintage_year ? String(labelHints.vintage_year) : 'NV')),
+      vintage: wine?.vintage
+        ? String(wine.vintage)
+        : (labelHints?.is_non_vintage ? 'NV' : (labelHints?.vintage_year ? String(labelHints.vintage_year) : 'NV')),
       country: wine?.country ? String(wine.country) : '',
       region: (wine?.region || wine?.appellation) ? String(wine?.region || wine?.appellation) : '',
       subregion: wine?.appellation ? String(wine.appellation) : '',
@@ -478,7 +491,9 @@ ${wine ? `Target: ${wine.display_name}` : ''}`;
   const correctCountry = wine?.country || '';
   const correctRegion = wine?.region || wine?.appellation || '';
   const correctSubregion = wine?.appellation || '';
-  const correctVintage = wine?.vintage ? String(wine.vintage) : (labelHints?.vintage_year ? String(labelHints.vintage_year) : 'NV');
+  const correctVintage = wine?.vintage
+    ? String(wine.vintage)
+    : (labelHints?.vintage_year ? String(labelHints.vintage_year) : 'NV');
 
   const isCorrect = (user: string | '', truth: string | null | undefined) => {
     if (!user || !truth) return false;
@@ -612,7 +627,8 @@ ${wine ? `Target: ${wine.display_name}` : ''}`;
         <div>
           <div className="text-xs text-gray-600 mb-1">Vintage</div>
           <div className="flex flex-wrap gap-2">
-            {(vintageChoices.length ? vintageChoices : [wine?.vintage ? String(wine.vintage) : (labelHints?.vintage_year ? String(labelHints.vintage_year) : 'NV')]).map((opt) => (
+            {(vintageChoices.length ? vintageChoices :
+              [wine?.vintage ? String(wine.vintage) : (labelHints?.vintage_year ? String(labelHints.vintage_year) : 'NV')]).map((opt) => (
               <button
                 key={`vint-${opt}`}
                 className={`px-3 py-2 rounded border ${guessVintage.toLowerCase() === opt.toLowerCase() ? 'bg-purple-600 text-white border-purple-600' : ''}`}
