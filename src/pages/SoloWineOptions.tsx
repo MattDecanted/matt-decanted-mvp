@@ -1,6 +1,9 @@
 // src/pages/SoloWineOptions.tsx
 import React from 'react';
-import { Share2, Wine, Search, Loader2, CheckCircle2, AlertTriangle, Camera, Upload, ClipboardCopy, X } from 'lucide-react';
+import {
+  Share2, Wine, Search, Loader2, CheckCircle2, AlertTriangle,
+  Camera, Upload, ClipboardCopy, X
+} from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 
 const TABLE_NAME = 'wine_index';
@@ -26,6 +29,7 @@ type LabelHints = {
   inferred_variety?: string | null;
 };
 
+// ---- OCR helper ----
 async function ocrLabel(file: File): Promise<{ text: string }> {
   const form = new FormData();
   form.append('file', file);
@@ -37,7 +41,7 @@ async function ocrLabel(file: File): Promise<{ text: string }> {
   return res.json();
 }
 
-// helpers
+// ---- helpers ----
 function titleCase(s: string) {
   return s.replace(/\w\S*/g, (w) => w.charAt(0).toUpperCase() + w.slice(1));
 }
@@ -123,6 +127,7 @@ const AnswerBadge: React.FC<{ ok: boolean; truth: string }> = ({ ok, truth }) =>
   </div>
 );
 
+// ---- scoring / awarding ----
 function computeScore(
   guesses: { guessWorld: string; guessVariety: string; guessVintage: string; guessCountry: string; guessRegion: string; guessSubregion: string },
   truths:  { world: string | null | undefined; variety: string; vintage: string; country: string; region: string; subregion: string }
@@ -148,13 +153,11 @@ async function awardPointsSolo({ userId, score, max }: { userId: string; score: 
   return res.json();
 }
 
+// ---- Share Modal ----
 const ShareModal: React.FC<{ open: boolean; onClose: () => void; text: string }> = ({ open, onClose, text }) => {
   if (!open) return null;
   const copy = async () => {
-    try {
-      await navigator.clipboard.writeText(text);
-      alert('Copied!');
-    } catch {}
+    try { await navigator.clipboard.writeText(text); alert('Copied!'); } catch {}
   };
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4">
@@ -256,7 +259,7 @@ const SoloWineOptions: React.FC = () => {
     setError(null);
     setWine(null);
     try {
-      const t = labelText;
+      const t = labelText.trim();
       const hints = extractLabelHints(t);
       setLabelHints(hints);
 
@@ -293,6 +296,7 @@ const SoloWineOptions: React.FC = () => {
     }
   };
 
+  // Build MCQs after a match (and whenever hints update)
   React.useEffect(() => {
     const loadOptions = async () => {
       if (!wine) {
@@ -301,6 +305,7 @@ const SoloWineOptions: React.FC = () => {
         return;
       }
 
+      // Countries
       try {
         const { data: countries } = await supabase.rpc('get_countries');
         if (countries) {
@@ -312,6 +317,7 @@ const SoloWineOptions: React.FC = () => {
         setCountryChoices(uniqStrings([wine.country || '']));
       }
 
+      // Regions
       try {
         if (wine.country) {
           const { data: regions } = await supabase.rpc('get_regions', { p_country: wine.country });
@@ -326,6 +332,7 @@ const SoloWineOptions: React.FC = () => {
         setRegionChoices(uniqStrings([wine.region || wine.appellation || '']));
       }
 
+      // Subregions (optional)
       try {
         if (wine.country && (wine.region || wine.appellation)) {
           const baseRegion = wine.region || wine.appellation!;
@@ -349,8 +356,10 @@ const SoloWineOptions: React.FC = () => {
         setSubregionChoices([]);
       }
 
+      // Vintage
       setVintageChoices(buildVintageChoices(wine, labelHints));
 
+      // Variety
       const correctVar = (wine.variety || '').trim() || (labelHints?.inferred_variety || '').trim();
       const commonGrapes = [
         'Chardonnay','Pinot Noir','Sauvignon Blanc','Riesling','Cabernet Sauvignon',
@@ -367,19 +376,20 @@ const SoloWineOptions: React.FC = () => {
     loadOptions().catch(() => {});
   }, [wine, labelHints]);
 
+  // Compute truths once for consistent checks
+  const truths = React.useMemo(() => ({
+    world: wine?.world ?? worldFromCountry(wine?.country),
+    variety: wine?.variety ? String(wine.variety) : '',
+    vintage: wine?.vintage
+      ? String(wine.vintage)
+      : (labelHints?.is_non_vintage ? 'NV' : (labelHints?.vintage_year ? String(labelHints.vintage_year) : 'NV')),
+    country: wine?.country ? String(wine.country) : '',
+    region: (wine?.region || wine?.appellation) ? String(wine?.region || wine?.appellation) : '',
+    subregion: wine?.appellation ? String(wine.appellation) : '',
+  }), [wine, labelHints]);
+
   const checkAnswers = async () => {
     setChecked(true);
-
-    const truths = {
-      world: wine?.world ?? worldFromCountry(wine?.country),
-      variety: wine?.variety ? String(wine.variety) : '',
-      vintage: wine?.vintage
-        ? String(wine.vintage)
-        : (labelHints?.is_non_vintage ? 'NV' : (labelHints?.vintage_year ? String(labelHints.vintage_year) : 'NV')),
-      country: wine?.country ? String(wine.country) : '',
-      region: (wine?.region || wine?.appellation) ? String(wine?.region || wine?.appellation) : '',
-      subregion: wine?.appellation ? String(wine.appellation) : '',
-    };
 
     const { score, max } = computeScore(
       { guessWorld, guessVariety, guessVintage, guessCountry, guessRegion, guessSubregion },
@@ -413,7 +423,7 @@ ${wine ? `Target: ${wine.display_name}` : ''}`;
     <div className="max-w-4xl mx-auto space-y-6">
       <header className="flex items-center gap-3">
         <Wine className="w-6 h-6 text-purple-600" />
-        <h1 className="text-2xl font-bold">Wine Options</h1>
+        <h1 className="text-2xl font-bold">Wine Options — Solo</h1>
       </header>
 
       {/* Upload & OCR */}
@@ -507,7 +517,7 @@ ${wine ? `Target: ${wine.display_name}` : ''}`;
               onClick={() => setGuessWorld('new')}
             >New World</button>
           </div>
-          {checked && <AnswerBadge ok={!!(guessWorld && (guessWorld.toLowerCase() === String(worldFromCountry(wine?.country) || '').toLowerCase()))} truth={String(worldFromCountry(wine?.country) || '—')} />}
+          {checked && <AnswerBadge ok={!!(guessWorld && truths.world && guessWorld.toLowerCase() === String(truths.world).toLowerCase())} truth={truths.world || '—'} />}
         </div>
 
         {/* Variety / Blend */}
@@ -522,7 +532,7 @@ ${wine ? `Target: ${wine.display_name}` : ''}`;
               >{opt}</button>
             ))}
           </div>
-          {checked && <AnswerBadge ok={guessVariety && wine?.variety ? guessVariety.toLowerCase() === String(wine.variety).toLowerCase() : false} truth={wine?.variety || '—'} />}
+          {checked && <AnswerBadge ok={!!(guessVariety && truths.variety && guessVariety.toLowerCase() === truths.variety.toLowerCase())} truth={truths.variety || '—'} />}
         </div>
 
         {/* Vintage */}
@@ -538,7 +548,7 @@ ${wine ? `Target: ${wine.display_name}` : ''}`;
               >{opt}</button>
             ))}
           </div>
-          {checked && <AnswerBadge ok={!!guessVintage && (guessVintage.toLowerCase() === (wine?.vintage ? String(wine.vintage).toLowerCase() : (labelHints?.vintage_year ? String(labelHints.vintage_year).toLowerCase() : 'nv')))} truth={wine?.vintage ? String(wine.vintage) : (labelHints?.vintage_year ? String(labelHints.vintage_year) : 'NV')} />}
+          {checked && <AnswerBadge ok={!!(guessVintage && truths.vintage && guessVintage.toLowerCase() === truths.vintage.toLowerCase())} truth={truths.vintage} />}
         </div>
 
         {/* Country */}
@@ -553,7 +563,7 @@ ${wine ? `Target: ${wine.display_name}` : ''}`;
               >{opt}</button>
             ))}
           </div>
-          {checked && <AnswerBadge ok={!!(guessCountry && wine?.country && guessCountry.toLowerCase() === String(wine.country).toLowerCase())} truth={wine?.country || '—'} />}
+          {checked && <AnswerBadge ok={!!(guessCountry && truths.country && guessCountry.toLowerCase() === truths.country.toLowerCase())} truth={truths.country || '—'} />}
         </div>
 
         {/* Region */}
@@ -568,7 +578,7 @@ ${wine ? `Target: ${wine.display_name}` : ''}`;
               >{opt}</button>
             ))}
           </div>
-          {checked && <AnswerBadge ok={!!(guessRegion && (guessRegion.toLowerCase() === String(wine?.region || wine?.appellation || '').toLowerCase()))} truth={String(wine?.region || wine?.appellation || '—')} />}
+          {checked && <AnswerBadge ok={!!(guessRegion && truths.region && guessRegion.toLowerCase() === truths.region.toLowerCase())} truth={truths.region || '—'} />}
         </div>
 
         {/* Sub-region (if applicable) */}
@@ -584,7 +594,7 @@ ${wine ? `Target: ${wine.display_name}` : ''}`;
                 >{opt}</button>
               ))}
             </div>
-            {checked && <AnswerBadge ok={!!(guessSubregion && wine?.appellation && guessSubregion.toLowerCase() === String(wine.appellation).toLowerCase())} truth={wine?.appellation || '—'} />}
+            {checked && <AnswerBadge ok={!!(guessSubregion && truths.subregion && guessSubregion.toLowerCase() === truths.subregion.toLowerCase())} truth={truths.subregion || '—'} />}
           </div>
         )}
 
@@ -592,17 +602,20 @@ ${wine ? `Target: ${wine.display_name}` : ''}`;
           <button onClick={checkAnswers} className="px-4 py-2 rounded bg-black text-white">
             Check answers
           </button>
-          <button onClick={() => {
-            try {
-              if (navigator.share) {
-                navigator.share({ title: 'Wine Options', text: shareText, url: window.location.href });
-              } else {
+          <button
+            onClick={() => {
+              try {
+                if (navigator.share) {
+                  navigator.share({ title: 'Wine Options', text: shareText, url: window.location.href });
+                } else {
+                  setShareOpen(true);
+                }
+              } catch {
                 setShareOpen(true);
               }
-            } catch {
-              setShareOpen(true);
-            }
-          }} className="px-4 py-2 rounded border flex items-center gap-2">
+            }}
+            className="px-4 py-2 rounded border flex items-center gap-2"
+          >
             <Share2 className="w-4 h-4" /> Share
           </button>
         </div>
