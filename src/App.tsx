@@ -149,7 +149,8 @@ function App() {
                 <Route path="/admin/swirdle" element={<SwirdleAdmin />} />
 
                 {/* Options (solo) */}
-                <Route path="/wine-options" element={<WineOptionsGame />} />
+                <Route path="/wine-options/solo" element={<SoloWineOptions />} />
+                <Route path="/wine-options/multiplayer" element={<WineOptionsGame />} />
 
                 {/* Dashboard / Account */}
                 <Route path="/dashboard" element={<DashboardLite />} />
