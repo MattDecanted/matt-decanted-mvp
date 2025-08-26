@@ -1,6 +1,6 @@
-import { Handler } from '@netlify/functions'
-import { supabase } from './_supabaseClient'
-import { v4 as uuidv4 } from 'uuid'
+import type { Handler } from '@netlify/functions';
+import { supabase } from '../src/lib/supabaseClient';
+import { v4 as uuidv4 } from 'uuid';
 
 export const handler: Handler = async (event) => {
   try {
