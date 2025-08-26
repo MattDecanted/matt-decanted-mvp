@@ -26,7 +26,9 @@ import DashboardLite from './pages/DashboardLite';
 import Swirdle from '@/pages/Swirdle';
 import SwirdleAdmin from '@/pages/admin/SwirdleAdmin';
 import WineOptionsGame from '@/pages/WineOptionsGame';
+import SoloWineOptions from '@/pages/SoloWineOptions';
 import GamePage from '@/pages/GamePage'; // ✅ add this import
+
 
 import { supabase } from '@/lib/supabase';
 
