@@ -1,11 +1,20 @@
 // src/pages/WineOptionsGame.tsx
 import React, { useEffect, useRef, useState } from "react";
 import type { RealtimeChannel } from "@supabase/supabase-js";
-import { Users, Share2, Copy, Loader2, Trophy, ChevronRight, CheckCircle2, LogOut } from "lucide-react";
+import {
+  Users,
+  Share2,
+  Copy,
+  Loader2,
+  Trophy,
+  ChevronRight,
+  CheckCircle2,
+  LogOut,
+} from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import {
-  createSession,
-  joinSessionByCode,
+  // createSession,        // ⛔️ now handled by Netlify function
+  // joinSessionByCode,    // ⛔️ now handled by Netlify function
   listenToSession,
   unsubscribe,
   setSessionStatus,
@@ -62,13 +71,21 @@ function InviteBar({ inviteCode }: { inviteCode: string }) {
     <div className="flex items-center gap-3 p-4 rounded-2xl border bg-white shadow-sm">
       <div>
         <div className="text-xs text-gray-500">Invite code</div>
-        <div className="font-mono text-2xl font-semibold tracking-wide">{inviteCode}</div>
+        <div className="font-mono text-2xl font-semibold tracking-wide">
+          {inviteCode}
+        </div>
       </div>
       <div className="flex-1" />
-      <button onClick={copy} className="inline-flex items-center gap-2 px-3 py-2 rounded-2xl border hover:shadow">
+      <button
+        onClick={copy}
+        className="inline-flex items-center gap-2 px-3 py-2 rounded-2xl border hover:shadow"
+      >
         <Copy className="h-4 w-4" /> {copied ? "Copied" : "Copy"}
       </button>
-      <button onClick={share} className="inline-flex items-center gap-2 px-3 py-2 rounded-2xl bg-black text-white hover:shadow">
+      <button
+        onClick={share}
+        className="inline-flex items-center gap-2 px-3 py-2 rounded-2xl bg-black text-white hover:shadow"
+      >
         <Share2 className="h-4 w-4" /> Share
       </button>
     </div>
@@ -121,7 +138,9 @@ function QuestionStepper({
 
   return (
     <div className="space-y-4">
-      <div className="text-sm text-gray-600">Question {index + 1} of {questions.length}</div>
+      <div className="text-sm text-gray-600">
+        Question {index + 1} of {questions.length}
+      </div>
       <div className="text-2xl font-semibold">{q.prompt}</div>
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
         {q.options.map((opt, i) => {
@@ -130,14 +149,22 @@ function QuestionStepper({
             <button
               key={i}
               onClick={() => setSelected(i)}
-              className={`p-4 rounded-2xl border text-left hover:shadow-sm focus:outline-none focus:ring-2 ${active ? "ring-2 ring-black" : ""}`}
+              className={`p-4 rounded-2xl border text-left hover:shadow-sm focus:outline-none focus:ring-2 ${
+                active ? "ring-2 ring-black" : ""
+              }`}
               aria-pressed={active}
             >
               <div className="flex items-center gap-2">
-                {active ? <CheckCircle2 className="h-5 w-5" /> : <ChevronRight className="h-5 w-5 opacity-50" />}
+                {active ? (
+                  <CheckCircle2 className="h-5 w-5" />
+                ) : (
+                  <ChevronRight className="h-5 w-5 opacity-50" />
+                )}
                 <span className="font-medium">{opt}</span>
               </div>
-              {active && q.explanation && <div className="mt-2 text-xs text-gray-500">{q.explanation}</div>}
+              {active && q.explanation && (
+                <div className="mt-2 text-xs text-gray-500">{q.explanation}</div>
+              )}
             </button>
           );
         })}
@@ -155,18 +182,37 @@ function QuestionStepper({
   );
 }
 
-// Replace with your OCR-driven round generator later
+// Placeholder round generator; replace with OCR-driven builder
 async function buildRoundPayload(): Promise<{ questions: StepQuestion[] }> {
   return {
     questions: [
-      { key: "vintage", prompt: "Pick the vintage", options: ["2019", "2020"], correctIndex: 1 },
-      { key: "hemisphere", prompt: "Old World or New World?", options: ["Old World", "New World"], correctIndex: 1 },
-      { key: "country", prompt: "Pick the country", options: ["France", "Australia", "USA", "Italy"], correctIndex: 1 },
+      {
+        key: "vintage",
+        prompt: "Pick the vintage",
+        options: ["2019", "2020"],
+        correctIndex: 1,
+      },
+      {
+        key: "hemisphere",
+        prompt: "Old World or New World?",
+        options: ["Old World", "New World"],
+        correctIndex: 1,
+      },
+      {
+        key: "country",
+        prompt: "Pick the country",
+        options: ["France", "Australia", "USA", "Italy"],
+        correctIndex: 1,
+      },
     ],
   };
 }
 
-export default function WineOptionsGame({ initialCode = "" }: { initialCode?: string }) {
+export default function WineOptionsGame({
+  initialCode = "",
+}: {
+  initialCode?: string;
+}) {
   const [displayName, setDisplayName] = useState("Player");
   const [codeInput, setCodeInput] = useState(initialCode);
   const [session, setSession] = useState<GameSession | null>(null);
@@ -174,29 +220,45 @@ export default function WineOptionsGame({ initialCode = "" }: { initialCode?: st
   const [participants, setParticipants] = useState<Participant[]>([]);
   const [round, setRound] = useState<GameRound | null>(null);
   const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
   const channelRef = useRef<RealtimeChannel | null>(null);
 
   useEffect(() => () => unsubscribe(channelRef.current), []);
 
   function attachRealtime(sessId: string) {
     channelRef.current = listenToSession(sessId, {
-      onParticipantJoin: (p) => setParticipants((prev) => uniqBy([...prev, p], (x) => x.id)),
-      onParticipantUpdate: (p) => setParticipants((prev) => prev.map((x) => (x.id === p.id ? p : x))),
+      onParticipantJoin: (p) =>
+        setParticipants((prev) => uniqBy([...prev, p], (x) => x.id)),
+      onParticipantUpdate: (p) =>
+        setParticipants((prev) => prev.map((x) => (x.id === p.id ? p : x))),
       onRoundChange: setRound,
       onSessionChange: setSession,
     });
   }
 
-  // auto-join if /join/:code used
+  // Auto-join when /join/:code is used
   useEffect(() => {
     const run = async () => {
       if (!initialCode || session) return;
       setLoading(true);
+      setErr(null);
       try {
-        const { session: s, participant } = await joinSessionByCode(initialCode, null, displayName || "Guest");
+        const res = await fetch("/.netlify/functions/join-session", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            invite_code: initialCode.trim().toUpperCase(),
+            user_id: null, // anonymous allowed; backend will handle
+            display_name: displayName || "Guest",
+          }),
+        });
+        if (!res.ok) throw new Error(await res.text());
+        const { session: s, participant } = await res.json();
+
         setSession(s);
         setMe(participant);
         setCodeInput(s.invite_code);
+
         const { data: ps } = await supabase
           .from("session_participants")
           .select("*")
@@ -204,6 +266,8 @@ export default function WineOptionsGame({ initialCode = "" }: { initialCode?: st
           .order("joined_at", { ascending: true });
         setParticipants(ps ?? []);
         attachRealtime(s.id);
+      } catch (e: any) {
+        setErr(e?.message || "Failed to join game.");
       } finally {
         setLoading(false);
       }
@@ -213,27 +277,75 @@ export default function WineOptionsGame({ initialCode = "" }: { initialCode?: st
   }, [initialCode]);
 
   async function handleHost() {
+    setLoading(true);
+    setErr(null);
     try {
-      setLoading(true);
-      const { session: s, host } = await createSession(null, displayName || "Host");
+      const { data } = await supabase.auth.getUser();
+      const uid = data?.user?.id;
+      if (!uid) {
+        setErr("Please sign in to host a game.");
+        return;
+      }
+
+      const res = await fetch("/.netlify/functions/create-session", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          host_user_id: uid,
+          display_name: displayName || "Host",
+        }),
+      });
+      if (!res.ok) throw new Error(await res.text());
+      const { session: s } = await res.json();
+
+      // fetch host participant from DB (host row is inserted by the function)
+      const { data: my } = await supabase
+        .from("session_participants")
+        .select("*")
+        .eq("session_id", s.id)
+        .order("joined_at", { ascending: true });
+
       setSession(s);
-      setMe(host);
-      setParticipants([host]);
+      const host = (my || []).find((p: any) => p.is_host) as Participant | undefined;
+      if (host) setMe(host);
+      setParticipants((my as Participant[]) ?? []);
       setCodeInput(s.invite_code);
       attachRealtime(s.id);
+    } catch (e: any) {
+      setErr(e?.message || "Failed to create game.");
     } finally {
       setLoading(false);
     }
   }
 
   async function handleJoin() {
+    setLoading(true);
+    setErr(null);
     try {
-      setLoading(true);
-      const code = codeInput.trim();
-      const { session: s, participant } = await joinSessionByCode(code, null, displayName || "Guest");
+      const code = codeInput.trim().toUpperCase();
+      if (!code) {
+        setErr("Enter an invite code.");
+        return;
+      }
+      const { data } = await supabase.auth.getUser();
+      const uid = data?.user?.id ?? null;
+
+      const res = await fetch("/.netlify/functions/join-session", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          invite_code: code,
+          user_id: uid,
+          display_name: displayName || "Guest",
+        }),
+      });
+      if (!res.ok) throw new Error(await res.text());
+      const { session: s, participant } = await res.json();
+
       setSession(s);
       setMe(participant);
       setCodeInput(s.invite_code);
+
       const { data: ps } = await supabase
         .from("session_participants")
         .select("*")
@@ -241,6 +353,8 @@ export default function WineOptionsGame({ initialCode = "" }: { initialCode?: st
         .order("joined_at", { ascending: true });
       setParticipants(ps ?? []);
       attachRealtime(s.id);
+    } catch (e: any) {
+      setErr(e?.message || "Failed to join game.");
     } finally {
       setLoading(false);
     }
@@ -266,6 +380,13 @@ export default function WineOptionsGame({ initialCode = "" }: { initialCode?: st
     return (
       <div className="max-w-xl mx-auto p-6 space-y-6">
         <h1 className="text-3xl font-semibold">Wine Options — Multiplayer</h1>
+
+        {err && (
+          <div className="text-sm rounded-2xl border border-red-200 bg-red-50 text-red-700 p-2">
+            {err}
+          </div>
+        )}
+
         <div className="space-y-2">
           <label className="block text-sm font-medium">Display name</label>
           <input
@@ -281,7 +402,12 @@ export default function WineOptionsGame({ initialCode = "" }: { initialCode?: st
             onClick={handleHost}
             className="px-4 py-2 rounded-2xl bg-black text-white inline-flex items-center gap-2 disabled:opacity-60"
           >
-            {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Users className="h-4 w-4" />} Host new game
+            {loading ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <Users className="h-4 w-4" />
+            )}
+            Host new game
           </button>
           <div className="flex-1" />
           <input
@@ -298,6 +424,10 @@ export default function WineOptionsGame({ initialCode = "" }: { initialCode?: st
             Join
           </button>
         </div>
+
+        <div className="text-xs text-gray-500">
+          Upload controls appear after you host or join a session.
+        </div>
       </div>
     );
   }
@@ -305,8 +435,12 @@ export default function WineOptionsGame({ initialCode = "" }: { initialCode?: st
   return (
     <div className="max-w-3xl mx-auto p-6 space-y-6">
       <div className="flex items-center justify-between">
-        <div className="text-sm">Status: <span className="font-medium">{uiStatus}</span></div>
-        <div className="text-sm text-gray-500">Players: {participants.length}</div>
+        <div className="text-sm">
+          Status: <span className="font-medium">{uiStatus}</span>
+        </div>
+        <div className="text-sm text-gray-500">
+          Players: {participants.length}
+        </div>
       </div>
 
       <InviteBar inviteCode={session.invite_code} />
@@ -315,15 +449,26 @@ export default function WineOptionsGame({ initialCode = "" }: { initialCode?: st
         <div className="font-medium mb-2">Players</div>
         <div className="flex flex-wrap gap-2">
           {participants.map((p) => (
-            <div key={p.id} className={`px-3 py-1 rounded-full border ${p.is_host ? "bg-gray-100" : ""}`}>
-              {p.display_name} {p.is_host && <span className="text-xs">(host)</span>} — {p.score} pts
+            <div
+              key={p.id}
+              className={`px-3 py-1 rounded-full border ${
+                p.is_host ? "bg-gray-100" : ""
+              }`}
+            >
+              {p.display_name} {p.is_host && <span className="text-xs">(host)</span>} —{" "}
+              {p.score} pts
             </div>
           ))}
         </div>
       </div>
 
       {!round && me?.is_host && uiStatus === "waiting" && (
-        <button onClick={startGame} className="px-5 py-2.5 rounded-2xl bg-black text-white">Start Round</button>
+        <button
+          onClick={startGame}
+          className="px-5 py-2.5 rounded-2xl bg-black text-white"
+        >
+          Start Round
+        </button>
       )}
 
       {round && uiStatus !== "finished" && (
@@ -334,17 +479,28 @@ export default function WineOptionsGame({ initialCode = "" }: { initialCode?: st
 
       {uiStatus === "finished" && (
         <div className="p-4 rounded-2xl border bg-white shadow-sm space-y-3">
-          <div className="text-xl font-semibold flex items-center gap-2"><Trophy className="h-5 w-5" /> Results</div>
+          <div className="text-xl font-semibold flex items-center gap-2">
+            <Trophy className="h-5 w-5" /> Results
+          </div>
           <ul className="space-y-1">
-            {[...participants].sort((a, b) => b.score - a.score).map((p, i) => (
-              <li key={p.id} className="flex justify-between">
-                <span>{i + 1}. {p.display_name}</span>
-                <span className="font-medium">{p.score} pts</span>
-              </li>
-            ))}
+            {[...participants]
+              .sort((a, b) => b.score - a.score)
+              .map((p, i) => (
+                <li key={p.id} className="flex justify-between">
+                  <span>
+                    {i + 1}. {p.display_name}
+                  </span>
+                  <span className="font-medium">{p.score} pts</span>
+                </li>
+              ))}
           </ul>
           <div className="flex justify-end">
-            <button onClick={() => window.location.assign('/multiplayer')} className="inline-flex items-center gap-2 px-3 py-2 rounded-2xl border">
+            <button
+              onClick={() =>
+                window.location.assign("/wine-options/multiplayer")
+              }
+              className="inline-flex items-center gap-2 px-3 py-2 rounded-2xl border"
+            >
               <LogOut className="h-4 w-4" /> Leave
             </button>
           </div>
