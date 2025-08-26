@@ -43,8 +43,8 @@ export const handler: Handler = async (event) => {
     const { data: session, error: insertErr } = await supabase
       .from('game_sessions')
       .insert([{ host_user_id, invite_code, status: 'open' }]) // let DB default set is_open=true
-      .select('id, invite_code, status, updated_at')
-      .single();
+    .select('id, invite_code, status')  // ← drop updated_at
+.single();
 
     if (insertErr) {
       console.error('create-session: insert session failed', insertErr);
