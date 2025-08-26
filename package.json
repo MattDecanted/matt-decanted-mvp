@@ -2,8 +2,7 @@
   "name": "matt-decanted-mvp",
   "private": true,
   "version": "0.0.1",
-  "type": "module",
-  "scripts": {
+   "scripts": {
     "dev": "vite",
     "dev:api": "netlify dev --targetPort=5173 --port=8888",
     "build": "vite build",
