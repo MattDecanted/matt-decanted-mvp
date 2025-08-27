@@ -7,12 +7,16 @@ import {
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import {
-  listenToSession, unsubscribe, setSessionStatus, /* remove direct startRound */ endRound,
+  listenToSession, unsubscribe, setSessionStatus, endRound,
   submitAnswer, awardPoints, type GameSession, type Participant, type GameRound,
 } from "@/lib/gameSession";
 
-/* ---------- small util to strip HTML tags ---------- */
+/* ---------- util ---------- */
 const toPlain = (s?: string | null) => (s ? s.replace(/<[^>]+>/g, "") : "");
+const pickFour = (correct: string, pool: string[]) => {
+  const uniq = Array.from(new Set([correct, ...pool.filter(p => p && p !== correct)]));
+  return uniq.slice(0, 4); // correct will be at index 0
+};
 
 /* ---------- status maps ---------- */
 const WRITE_STATUS: Record<string, GameSession["status"]> = {
@@ -51,8 +55,9 @@ function extractLabelHints(text: string): LabelHints {
   else if (/blanc\s+de\s+noirs/.test(t)) inferredVariety = "Pinot Noir";
   else {
     const grapes = [
-      "chardonnay","pinot noir","riesling","sauvignon","cabernet","merlot","syrah","shiraz",
-      "malbec","tempranillo","nebbiolo","sangiovese","grenache","chenin","viognier","zinfandel","pinot gris",
+      "cabernet sauvignon","cabernet","merlot","syrah","shiraz","grenache","mourvèdre","mataro",
+      "pinot noir","pinot grigio","pinot gris","chardonnay","sauvignon blanc","riesling","tempranillo",
+      "nebbiolo","sangiovese","malbec","chenin blanc","viognier","zinfandel","gamay","meunier",
     ];
     const found = grapes.find((g) => t.includes(g));
     inferredVariety = found ? titleCase(found) : null;
@@ -65,13 +70,161 @@ function extractLabelHints(text: string): LabelHints {
 }
 
 export type StepQuestion = {
-  key: "vintage" | "colour" | "variety" | "hemisphere" | "country" | "region";
+  key: "vintage" | "variety" | "hemisphere" | "country" | "region" | "subregion";
   prompt: string;
   options: string[];
   correctIndex: number;
   explanation?: string;
 };
 
+/* ---------- country/region heuristics ---------- */
+type Detected = { country?: string; region?: string; subregion?: string; isOldWorld?: boolean };
+function detectOrigin(text: string): Detected {
+  const t = text.toLowerCase();
+
+  const ow = /(france|italy|spain|germany|portugal|austria|greece|hungary|georgia\b)/i.test(text);
+  const res: Detected = { isOldWorld: ow };
+
+  // Country
+  const countryTests: Array<[string, RegExp]> = [
+    ["France", /(france|champagne|bordeaux|bourgogne|burgundy|loire|alsace|rhone|beaujolais|provence|languedoc|jura)/i],
+    ["Italy", /(italy|toscana|piemonte|piedmont|veneto|sicilia|alto adige|friuli|chianti|barolo|barbaresco)/i],
+    ["Spain", /(spain|rioja|ribera del duero|rías?\s*baixas|priorat|navarra|cava)/i],
+    ["USA", /(napa|sonoma|california|oregon|washington|willamette|columbia valley|paso robles|usa|american)/i],
+    ["Australia", /(australia|barossa|mclaren vale|margaret river|yarra valley|clare valley|coonawarra)/i],
+    ["New Zealand", /(new zealand|marlborough|central otago|hawke'?s bay)/i],
+    ["Chile", /(chile|maipo|colchagua|casablanca)/i],
+    ["Argentina", /(argentina|mendoza|salta|patagonia)/i],
+    ["South Africa", /(south africa|stellenbosch|swartland|walker bay|cape)/i],
+    ["Germany", /(germany|mosel|rheingau|pfalz|nahe|baden)/i],
+    ["Portugal", /(portugal|douro|alentejo|vinho verde|dao|d\u00E3o)/i],
+  ];
+  for (const [name, rx] of countryTests) if (rx.test(text)) { res.country = name; break; }
+
+  // Region + subregion (very light)
+  const regionMatchers: Record<string, Array<[string, RegExp, string[]]>> = {
+    France: [
+      ["Bordeaux", /bordeaux|pauillac|margaux|medoc|st[.\s-]*julien|st[.\s-]*est[eé]phe|pomerol|saint[ -]?emilion|graves|pessac/i,
+        ["Bordeaux","Burgundy","Loire","Rhône"]],
+      ["Burgundy", /bourgogne|burgundy|c[oô]te d'?or|beaune|nuits|chablis|c[oô]te de nuits|c[oô]te de beaune/i,
+        ["Burgundy","Bordeaux","Loire","Rhône"]],
+      ["Loire", /loire|sancerre|vouvray|muscadet|anjou|savennieres/i,
+        ["Loire","Bordeaux","Rhône","Burgundy"]],
+      ["Rhône", /rhone|c[oô]tes? du rh[oô]ne|cote rotie|hermitage|gigondas|chateauneuf/i,
+        ["Rhône","Bordeaux","Loire","Burgundy"]],
+      ["Champagne", /champagne|reims|epernay|ay\b|aÿ/i,
+        ["Champagne","Bordeaux","Loire","Burgundy"]],
+      ["Alsace", /alsace|riesling d'alsace/i,
+        ["Alsace","Loire","Burgundy","Rhône"]],
+    ],
+    Italy: [
+      ["Tuscany", /toscana|tuscany|chianti|brunello|montalcino|montepulciano/i, ["Tuscany","Piedmont","Veneto","Sicily"]],
+      ["Piedmont", /piemonte|piedmont|barolo|barbaresco|langhe|asti/i, ["Piedmont","Tuscany","Veneto","Sicily"]],
+      ["Veneto", /veneto|valpolicella|soave|amarone|prosecco/i, ["Veneto","Tuscany","Piedmont","Sicily"]],
+      ["Sicily", /sicilia|sicily|etna/i, ["Sicily","Tuscany","Piedmont","Veneto"]],
+    ],
+    Spain: [
+      ["Rioja", /rioja/i, ["Rioja","Ribera del Duero","Priorat","Rías Baixas"]],
+      ["Ribera del Duero", /ribera del duero/i, ["Ribera del Duero","Rioja","Priorat","Rías Baixas"]],
+      ["Rías Baixas", /r[ií]as?\s*baixas/i, ["Rías Baixas","Rioja","Ribera del Duero","Priorat"]],
+      ["Priorat", /priorat/i, ["Priorat","Rioja","Ribera del Duero","Rías Baixas"]],
+    ],
+    USA: [
+      ["Napa Valley", /napa/i, ["Napa Valley","Sonoma","Willamette","Columbia Valley"]],
+      ["Sonoma", /sonoma/i, ["Sonoma","Napa Valley","Willamette","Columbia Valley"]],
+      ["Willamette Valley", /willamette/i, ["Willamette Valley","Napa Valley","Sonoma","Columbia Valley"]],
+      ["Columbia Valley", /columbia valley|washington/i, ["Columbia Valley","Napa Valley","Sonoma","Willamette Valley"]],
+    ],
+    Australia: [
+      ["Barossa", /barossa/i, ["Barossa","McLaren Vale","Margaret River","Yarra Valley"]],
+      ["McLaren Vale", /mclaren vale/i, ["McLaren Vale","Barossa","Margaret River","Yarra Valley"]],
+      ["Margaret River", /margaret river/i, ["Margaret River","Barossa","McLaren Vale","Yarra Valley"]],
+      ["Yarra Valley", /yarra valley/i, ["Yarra Valley","Barossa","McLaren Vale","Margaret River"]],
+    ],
+    "New Zealand": [
+      ["Marlborough", /marlborough/i, ["Marlborough","Central Otago","Hawke's Bay","Nelson"]],
+      ["Central Otago", /central otago/i, ["Central Otago","Marlborough","Hawke's Bay","Nelson"]],
+      ["Hawke's Bay", /hawke'?s bay/i, ["Hawke's Bay","Marlborough","Central Otago","Nelson"]],
+    ],
+    Chile: [
+      ["Maipo", /maipo/i, ["Maipo","Colchagua","Casablanca","Maule"]],
+      ["Colchagua", /colchagua/i, ["Colchagua","Maipo","Casablanca","Maule"]],
+      ["Casablanca", /casablanca/i, ["Casablanca","Maipo","Colchagua","Maule"]],
+    ],
+    Argentina: [
+      ["Mendoza", /mendoza/i, ["Mendoza","Salta","Patagonia","Uco Valley"]],
+      ["Salta", /salta|cafayate/i, ["Salta","Mendoza","Patagonia","Uco Valley"]],
+      ["Patagonia", /patagonia/i, ["Patagonia","Mendoza","Salta","Uco Valley"]],
+    ],
+    "South Africa": [
+      ["Stellenbosch", /stellenbosch/i, ["Stellenbosch","Swartland","Walker Bay","Paarl"]],
+      ["Swartland", /swartland/i, ["Swartland","Stellenbosch","Walker Bay","Paarl"]],
+    ],
+    Germany: [
+      ["Mosel", /mosel/i, ["Mosel","Rheingau","Pfalz","Nahe"]],
+      ["Rheingau", /rheingau/i, ["Rheingau","Mosel","Pfalz","Nahe"]],
+      ["Pfalz", /pfalz/i, ["Pfalz","Mosel","Rheingau","Nahe"]],
+    ],
+    Portugal: [
+      ["Douro", /douro/i, ["Douro","Alentejo","Vinho Verde","Dão"]],
+      ["Alentejo", /alentejo/i, ["Alentejo","Douro","Vinho Verde","Dão"]],
+      ["Vinho Verde", /vinho verde/i, ["Vinho Verde","Douro","Alentejo","Dão"]],
+    ],
+  };
+
+  const country = res.country;
+  if (country && regionMatchers[country]) {
+    for (const [region, rx] of regionMatchers[country]) {
+      if (rx.test(text)) { res.region = region; break; }
+    }
+  }
+
+  // Subregion (only for a few)
+  if (res.region === "Bordeaux") {
+    if (/pauillac|margaux|st[.\s-]*julien|st[.\s-]*est[eé]phe|medoc/i.test(text)) res.subregion = "Left Bank";
+    else if (/saint[ -]?emilion|pomerol/i.test(text)) res.subregion = "Right Bank";
+  }
+  if (res.region === "Burgundy") {
+    if (/chablis/i.test(text)) res.subregion = "Chablis";
+    else if (/c[oô]te de nuits/i.test(text)) res.subregion = "Côte de Nuits";
+    else if (/c[oô]te de beaune/i.test(text)) res.subregion = "Côte de Beaune";
+  }
+  if (res.region === "Napa Valley") {
+    if (/oakville|rutherford|st[.\s-]*helena|mount veeder/i.test(text)) res.subregion = "Oakville/Rutherford";
+  }
+  return res;
+}
+
+/* ---------- variety/blend detection ---------- */
+function detectVarietyOrBlend(text: string, hint?: string | null): { label: string; distractors: string[] } {
+  const t = text.toLowerCase();
+
+  const looksBlend =
+    /\bblend\b|\bassemblage\b|\bassemblage\b|\bcuv[ée]e\b|cabernet.+merlot|merlot.+cabernet|\bgrenache.+syrah|\bgsm\b|syrah.+grenache|cabernet.+franc/i.test(text) ||
+    /&|\/|,\s*(cabernet|merlot|syrah|grenache|mourv[eè]dre|tempranillo|sangiovese|nebbiolo)/i.test(text);
+
+  if (looksBlend) {
+    return { label: "Blend", distractors: ["Cabernet Sauvignon", "Pinot Noir", "Chardonnay"] };
+  }
+
+  const candidates = [
+    "Cabernet Sauvignon","Merlot","Syrah","Shiraz","Grenache","Pinot Noir","Pinot Grigio","Pinot Gris",
+    "Chardonnay","Sauvignon Blanc","Riesling","Tempranillo","Nebbiolo","Sangiovese","Malbec",
+    "Chenin Blanc","Viognier","Zinfandel","Gamay"
+  ];
+  const pick = hint && candidates.includes(hint) ? hint : (candidates.find(c => t.includes(c.toLowerCase())) || "Pinot Noir");
+
+  // Light distractors from same color/style family
+  const alt: Record<string, string[]> = {
+    "Cabernet Sauvignon": ["Merlot","Syrah","Blend"],
+    "Pinot Noir": ["Gamay","Merlot","Blend"],
+    "Chardonnay": ["Sauvignon Blanc","Riesling","Blend"],
+  };
+  const d = alt[pick] || ["Cabernet Sauvignon","Pinot Noir","Chardonnay"];
+  return { label: pick, distractors: d };
+}
+
+/* ---------- step builder from OCR ---------- */
 async function buildRoundPayloadFromOCR(file: File): Promise<{ questions: StepQuestion[] }> {
   const form = new FormData();
   form.append("file", file);
@@ -80,28 +233,72 @@ async function buildRoundPayloadFromOCR(file: File): Promise<{ questions: StepQu
   const { text } = await res.json();
 
   const hints = extractLabelHints(text || "");
+  const origin = detectOrigin(text || "");
   const now = new Date().getFullYear();
 
+  // Vintage
   const vintageOpts = hints.is_non_vintage
     ? ["NV", String(now), String(now - 1), String(now - 2)]
     : hints.vintage_year
       ? [String(hints.vintage_year), String(hints.vintage_year - 1), String(hints.vintage_year + 1), "NV"]
       : ["NV", String(now), String(now - 1), String(now - 2)];
 
-  const varietyOpts = hints.inferred_variety
-    ? [hints.inferred_variety, "Chardonnay", "Pinot Noir", "Sauvignon Blanc"]
-    : ["Chardonnay", "Pinot Noir", "Sauvignon Blanc", "Riesling"];
+  // Hemisphere
+  const hemiCorrect = origin.isOldWorld ? 0 : 1;
 
-  const isOld = /france|italy|spain|germany|portugal|austria|greece|hungary/i.test(text);
-  const hemiCorrect = isOld ? 0 : 1;
+  // Variety / Blend
+  const vb = detectVarietyOrBlend(text || "", hints.inferred_variety);
+  const varietyOpts = pickFour(vb.label, vb.distractors);
 
-  return {
-    questions: [
-      { key: "vintage",    prompt: "Pick the vintage",                options: vintageOpts,  correctIndex: 0 },
-      { key: "hemisphere", prompt: "Old World or New World?",         options: ["Old World","New World"], correctIndex: hemiCorrect },
-      { key: "variety",    prompt: "Pick the variety",                options: varietyOpts,  correctIndex: 0 },
-    ],
+  // Country
+  const countryCorrect = origin.country || (origin.isOldWorld ? "France" : "USA");
+  const countryDistractorsOW = ["Italy", "Spain", "Germany", "Portugal"];
+  const countryDistractorsNW = ["Australia", "New Zealand", "Chile", "Argentina"];
+  const countryOpts = pickFour(
+    countryCorrect,
+    (origin.isOldWorld ? countryDistractorsOW : countryDistractorsNW)
+  );
+
+  // Region (based on country)
+  const regionPools: Record<string, string[]> = {
+    France: ["Bordeaux","Burgundy","Loire","Rhône"],
+    Italy: ["Tuscany","Piedmont","Veneto","Sicily"],
+    Spain: ["Rioja","Ribera del Duero","Rías Baixas","Priorat"],
+    USA: ["Napa Valley","Sonoma","Willamette Valley","Columbia Valley"],
+    Australia: ["Barossa","McLaren Vale","Margaret River","Yarra Valley"],
+    "New Zealand": ["Marlborough","Central Otago","Hawke's Bay","Nelson"],
+    Chile: ["Maipo","Colchagua","Casablanca","Maule"],
+    Argentina: ["Mendoza","Salta","Patagonia","Uco Valley"],
+    "South Africa": ["Stellenbosch","Swartland","Walker Bay","Paarl"],
+    Germany: ["Mosel","Rheingau","Pfalz","Nahe"],
+    Portugal: ["Douro","Alentejo","Vinho Verde","Dão"],
   };
+  const regionCorrect = origin.region || (regionPools[countryCorrect]?.[0] ?? "Bordeaux");
+  const regionOpts = pickFour(regionCorrect, (regionPools[countryCorrect] || []).filter(r => r !== regionCorrect));
+
+  // Optional subregion
+  const subregions: Record<string, string[]> = {
+    Bordeaux: ["Left Bank","Right Bank","Graves","Entre-Deux-Mers"],
+    Burgundy: ["Chablis","Côte de Nuits","Côte de Beaune","Mâconnais"],
+    "Napa Valley": ["Oakville/Rutherford","St. Helena","Mount Veeder","Howell Mountain"],
+    Rioja: ["Rioja Alta","Rioja Alavesa","Rioja Oriental","Rioja Baja"],
+  };
+  const subregionCorrect = origin.subregion;
+  const subregionOpts = subregionCorrect
+    ? pickFour(subregionCorrect, (subregions[regionCorrect] || []).filter(s => s !== subregionCorrect))
+    : null;
+
+  const questions: StepQuestion[] = [
+    { key: "hemisphere", prompt: "Old World or New World?", options: ["Old World","New World"], correctIndex: hemiCorrect },
+    { key: "vintage",    prompt: "Pick the vintage",        options: vintageOpts,                correctIndex: 0 },
+    { key: "variety",    prompt: "Pick the variety / blend",options: varietyOpts,                correctIndex: 0 },
+    { key: "country",    prompt: "Pick the country",        options: countryOpts,                correctIndex: 0 },
+    { key: "region",     prompt: "Pick the region",         options: regionOpts,                 correctIndex: 0 },
+  ];
+  if (subregionOpts) {
+    questions.push({ key: "subregion", prompt: "Pick the subregion", options: subregionOpts, correctIndex: 0 });
+  }
+  return { questions };
 }
 
 /* ---------- small UI bits ---------- */
@@ -150,17 +347,34 @@ function QuestionStepper({
   const questions: StepQuestion[] = round.payload?.questions ?? [];
   const [index, setIndex] = useState(0);
   const [selected, setSelected] = useState<number | null>(null);
+  const [busy, setBusy] = useState(false);
   const q = questions[index];
 
   useEffect(() => { setIndex(0); setSelected(null); }, [round?.id]);
 
   async function handleNext() {
-    if (selected == null) return;
+    if (selected == null || busy) return;
+    setBusy(true);
     const isCorrect = selected === q.correctIndex;
-    await submitAnswer(round.id, me.id, selected, isCorrect);
-    if (isCorrect) await awardPoints(me.id, 10);
-    if (index < questions.length - 1) { setIndex(i => i + 1); setSelected(null); }
-    else { onFinished(); }
+
+    try {
+      await submitAnswer(round.id, me.id, selected, isCorrect).catch((e) =>
+        console.error("[submitAnswer] failed", e)
+      );
+      if (isCorrect) {
+        await awardPoints(me.id, 10).catch((e) =>
+          console.error("[awardPoints] failed", e)
+        );
+      }
+    } finally {
+      if (index < questions.length - 1) {
+        setIndex((i) => i + 1);
+        setSelected(null);
+      } else {
+        onFinished();
+      }
+      setBusy(false);
+    }
   }
 
   if (!q) return null;
@@ -178,6 +392,7 @@ function QuestionStepper({
               onClick={() => setSelected(i)}
               className={`p-4 rounded-2xl border text-left hover:shadow-sm focus:outline-none focus:ring-2 ${active ? "ring-2 ring-black" : ""}`}
               aria-pressed={active}
+              disabled={busy}
             >
               <div className="flex items-center gap-2">
                 {active ? <CheckCircle2 className="h-5 w-5" /> : <ChevronRight className="h-5 w-5 opacity-50" />}
@@ -191,10 +406,10 @@ function QuestionStepper({
       <div className="flex justify-end">
         <button
           onClick={handleNext}
-          disabled={selected == null}
+          disabled={selected == null || busy}
           className="inline-flex items-center gap-2 px-5 py-2.5 rounded-2xl bg-black text-white disabled:opacity-60"
         >
-          {index < questions.length - 1 ? "Next" : "See Results"}
+          {index < questions.length - 1 ? (busy ? "Saving…" : "Next") : (busy ? "Finishing…" : "See Results")}
         </button>
       </div>
     </div>
@@ -226,22 +441,18 @@ export default function WineOptionsGame({ initialCode = "" }: { initialCode?: st
 
     setParticipants(ps ?? []);
 
-    // Keep my row in sync; if not found by id, match via current user id
     const { data: auth } = await supabase.auth.getUser();
     const uid = auth?.user?.id ?? null;
 
     if (ps) {
-      // Prefer exact id match if we already have me
       if (me) {
         const mineById = ps.find((p: any) => p.id === me.id) as Participant | undefined;
         if (mineById) { setMe(mineById); return; }
       }
-      // Otherwise match by user_id (addresses “host not recognised”)
       if (uid) {
         const mineByUid = ps.find((p: any) => p.user_id === uid) as Participant | undefined;
         if (mineByUid) { setMe(mineByUid); return; }
       }
-      // Final fallback: pick the host row if there’s only one participant (new session)
       const hostRow = ps.find((p: any) => p.is_host) as Participant | undefined;
       if (!me && hostRow) setMe(hostRow);
     }
@@ -256,7 +467,6 @@ export default function WineOptionsGame({ initialCode = "" }: { initialCode?: st
     });
   }
 
-  // Fallback polling so hosts see new joiners even if Realtime isn't firing yet.
   useEffect(() => {
     if (!session?.id) return;
     const t = setInterval(() => {
@@ -319,7 +529,6 @@ export default function WineOptionsGame({ initialCode = "" }: { initialCode?: st
       setSession(s);
       await refetchParticipants(s.id);
 
-      // Pick my row either by is_host or by user_id === uid
       const { data: psMe } = await supabase
         .from("session_participants")
         .select("*")
@@ -373,13 +582,12 @@ export default function WineOptionsGame({ initialCode = "" }: { initialCode?: st
     try {
       const payload = await buildRoundPayloadFromOCR(file);
 
-      // Call Netlify function that verifies host & writes round (avoids schema cache issues)
       const res = await fetch("/.netlify/functions/start-rounds", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           session_id: session.id,
-          caller_user_id: me.user_id,     // host check happens in the function
+          caller_user_id: me.user_id,
           payload,
           round_number: 1,
         }),
@@ -387,7 +595,6 @@ export default function WineOptionsGame({ initialCode = "" }: { initialCode?: st
       if (!res.ok) throw new Error(await res.text());
       const { round: r } = await res.json();
 
-      // Session status is set to active by the function; no extra setSessionStatus call needed.
       setRound(r);
     } catch (er: any) {
       setUploadErr(er?.message || "OCR/Start round failed");
@@ -402,13 +609,12 @@ export default function WineOptionsGame({ initialCode = "" }: { initialCode?: st
     await setSessionStatus(session.id, WRITE_STATUS["finished"]);
   }
 
-  const uiStatus = session ? READ_STATUS[session.status] : "waiting";
+  // Prefer live round for status; else reflect session status
+  const uiStatus = round ? "in_progress" : (session ? READ_STATUS[session.status] : "waiting");
 
-  // Host check for *current user* (controls upload)
   const isHost =
     (!!session?.host_user_id && !!me?.user_id && me.user_id === session.host_user_id) || !!me?.is_host;
 
-  // Per-participant host badge
   const isParticipantHost = (p: Participant, s: GameSession) =>
     (!!s.host_user_id && !!p.user_id && p.user_id === s.host_user_id) || !!p.is_host;
 
@@ -417,7 +623,7 @@ export default function WineOptionsGame({ initialCode = "" }: { initialCode?: st
       <div className="max-w-xl mx-auto p-6 space-y-6">
         <h1 className="text-3xl font-semibold">Wine Options — Multiplayer</h1>
 
-        {err && <div className="text-sm rounded-2xl border border-red-200 bg-red-50 text-red-700 p-2">{err}</div>}
+        {err && <div className="text-sm rounded-2xl border border-red-200 bg-red-50 text-red-700 p-2">{toPlain(err)}</div>}
 
         <div className="flex items-start gap-2 text-xs text-gray-600">
           <AlertTriangle className="h-4 w-4 mt-0.5" />
@@ -486,7 +692,7 @@ export default function WineOptionsGame({ initialCode = "" }: { initialCode?: st
         </div>
       </div>
 
-      {/* Host-only upload (strictly guarded) */}
+      {/* Host-only upload */}
       {!round && uiStatus === "waiting" && isHost && (
         <div className="space-y-3 p-4 rounded-2xl border bg-white shadow-sm">
           <div className="flex items-center gap-2 text-sm font-medium">
@@ -494,11 +700,11 @@ export default function WineOptionsGame({ initialCode = "" }: { initialCode?: st
             <span>You are the host — upload a label to start the round</span>
           </div>
 
-  {uploadErr && (
-  <div className="text-sm rounded-2xl border border-red-200 bg-red-50 text-red-700 p-2">
-    {toPlain(uploadErr)}
-  </div>
-)}
+          {uploadErr && (
+            <div className="text-sm rounded-2xl border border-red-200 bg-red-50 text-red-700 p-2">
+              {toPlain(uploadErr)}
+            </div>
+          )}
 
           <label className="inline-flex items-center gap-2 px-3 py-2 rounded-2xl border cursor-pointer w-fit">
             <Upload className="h-4 w-4" />
@@ -517,7 +723,7 @@ export default function WineOptionsGame({ initialCode = "" }: { initialCode?: st
         </div>
       )}
 
-      {/* Guests waiting message (no upload shown) */}
+      {/* Guests waiting message */}
       {!round && uiStatus === "waiting" && !isHost && (
         <div className="p-4 rounded-2xl border bg-white shadow-sm text-sm text-gray-700">
           Waiting for the host to start the round…
