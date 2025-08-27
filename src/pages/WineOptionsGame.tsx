@@ -236,7 +236,18 @@ export default function WineOptionsGame({ initialCode = "" }: { initialCode?: st
       onSessionChange: async (s) => { setSession(s); await refetchParticipants(sessId); },
     });
   }
+  // ⬇️ ADD THIS right below your attachRealtime definition
+  // Fallback polling so hosts see new joiners even if Realtime isn't firing yet.
+  useEffect(() => {
+    if (!session?.id) return;
+    const t = setInterval(() => {
+      refetchParticipants(session.id).catch(() => {});
+    }, 2000);
+    return () => clearInterval(t);
+  }, [session?.id]);
 
+  // ... rest of component (handleHost, handleJoin, startGameFromUpload, etc.)
+  
   // Auto-join if we landed on /join/:code
   useEffect(() => {
     const run = async () => {
