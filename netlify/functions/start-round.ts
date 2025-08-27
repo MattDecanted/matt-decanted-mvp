@@ -1,37 +1,63 @@
+// netlify/functions/start-rounds.ts
 import type { Handler } from '@netlify/functions';
-import { sbServer } from './_supabaseClient';
+import { supabase as sbServer } from './_supabaseClient'; // ⬅️ use the service-role client
 
 export const handler: Handler = async (event) => {
-  try {
-    const { session_id, caller_user_id, payload, round_number } = JSON.parse(event.body || '{}');
-    if (!session_id || !caller_user_id) return { statusCode: 400, body: 'Missing fields' };
+  const cors = {
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Headers': 'content-type',
+  };
 
-    // Verify caller is the host
+  try {
+    if (event.httpMethod !== 'POST') {
+      return { statusCode: 405, headers: cors, body: 'Method Not Allowed' };
+    }
+
+    const { session_id, caller_user_id, payload, round_number } = JSON.parse(event.body || '{}');
+
+    if (!session_id || !caller_user_id) {
+      return { statusCode: 400, headers: cors, body: JSON.stringify({ error: 'BAD_REQUEST', detail: 'session_id and caller_user_id are required' }) };
+    }
+
+    // 1) Verify caller is the host
     const { data: s, error: sErr } = await sbServer
       .from('game_sessions')
-      .select('id, host_user_id, status, is_open')
+      .select('id, host_user_id, status')
       .eq('id', session_id)
       .single();
-    if (sErr || !s) return { statusCode: 404, body: 'Session not found' };
-    if (s.host_user_id !== caller_user_id) return { statusCode: 403, body: 'Only host can start' };
 
-    // Flip session to active; close lobby
+    if (sErr || !s) {
+      return { statusCode: 404, headers: cors, body: JSON.stringify({ error: 'NOT_FOUND', detail: 'Session not found' }) };
+    }
+    if (s.host_user_id !== caller_user_id) {
+      return { statusCode: 403, headers: cors, body: JSON.stringify({ error: 'FORBIDDEN', detail: 'Only the host can start a round' }) };
+    }
+
+    // 2) Flip session to active (close lobby implicitly)
     const { error: upErr } = await sbServer
       .from('game_sessions')
-      .update({ status: 'active', is_open: false })
+      .update({ status: 'active' })
       .eq('id', session_id);
-    if (upErr) throw upErr;
 
-    // Create the round
-    const { data: r, error: rErr } = await sbServer
-      .from('game_rounds')
-      .insert([{ session_id, round_number: round_number ?? 1, payload: payload ?? {} }])
-      .select('*')
-      .single();
-    if (rErr || !r) throw rErr || new Error('INSERT round failed');
+    if (upErr) throw new Error(`UPDATE_SESSION_FAILED: ${upErr.message}`);
 
-    return { statusCode: 200, body: JSON.stringify({ round: r }) };
+    // 3) Start (or upsert) the round via RPC to bypass PostgREST table cache
+    const { data: r, error: rpcErr } = await sbServer.rpc('fn_start_round', {
+      p_session_id: session_id,
+      p_round_number: round_number ?? 1,
+      p_payload: (payload ?? {}) as any, // jsonb
+    });
+
+    if (rpcErr || !r) {
+      throw new Error(`FN_START_ROUND_FAILED: ${rpcErr?.message || 'no data returned'}`);
+    }
+
+    return { statusCode: 200, headers: cors, body: JSON.stringify({ round: r }) };
   } catch (err: any) {
-    return { statusCode: 500, body: JSON.stringify({ error: 'START_ROUND_FAILED', detail: err?.message || String(err) }) };
+    return {
+      statusCode: 500,
+      headers: cors,
+      body: JSON.stringify({ error: 'START_ROUND_FAILED', detail: err?.message || String(err) }),
+    };
   }
 };
