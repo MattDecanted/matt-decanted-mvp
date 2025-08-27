@@ -448,17 +448,14 @@ export default function WineOptionsGame({
       <div className="p-4 rounded-2xl border bg-white shadow-sm">
         <div className="font-medium mb-2">Players</div>
         <div className="flex flex-wrap gap-2">
-          {participants.map((p) => (
-            <div
-              key={p.id}
-              className={`px-3 py-1 rounded-full border ${
-                p.is_host ? "bg-gray-100" : ""
-              }`}
-            >
-              {p.display_name} {p.is_host && <span className="text-xs">(host)</span>} —{" "}
-              {p.score} pts
-            </div>
-          ))}
+          {participants.map((p) => {
+  const isHost = !!(p.user_id && session?.host_user_id && p.user_id === session.host_user_id);
+  return (
+    <div key={p.id} className={`px-3 py-1 rounded-full border ${isHost ? "bg-gray-100" : ""}`}>
+      {p.display_name} {isHost && <span className="text-xs">(host)</span>} — {p.score} pts
+    </div>
+  );
+})}
         </div>
       </div>
 
