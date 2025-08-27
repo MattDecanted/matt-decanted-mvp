@@ -1,13 +1,13 @@
 # netlify.toml
 
 [build]
-  command  = "npm run build"
-  publish  = "dist"
+  command   = "npm run build"
+  publish   = "dist"
   functions = "netlify/functions"
 
-  # Pin Node to ensure global fetch support in functions
-  [build.environment]
-    NODE_VERSION = "20"   # or "18" if you prefer
+# Pin Node to ensure global fetch support in functions
+[build.environment]
+  NODE_VERSION = "20"   # or "18" if you prefer
 
 [functions]
   node_bundler = "esbuild"
@@ -17,17 +17,15 @@
 # Optional: if your app is a SPA, uncomment to route all paths to index.html
 # [[redirects]]
 #   from = "/*"
-#   to = "/index.html"
+#   to   = "/index.html"
 #   status = 200
 
-# Local dev settings
 [dev]
-  command      = "vite"
-  port         = 5173        # your Vite dev server
-  targetPort   = 8888        # Netlify dev proxy target
+  command       = "vite"
+  port          = 5173    # Vite dev server
+  targetPort    = 8888    # Netlify dev proxy target
   functionsPort = 9999
-  publish      = "dist"
+  publish       = "dist"
 
-# This plugin is fine but not strictly required; safe to keep or remove.
 [[plugins]]
   package = "@netlify/plugin-functions-install-core"
