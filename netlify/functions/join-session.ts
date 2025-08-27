@@ -1,88 +1,75 @@
 // netlify/functions/join-session.ts
 import type { Handler } from '@netlify/functions';
-import { supabase } from './_supabaseClient';
+import { createClient } from '@supabase/supabase-js';
+
+function required(name: string): string {
+  const v = process.env[name];
+  if (!v) throw new Error(`Missing env var: ${name}`);
+  return v;
+}
+
+const supabase = createClient(
+  required('VITE_SUPABASE_URL'),
+  required('SUPABASE_SERVICE_ROLE'),
+  { auth: { persistSession: false } }
+);
 
 export const handler: Handler = async (event) => {
+  const cors = {
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Headers': 'content-type',
+  };
+
   try {
-    const body = JSON.parse(event.body || '{}');
-    let { invite_code, user_id, display_name } = body as {
-      invite_code?: string;
-      user_id?: string;
-      display_name?: string;
-    };
-
-    // Basic validation
-    invite_code = (invite_code || '').trim().toUpperCase();
-    display_name = (display_name || '').trim();
-
-    if (!invite_code || !user_id || !display_name) {
-      return { statusCode: 400, body: 'Missing required fields: invite_code, user_id, display_name' };
+    if (event.httpMethod !== 'POST') {
+      return { statusCode: 405, headers: cors, body: 'Method Not Allowed' };
     }
 
-    // Find session by invite_code
-    const { data: session, error: sessionError } = await supabase
+    const body = JSON.parse(event.body || '{}');
+    const invite_code: string = (body.invite_code || '').toUpperCase();
+    const user_id: string | null = body.user_id ?? null;        // allow anon
+    const display_name: string = body.display_name || 'Guest';
+
+    if (!invite_code) {
+      return { statusCode: 400, headers: cors, body: JSON.stringify({ error: 'BAD_REQUEST', detail: 'Missing invite_code' }) };
+    }
+
+    // Find session by code
+    const { data: session, error: sErr } = await supabase
       .from('game_sessions')
-      .select('id,status')
+      .select('id, invite_code, status, host_user_id')   // ⬅️ only known columns
       .eq('invite_code', invite_code)
       .single();
 
-    if (sessionError || !session) {
-      return { statusCode: 404, body: 'Session not found' };
+    if (sErr || !session) {
+      return { statusCode: 404, headers: cors, body: JSON.stringify({ error: 'NOT_FOUND', detail: 'Session not found' }) };
     }
 
-    // Prevent joining closed sessions
-    if (session.status === 'finished' || session.status === 'cancelled') {
-      return { statusCode: 409, body: `Session is ${session.status} and cannot be joined` };
-    }
-
-    // Optional: prevent duplicate joins for same user in same session
-    const { data: existing } = await supabase
+    // Insert participant (default score 0). ⛔️ do NOT reference is_host.
+    const { data: participant, error: pErr } = await supabase
       .from('session_participants')
-      .select('id,user_id')
-      .eq('session_id', session.id)
-      .eq('user_id', user_id)
-      .maybeSingle();
-
-    if (existing) {
-      return {
-        statusCode: 200,
-        body: JSON.stringify({ message: 'Already joined', participant_id: existing.id, session_id: session.id }),
-      };
-    }
-
-    // Insert participant (defaults)
-    const { data: participant, error: joinError } = await supabase
-      .from('session_participants')
-      .insert([
-        {
-          session_id: session.id,
-          user_id,
-          display_name,
-          is_host: false,
-          score: 0,
-        },
-      ])
-      .select('*')
+      .insert([{
+        session_id: session.id,
+        user_id,                 // may be null for anon
+        display_name,
+        score: 0,
+      }])
+      .select('id, session_id, user_id, display_name, score, joined_at')  // ⬅️ no is_host
       .single();
 
-    if (joinError) {
-      return {
-        statusCode: 500,
-        body: JSON.stringify({ error: 'JOIN_SESSION_FAILED', detail: joinError.message }),
-      };
+    if (pErr) {
+      throw new Error(`INSERT_PARTICIPANT: ${pErr.message}`);
     }
 
     return {
       statusCode: 200,
-      body: JSON.stringify({
-        message: 'Joined session successfully',
-        session_id: session.id,
-        participant,
-      }),
+      headers: cors,
+      body: JSON.stringify({ session, participant }),
     };
   } catch (err: any) {
     return {
       statusCode: 500,
+      headers: cors,
       body: JSON.stringify({ error: 'JOIN_SESSION_FAILED', detail: err?.message ?? String(err) }),
     };
   }
