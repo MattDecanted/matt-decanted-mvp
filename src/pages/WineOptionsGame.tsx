@@ -19,6 +19,9 @@ const pickFour = (correct: string, pool: string[]) => {
 };
 const norm = (s: string) => (s || "").toLowerCase().normalize("NFD").replace(/\p{Diacritic}/gu, "");
 const tokenize = (s: string) => Array.from(new Set(norm(s).match(/[a-z0-9'-]{3,}/g) || [])).slice(0, 20);
+const parseVarList = (v: unknown): string[] =>
+  Array.isArray(v) ? v as string[] :
+  typeof v === "string" ? v.split(/[,;/]| and /i).map(x => x.trim()).filter(Boolean) : [];
 
 /* ---------- status maps ---------- */
 const WRITE_STATUS: Record<string, GameSession["status"]> = {
@@ -46,7 +49,7 @@ type LabelHints = {
 function extractLabelHints(text: string): LabelHints {
   const t = norm(text);
 
-  // Vintage
+  // Vintage / NV
   const years = Array.from(t.matchAll(/\b(19|20)\d{2}\b/g)).map((m) => Number(m[0]));
   const possibleYear = years.find((y) => y >= 1980 && y <= new Date().getFullYear());
   const isNV = /\b(?:nv|non\s*-?\s*vintage)\b/.test(t);
@@ -108,7 +111,12 @@ export type StepQuestion = {
   explanation?: string;
 };
 
-/* ---------- DB-first geo lookup (falls back gracefully) ---------- */
+/* ---------- Old/New world helper ---------- */
+const OLD_WORLD = new Set(["France","Italy","Spain","Germany","Portugal","Austria","Greece","Hungary","Georgia"]);
+const isOldWorldCountry = (c?: string) => !!c && OLD_WORLD.has(c);
+
+/* ---------- DB-first geo + typical varieties from wine_reference ---------- */
+type WineRefRow = { country: string | null; region: string | null; subregion: string | null; typical_varieties?: any };
 type GeoPick = {
   countryCorrect?: string;
   countryOptions: string[];
@@ -116,88 +124,81 @@ type GeoPick = {
   regionOptions: string[];
   subregionCorrect?: string | null;
   subregionOptions?: string[] | null;
+  typicalVarieties?: string[]; // from the best row (if present)
   isOldWorld?: boolean;
 };
 
 function uniq<T>(arr: T[]) { return Array.from(new Set(arr)); }
 
-async function fetchGeoFromDB(ocrText: string): Promise<GeoPick> {
+async function fetchGeoFromWineReference(ocrText: string): Promise<GeoPick> {
   try {
     const t = norm(ocrText);
     const toks = tokenize(ocrText);
 
-    // Strong France hint (vin de/prod. de France)
+    // Strong country hints
     let hintCountry: string | undefined;
     if (/\bvin\s+de\s+france\b|\bproduit\s+de\s+france\b|\bfrance\b/.test(t)) hintCountry = "France";
+    if (/\bitaly\b|\bitalia\b/.test(t)) hintCountry = hintCountry || "Italy";
+    if (/\bspain\b|espa[nñ]a/.test(t)) hintCountry = hintCountry || "Spain";
 
-    // 1) synonyms overlap
-    const { data: synRows } = await supabase
-      .from("wine_regions")
-      .select("country,region,subregion,hemisphere,popularity,synonyms")
-      .overlaps("synonyms", toks);
+    // 1) Name matches on country/region/subregion
+    const needles = toks.slice(0, 8);
+    const ors = needles.map(n =>
+      `country.ilike.%${n}%,region.ilike.%${n}%,subregion.ilike.%${n}%`
+    ).join(",");
 
-    // 2) fuzzy ilike on region/subregion
-    const needles = toks.slice(0, 6);
-    const ors = needles.map(n => `region.ilike.%${n}%,subregion.ilike.%${n}%`).join(",");
     const { data: nameRows } = ors
       ? await supabase
-          .from("wine_regions")
-          .select("country,region,subregion,hemisphere,popularity,synonyms")
+          .from("wine_reference")
+          .select("country,region,subregion,typical_varieties")
           .or(ors)
-      : { data: [] as any[] };
+      : { data: [] as WineRefRow[] };
 
-    const rows = [...(synRows || []), ...(nameRows || [])];
+    // Merge rows (no synonyms column in this table)
+    const rows: WineRefRow[] = [...(nameRows || [])];
+
     if (!rows.length) return { countryOptions: [], regionOptions: [] };
 
-    // score
-    const scoreRow = (r: any) => {
+    // Score rows: region+subregion string presence + hinted country + light popularity via region name length
+    const scoreRow = (r: WineRefRow) => {
       let s = 0;
-      if (Array.isArray(r.synonyms)) {
-        const hits = r.synonyms.filter((syn: string) => toks.includes(norm(syn))).length;
-        s += hits * 4;
-      }
-      if (r.region && t.includes(norm(r.region))) s += 3;
-      if (r.subregion && t.includes(norm(r.subregion))) s += 4;
+      if (r.region && t.includes(norm(r.region))) s += 4;
+      if (r.subregion && t.includes(norm(r.subregion))) s += 5;
+      if (r.country && t.includes(norm(r.country))) s += 2;
       if (hintCountry && r.country === hintCountry) s += 3;
-      s += (r.popularity || 0) / 10;
+      s += (r.region ? Math.min(3, r.region.length / 10) : 0);
       return s;
     };
-    const scored = rows.map(r => ({ r, s: scoreRow(r) }));
-    scored.sort((a,b)=>b.s - a.s || (hintCountry ? (a.r.country === hintCountry ? -1 : 1) : 0));
+    const scored = rows.map(r => ({ r, s: scoreRow(r) }))
+                       .sort((a,b) => b.s - a.s || (hintCountry ? (a.r.country === hintCountry ? -1 : 1) : 0));
     const best = scored[0].r;
 
-    const countryCorrect = best.country as string;
+    const countryCorrect = (best.country || undefined) as string | undefined;
     const byCountry = scored.filter(x => x.r.country === countryCorrect);
 
-    const countriesSorted = uniq(scored.sort((a,b)=>b.s-a.s).map(x => x.r.country as string));
-    const countryOptions = [countryCorrect, ...countriesSorted.filter(c => c !== countryCorrect)].slice(0,4);
+    const countriesSorted = uniq(scored.map(x => x.r.country || "").filter(Boolean));
+    const countryOptions = [countryCorrect, ...countriesSorted.filter(c => c !== countryCorrect)].filter(Boolean).slice(0,4) as string[];
 
+    // Regions
     const regionCounts = new Map<string, number>();
-    byCountry.forEach(x => {
-      const key = x.r.region as string;
-      if (!key) return;
-      regionCounts.set(key, (regionCounts.get(key) || 0) + x.s);
-    });
+    byCountry.forEach(x => { const key = (x.r.region || "").trim(); if (key) regionCounts.set(key, (regionCounts.get(key) || 0) + x.s); });
     const regionCorrect = (regionCounts.size
       ? [...regionCounts.entries()].sort((a,b)=>b[1]-a[1])[0][0]
-      : best.region) as string | undefined;
+      : (best.region || undefined)) as string | undefined;
 
     const regionOptions = uniq([
       ...(regionCorrect ? [regionCorrect] : []),
-      ...byCountry
-        .sort((a,b)=>b.s-a.s)
-        .map(x => x.r.region as string)
-        .filter(Boolean)
+      ...byCountry.map(x => (x.r.region || "").trim()).filter(Boolean)
     ]).slice(0,4);
 
-    // subregions (optional)
+    // Subregions (optional)
     let subregionCorrect: string | null = null;
     let subregionOptions: string[] | null = null;
     if (regionCorrect) {
       const subs = byCountry
-        .filter(x => (x.r.region as string) === regionCorrect && x.r.subregion)
-        .sort((a,b)=>b.s-a.s)
-        .map(x => x.r.subregion as string);
+        .filter(x => (x.r.region || "").trim() === regionCorrect && x.r.subregion)
+        .map(x => (x.r.subregion || "").trim())
+        .filter(Boolean);
       const uniqSubs = uniq(subs);
       if (uniqSubs.length) {
         subregionCorrect = uniqSubs[0];
@@ -205,7 +206,8 @@ async function fetchGeoFromDB(ocrText: string): Promise<GeoPick> {
       }
     }
 
-    const isOldWorld = best.hemisphere ? best.hemisphere === "Old" : undefined;
+    const typicalVarieties = parseVarList(best.typical_varieties);
+    const isOldWorld = isOldWorldCountry(countryCorrect);
 
     return {
       countryCorrect,
@@ -214,19 +216,20 @@ async function fetchGeoFromDB(ocrText: string): Promise<GeoPick> {
       regionOptions,
       subregionCorrect,
       subregionOptions,
+      typicalVarieties,
       isOldWorld,
     };
   } catch {
-    // Table missing / policy blocked — fall back
     return { countryOptions: [], regionOptions: [] };
   }
 }
 
-/* ---------- variety/blend detection (no “cuvée” trigger) ---------- */
+/* ---------- variety/blend detection (uses typicalVarieties when helpful) ---------- */
 function detectVarietyOrBlend(
   text: string,
   hint?: string | null,
-  regionName?: string
+  regionName?: string,
+  typicalVarieties?: string[]
 ): { label: string; distractors: string[] } {
   const t = norm(text);
 
@@ -267,6 +270,10 @@ function detectVarietyOrBlend(
     "Mosel": "Riesling",
   };
 
+  // Use table's typicalVarieties if we didn't get a direct OCR hit
+  const tv = (typicalVarieties || []).filter(Boolean);
+  const tvTop = tv[0];
+
   if (hits.length >= 2 || explicitBlend) return { label: "Blend", distractors: ["Cabernet Sauvignon","Pinot Noir","Chardonnay"] };
   if (hits.length === 1) {
     const v = hits[0];
@@ -279,16 +286,20 @@ function detectVarietyOrBlend(
     };
     return { label: v, distractors: d[v] || ["Cabernet Sauvignon","Pinot Noir","Chardonnay"] };
   }
-  const fallback = hint || (regionName ? byRegion[regionName] : undefined) || "Blend";
+
+  // No OCR hit: prefer table hint → then region hint → then original OCR hint
+  const fallback = tvTop || (regionName ? byRegion[regionName] : undefined) || hint || "Blend";
   const fallbackD = {
     "Blend": ["Cabernet Sauvignon","Pinot Noir","Chardonnay"],
     "Chardonnay": ["Sauvignon Blanc","Riesling","Blend"],
     "Pinot Noir": ["Gamay","Merlot","Blend"],
+    "Sauvignon Blanc": ["Chardonnay","Riesling","Blend"],
+    "Riesling": ["Chenin Blanc","Sauvignon Blanc","Blend"],
   } as Record<string,string[]>;
   return { label: fallback, distractors: fallbackD[fallback] || ["Cabernet Sauvignon","Pinot Noir","Chardonnay"] };
 }
 
-/* ---------- build steps from OCR + DB ---------- */
+/* ---------- build steps from OCR + wine_reference ---------- */
 async function buildRoundPayloadFromOCR(file: File): Promise<{ questions: StepQuestion[] }> {
   const form = new FormData();
   form.append("file", file);
@@ -297,11 +308,13 @@ async function buildRoundPayloadFromOCR(file: File): Promise<{ questions: StepQu
   const { text } = await res.json();
 
   const hints = extractLabelHints(text || "");
-  const geo = await fetchGeoFromDB(text || "");
+  const geo = await fetchGeoFromWineReference(text || "");
   const now = new Date().getFullYear();
 
-  // Hemisphere (prefer DB, else heuristic)
-  const isOld = geo.isOldWorld ?? /\b(france|italy|spain|germany|portugal|austria|greece|hungary)\b/i.test(text);
+  // Hemisphere (prefer DB country)
+  const countryFromDB = geo.countryCorrect;
+  const isOld = geo.isOldWorld ?? isOldWorldCountry(countryFromDB) ||
+    /\b(france|italy|spain|germany|portugal|austria|greece|hungary)\b/i.test(text);
   const hemiCorrect = isOld ? 0 : 1;
 
   // Vintage
@@ -311,8 +324,8 @@ async function buildRoundPayloadFromOCR(file: File): Promise<{ questions: StepQu
       ? [String(hints.vintage_year), String(hints.vintage_year - 1), String(hints.vintage_year + 1), "NV"]
       : ["NV", String(now), String(now - 1), String(now - 2)];
 
-  // Country/Region/Subregion (DB-first)
-  const countryCorrect = geo.countryCorrect || (isOld ? "France" : "USA");
+  // Country/Region/Subregion (DB-first, with fallbacks)
+  const countryCorrect = countryFromDB || (isOld ? "France" : "USA");
   const countryOptions = geo.countryOptions.length
     ? pickFour(countryCorrect, geo.countryOptions)
     : (isOld ? ["France","Italy","Spain","Germany"] : ["USA","Australia","New Zealand","Chile"]);
@@ -331,8 +344,8 @@ async function buildRoundPayloadFromOCR(file: File): Promise<{ questions: StepQu
 
   const subregionOptions = geo.subregionOptions || null;
 
-  // Variety/Blend (use region hint)
-  const vb = detectVarietyOrBlend(text || "", hints.inferred_variety, regionCorrect);
+  // Variety/Blend (use typicalVarieties from wine_reference)
+  const vb = detectVarietyOrBlend(text || "", hints.inferred_variety, regionCorrect, geo.typicalVarieties);
   const varietyOpts = pickFour(vb.label, vb.distractors);
 
   const questions: StepQuestion[] = [
@@ -524,7 +537,7 @@ export default function WineOptionsGame({ initialCode = "" }: { initialCode?: st
     });
   }
 
-  // Polling to backstop realtime for participants + latest round
+  // Polling backs up realtime for participants + latest round
   useEffect(() => {
     if (!session?.id) return;
     const t = setInterval(() => {
