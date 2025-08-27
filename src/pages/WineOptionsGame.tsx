@@ -7,7 +7,7 @@ import {
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import {
-  listenToSession, unsubscribe, setSessionStatus, startRound, endRound,
+  listenToSession, unsubscribe, setSessionStatus, /* remove direct startRound */ endRound,
   submitAnswer, awardPoints, type GameSession, type Participant, type GameRound,
 } from "@/lib/gameSession";
 
@@ -37,7 +37,6 @@ type LabelHints = {
 function titleCase(s: string) {
   return s.replace(/\w\S*/g, (w) => w[0].toUpperCase() + w.slice(1));
 }
-
 function extractLabelHints(text: string): LabelHints {
   const t = text.toLowerCase();
   const years = Array.from(t.matchAll(/\b(19|20)\d{2}\b/g)).map((m) => Number(m[0]));
@@ -236,7 +235,7 @@ export default function WineOptionsGame({ initialCode = "" }: { initialCode?: st
       onSessionChange: async (s) => { setSession(s); await refetchParticipants(sessId); },
     });
   }
-  // ⬇️ ADD THIS right below your attachRealtime definition
+
   // Fallback polling so hosts see new joiners even if Realtime isn't firing yet.
   useEffect(() => {
     if (!session?.id) return;
@@ -246,8 +245,6 @@ export default function WineOptionsGame({ initialCode = "" }: { initialCode?: st
     return () => clearInterval(t);
   }, [session?.id]);
 
-  // ... rest of component (handleHost, handleJoin, startGameFromUpload, etc.)
-  
   // Auto-join if we landed on /join/:code
   useEffect(() => {
     const run = async () => {
@@ -298,12 +295,12 @@ export default function WineOptionsGame({ initialCode = "" }: { initialCode?: st
       setSession(s);
       await refetchParticipants(s.id);
 
-      // pick my row by user_id match (host participant inserted by function)
+      // Pick my row either by is_host or by user_id === uid
       const { data: psMe } = await supabase
         .from("session_participants")
         .select("*")
         .eq("session_id", s.id)
-        .eq("user_id", s.host_user_id)
+        .or(`is_host.eq.true,user_id.eq.${uid}`)
         .limit(1);
       if (psMe && psMe[0]) setMe(psMe[0] as Participant);
 
@@ -345,16 +342,30 @@ export default function WineOptionsGame({ initialCode = "" }: { initialCode?: st
   }
 
   async function startGameFromUpload(file: File) {
-    if (!session) return;
+    if (!session || !me) return;
     setUploadErr(null);
     setUploadBusy(true);
     try {
       const payload = await buildRoundPayloadFromOCR(file);
-      await setSessionStatus(session.id, WRITE_STATUS["in_progress"]);
-      const r = await startRound(session.id, 1, payload);
+
+      // Call Netlify function that verifies host & writes round (avoids schema cache issues)
+      const res = await fetch("/.netlify/functions/start-rounds", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          session_id: session.id,
+          caller_user_id: me.user_id,     // host check happens in the function
+          payload,
+          round_number: 1,
+        }),
+      });
+      if (!res.ok) throw new Error(await res.text());
+      const { round: r } = await res.json();
+
+      // Session status is set to active by the function; no extra setSessionStatus call needed.
       setRound(r);
     } catch (er: any) {
-      setUploadErr(er?.message || "OCR failed");
+      setUploadErr(er?.message || "OCR/Start round failed");
     } finally {
       setUploadBusy(false);
     }
@@ -368,11 +379,11 @@ export default function WineOptionsGame({ initialCode = "" }: { initialCode?: st
 
   const uiStatus = session ? READ_STATUS[session.status] : "waiting";
 
-  // ✅ Host check for *current user* (controls upload)
+  // Host check for *current user* (controls upload)
   const isHost =
     (!!session?.host_user_id && !!me?.user_id && me.user_id === session.host_user_id) || !!me?.is_host;
 
-  // ✅ Helper for labeling each participant as host in the list
+  // Per-participant host badge
   const isParticipantHost = (p: Participant, s: GameSession) =>
     (!!s.host_user_id && !!p.user_id && p.user_id === s.host_user_id) || !!p.is_host;
 
