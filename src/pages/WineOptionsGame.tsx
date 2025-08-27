@@ -3,7 +3,7 @@ import React, { useEffect, useRef, useState } from "react";
 import type { RealtimeChannel } from "@supabase/supabase-js";
 import {
   Users, Share2, Copy, Loader2, Trophy, ChevronRight, CheckCircle2,
-  LogOut, Camera, Upload
+  LogOut, Camera, Upload, AlertTriangle
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import {
@@ -220,10 +220,27 @@ export default function WineOptionsGame({ initialCode = "" }: { initialCode?: st
       .select("*")
       .eq("session_id", sessionId)
       .order("joined_at", { ascending: true });
+
     setParticipants(ps ?? []);
-    if (me && ps) {
-      const mine = ps.find((p: any) => p.id === me.id) as Participant | undefined;
-      if (mine) setMe(mine);
+
+    // Keep my row in sync; if not found by id, match via current user id
+    const { data: auth } = await supabase.auth.getUser();
+    const uid = auth?.user?.id ?? null;
+
+    if (ps) {
+      // Prefer exact id match if we already have me
+      if (me) {
+        const mineById = ps.find((p: any) => p.id === me.id) as Participant | undefined;
+        if (mineById) { setMe(mineById); return; }
+      }
+      // Otherwise match by user_id (addresses “host not recognised”)
+      if (uid) {
+        const mineByUid = ps.find((p: any) => p.user_id === uid) as Participant | undefined;
+        if (mineByUid) { setMe(mineByUid); return; }
+      }
+      // Final fallback: pick the host row if there’s only one participant (new session)
+      const hostRow = ps.find((p: any) => p.is_host) as Participant | undefined;
+      if (!me && hostRow) setMe(hostRow);
     }
   }
 
@@ -282,7 +299,11 @@ export default function WineOptionsGame({ initialCode = "" }: { initialCode?: st
     try {
       const { data } = await supabase.auth.getUser();
       const uid = data?.user?.id;
-      if (!uid) { setErr("Please sign in to host a game."); return; }
+      if (!uid) {
+        setErr("Please sign in to host a game.");
+        setLoading(false);
+        return;
+      }
 
       const res = await fetch("/.netlify/functions/create-session", {
         method: "POST",
@@ -302,6 +323,7 @@ export default function WineOptionsGame({ initialCode = "" }: { initialCode?: st
         .eq("session_id", s.id)
         .or(`is_host.eq.true,user_id.eq.${uid}`)
         .limit(1);
+
       if (psMe && psMe[0]) setMe(psMe[0] as Participant);
 
       setCodeInput(s.invite_code);
@@ -317,7 +339,7 @@ export default function WineOptionsGame({ initialCode = "" }: { initialCode?: st
     setLoading(true); setErr(null);
     try {
       const code = codeInput.trim().toUpperCase();
-      if (!code) { setErr("Enter an invite code."); return; }
+      if (!code) { setErr("Enter an invite code."); setLoading(false); return; }
       const { data } = await supabase.auth.getUser();
       const uid = data?.user?.id ?? null;
 
@@ -394,6 +416,11 @@ export default function WineOptionsGame({ initialCode = "" }: { initialCode?: st
 
         {err && <div className="text-sm rounded-2xl border border-red-200 bg-red-50 text-red-700 p-2">{err}</div>}
 
+        <div className="flex items-start gap-2 text-xs text-gray-600">
+          <AlertTriangle className="h-4 w-4 mt-0.5" />
+          <p>Magic-link sign-in may not persist in private/incognito windows (cookies/localStorage blocked). Use a normal window or email+password/OAuth for hosting.</p>
+        </div>
+
         <div className="space-y-2">
           <label className="block text-sm font-medium">Display name</label>
           <input
@@ -461,7 +488,7 @@ export default function WineOptionsGame({ initialCode = "" }: { initialCode?: st
         <div className="space-y-3 p-4 rounded-2xl border bg-white shadow-sm">
           <div className="flex items-center gap-2 text-sm font-medium">
             <Camera className="h-4 w-4" />
-            Upload a label to start the round
+            <span>You are the host — upload a label to start the round</span>
           </div>
 
           {uploadErr && (
