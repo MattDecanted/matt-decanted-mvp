@@ -2,32 +2,16 @@
 import React, { useEffect, useRef, useState } from "react";
 import type { RealtimeChannel } from "@supabase/supabase-js";
 import {
-  Users,
-  Share2,
-  Copy,
-  Loader2,
-  Trophy,
-  ChevronRight,
-  CheckCircle2,
-  LogOut,
-  Camera,
-  Upload,
+  Users, Share2, Copy, Loader2, Trophy, ChevronRight, CheckCircle2,
+  LogOut, Camera, Upload
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import {
-  listenToSession,
-  unsubscribe,
-  setSessionStatus,
-  startRound,
-  endRound,
-  submitAnswer,
-  awardPoints,
-  type GameSession,
-  type Participant,
-  type GameRound,
+  listenToSession, unsubscribe, setSessionStatus, startRound, endRound,
+  submitAnswer, awardPoints, type GameSession, type Participant, type GameRound,
 } from "@/lib/gameSession";
 
-/** DB ↔ UI status mapping */
+/* ---------- status maps ---------- */
 const WRITE_STATUS: Record<string, GameSession["status"]> = {
   waiting: "open",
   in_progress: "active",
@@ -41,8 +25,7 @@ const READ_STATUS: Record<GameSession["status"], string> = {
   cancelled: "closed",
 };
 
-/* ---------- OCR helpers (host uploads label to start a round) ---------- */
-
+/* ---------- OCR helpers (host upload starts a round) ---------- */
 const FN_OCR = "/.netlify/functions/ocr-label";
 
 type LabelHints = {
@@ -52,30 +35,25 @@ type LabelHints = {
 };
 
 function titleCase(s: string) {
-  return s.replace(/\w\S*/g, (w) => w.charAt(0).toUpperCase() + w.slice(1));
+  return s.replace(/\w\S*/g, (w) => w[0].toUpperCase() + w.slice(1));
 }
-
 function extractLabelHints(text: string): LabelHints {
   const t = text.toLowerCase();
-  const years = Array.from(t.matchAll(/\b(19|20)\d{2}\b/g)).map((m) => Number(m[0]));
-  const possibleYear = years.find((y) => y >= 1980 && y <= new Date().getFullYear());
+  const years = Array.from(t.matchAll(/\b(19|20)\d{2}\b/g)).map(m => Number(m[0]));
+  const possibleYear = years.find(y => y >= 1980 && y <= new Date().getFullYear());
   const isNV = /\bnv\b|\bnon\s*-?\s*vintage\b/.test(t);
 
   let inferredVariety: string | null = null;
   if (/blanc\s+de\s+blancs/.test(t)) inferredVariety = "Chardonnay";
   else if (/blanc\s+de\s+noirs/.test(t)) inferredVariety = "Pinot Noir";
   else {
-    const grapeList = [
-      "chardonnay","pinot noir","pinot meunier","riesling","sauvignon","cabernet","merlot","syrah","shiraz","malbec",
-      "tempranillo","nebbiolo","sangiovese","grenache","zinfandel","primitivo","chenin","viognier","gewurztraminer",
-      "gruner","barbera","mencía","touriga","gamay","aligoté","semillon","cabernet franc","pinot gris","albariño"
-    ];
-    const found = grapeList.find((g) => t.includes(g));
+    const grapes = ["chardonnay","pinot noir","riesling","sauvignon","cabernet","merlot","syrah","shiraz",
+      "malbec","tempranillo","nebbiolo","sangiovese","grenache","chenin","viognier","zinfandel","pinot gris"];
+    const found = grapes.find(g => t.includes(g));
     inferredVariety = found ? titleCase(found) : null;
   }
-
   return {
-    vintage_year: isNV ? null : possibleYear ?? null,
+    vintage_year: isNV ? null : (possibleYear ?? null),
     is_non_vintage: isNV,
     inferred_variety: inferredVariety,
   };
@@ -95,36 +73,33 @@ async function buildRoundPayloadFromOCR(file: File): Promise<{ questions: StepQu
   const res = await fetch(FN_OCR, { method: "POST", body: form });
   if (!res.ok) throw new Error(await res.text());
   const { text } = await res.json();
-  const hints = extractLabelHints(text || "");
 
-  // Vintage options
+  const hints = extractLabelHints(text || "");
   const now = new Date().getFullYear();
-  const vOpts = hints.is_non_vintage
+
+  const vintageOpts = hints.is_non_vintage
     ? ["NV", String(now), String(now - 1), String(now - 2)]
     : hints.vintage_year
-      ? [String(hints.vintage_year), String(hints.vintage_year - 1), String(hints.vintage_year + 1), "NV"]
-      : ["NV", String(now), String(now - 1), String(now - 2)];
+    ? [String(hints.vintage_year), String(hints.vintage_year - 1), String(hints.vintage_year + 1), "NV"]
+    : ["NV", String(now), String(now - 1), String(now - 2)];
 
-  // Variety options
-  const varOpts = hints.inferred_variety
+  const varietyOpts = hints.inferred_variety
     ? [hints.inferred_variety, "Chardonnay", "Pinot Noir", "Sauvignon Blanc"]
     : ["Chardonnay", "Pinot Noir", "Sauvignon Blanc", "Riesling"];
 
-  // Simple hemisphere guess based on classic Old-World keywords
   const isOld = /france|italy|spain|germany|portugal|austria|greece|hungary/i.test(text);
   const hemiCorrect = isOld ? 0 : 1;
 
-  const questions: StepQuestion[] = [
-    { key: "vintage", prompt: "Pick the vintage", options: vOpts.slice(0, 4), correctIndex: 0 },
-    { key: "hemisphere", prompt: "Old World or New World?", options: ["Old World", "New World"], correctIndex: hemiCorrect },
-    { key: "variety", prompt: "Pick the variety", options: varOpts.slice(0, 4), correctIndex: 0 },
-  ];
-
-  return { questions };
+  return {
+    questions: [
+      { key: "vintage",     prompt: "Pick the vintage",                 options: vintageOpts, correctIndex: 0 },
+      { key: "hemisphere",  prompt: "Old World or New World?",          options: ["Old World", "New World"], correctIndex: hemiCorrect },
+      { key: "variety",     prompt: "Pick the variety",                 options: varietyOpts, correctIndex: 0 },
+    ],
+  };
 }
 
-/* ------------------------------ UI pieces ------------------------------ */
-
+/* ---------- small UI bits ---------- */
 function InviteBar({ inviteCode }: { inviteCode: string }) {
   const [copied, setCopied] = useState(false);
   const base = typeof window !== "undefined" ? window.location.origin : "";
@@ -140,11 +115,7 @@ function InviteBar({ inviteCode }: { inviteCode: string }) {
   async function share() {
     try {
       if (navigator.share) {
-        await navigator.share({
-          title: "Join my Wine Options game",
-          text: `Use code ${inviteCode}`,
-          url: joinUrl,
-        });
+        await navigator.share({ title: "Join my Wine Options game", text: `Use code ${inviteCode}`, url: joinUrl });
       } else {
         await copy();
       }
@@ -169,37 +140,22 @@ function InviteBar({ inviteCode }: { inviteCode: string }) {
 }
 
 function QuestionStepper({
-  round,
-  me,
-  onFinished,
-}: {
-  round: GameRound;
-  me: Participant;
-  onFinished: () => void;
-}) {
+  round, me, onFinished,
+}: { round: GameRound; me: Participant; onFinished: () => void; }) {
   const questions: StepQuestion[] = round.payload?.questions ?? [];
   const [index, setIndex] = useState(0);
   const [selected, setSelected] = useState<number | null>(null);
   const q = questions[index];
 
-  useEffect(() => {
-    setIndex(0);
-    setSelected(null);
-  }, [round?.id]);
+  useEffect(() => { setIndex(0); setSelected(null); }, [round?.id]);
 
   async function handleNext() {
     if (selected == null) return;
     const isCorrect = selected === q.correctIndex;
     await submitAnswer(round.id, me.id, selected, isCorrect);
     if (isCorrect) await awardPoints(me.id, 10);
-
-    const last = index >= questions.length - 1;
-    if (!last) {
-      setIndex((i) => i + 1);
-      setSelected(null);
-    } else {
-      onFinished();
-    }
+    if (index < questions.length - 1) { setIndex(i => i + 1); setSelected(null); }
+    else { onFinished(); }
   }
 
   if (!q) return null;
@@ -240,8 +196,7 @@ function QuestionStepper({
   );
 }
 
-/* ------------------------------ Page ------------------------------ */
-
+/* ---------- page ---------- */
 export default function WineOptionsGame({ initialCode = "" }: { initialCode?: string }) {
   const [displayName, setDisplayName] = useState("Player");
   const [codeInput, setCodeInput] = useState(initialCode);
@@ -257,44 +212,50 @@ export default function WineOptionsGame({ initialCode = "" }: { initialCode?: st
 
   useEffect(() => () => unsubscribe(channelRef.current), []);
 
+  async function refetchParticipants(sessionId: string) {
+    const { data: ps } = await supabase
+      .from("session_participants")
+      .select("*")
+      .eq("session_id", sessionId)
+      .order("joined_at", { ascending: true });
+    setParticipants(ps ?? []);
+    // keep `me` in sync if we can match by id
+    if (me && ps) {
+      const mine = ps.find((p: any) => p.id === me.id) as Participant | undefined;
+      if (mine) setMe(mine);
+    }
+  }
+
   function attachRealtime(sessId: string) {
     channelRef.current = listenToSession(sessId, {
-      onParticipantJoin: (p) => setParticipants((prev) => uniqBy([...prev, p], (x) => x.id)),
-      onParticipantUpdate: (p) => setParticipants((prev) => prev.map((x) => (x.id === p.id ? p : x))),
+      onParticipantJoin: async () => { await refetchParticipants(sessId); },
+      onParticipantUpdate: async () => { await refetchParticipants(sessId); },
       onRoundChange: setRound,
-      onSessionChange: setSession,
+      onSessionChange: async (s) => { setSession(s); await refetchParticipants(sessId); },
     });
   }
 
-  // Auto-join when /join/:code is used
+  // Auto-join if we landed on /join/:code
   useEffect(() => {
     const run = async () => {
       if (!initialCode || session) return;
-      setLoading(true);
-      setErr(null);
+      setLoading(true); setErr(null);
       try {
         const res = await fetch("/.netlify/functions/join-session", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             invite_code: initialCode.trim().toUpperCase(),
-            user_id: null, // anonymous allowed
+            user_id: null,
             display_name: displayName || "Guest",
           }),
         });
         if (!res.ok) throw new Error(await res.text());
         const { session: s, participant } = await res.json();
-
         setSession(s);
         setMe(participant);
         setCodeInput(s.invite_code);
-
-        const { data: ps } = await supabase
-          .from("session_participants")
-          .select("*")
-          .eq("session_id", s.id)
-          .order("joined_at", { ascending: true });
-        setParticipants(ps ?? []);
+        await refetchParticipants(s.id);
         attachRealtime(s.id);
       } catch (e: any) {
         setErr(e?.message || "Failed to join game.");
@@ -307,38 +268,30 @@ export default function WineOptionsGame({ initialCode = "" }: { initialCode?: st
   }, [initialCode]);
 
   async function handleHost() {
-    setLoading(true);
-    setErr(null);
+    setLoading(true); setErr(null);
     try {
       const { data } = await supabase.auth.getUser();
       const uid = data?.user?.id;
-      if (!uid) {
-        setErr("Please sign in to host a game.");
-        return;
-      }
+      if (!uid) { setErr("Please sign in to host a game."); return; }
 
       const res = await fetch("/.netlify/functions/create-session", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          host_user_id: uid,
-          display_name: displayName || "Host",
-        }),
+        body: JSON.stringify({ host_user_id: uid, display_name: displayName || "Host" }),
       });
       if (!res.ok) throw new Error(await res.text());
       const { session: s } = await res.json();
 
-      const { data: ps } = await supabase
+      setSession(s);
+      await refetchParticipants(s.id);
+      // pick my row by user match
+      const { data: psMe } = await supabase
         .from("session_participants")
         .select("*")
         .eq("session_id", s.id)
-        .order("joined_at", { ascending: true });
-
-      setSession(s);
-      // Identify host row without is_host: match user_id to host_user_id
-      const hostRow = (ps || []).find((p: any) => p.user_id && s.host_user_id && p.user_id === s.host_user_id) as Participant | undefined;
-      if (hostRow) setMe(hostRow);
-      setParticipants((ps as Participant[]) ?? []);
+        .eq("user_id", s.host_user_id)
+        .limit(1);
+      if (psMe && psMe[0]) setMe(psMe[0] as Participant);
       setCodeInput(s.invite_code);
       attachRealtime(s.id);
     } catch (e: any) {
@@ -349,25 +302,17 @@ export default function WineOptionsGame({ initialCode = "" }: { initialCode?: st
   }
 
   async function handleJoin() {
-    setLoading(true);
-    setErr(null);
+    setLoading(true); setErr(null);
     try {
       const code = codeInput.trim().toUpperCase();
-      if (!code) {
-        setErr("Enter an invite code.");
-        return;
-      }
+      if (!code) { setErr("Enter an invite code."); return; }
       const { data } = await supabase.auth.getUser();
       const uid = data?.user?.id ?? null;
 
       const res = await fetch("/.netlify/functions/join-session", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          invite_code: code,
-          user_id: uid,
-          display_name: displayName || "Guest",
-        }),
+        body: JSON.stringify({ invite_code: code, user_id: uid, display_name: displayName || "Guest" }),
       });
       if (!res.ok) throw new Error(await res.text());
       const { session: s, participant } = await res.json();
@@ -375,18 +320,28 @@ export default function WineOptionsGame({ initialCode = "" }: { initialCode?: st
       setSession(s);
       setMe(participant);
       setCodeInput(s.invite_code);
-
-      const { data: ps } = await supabase
-        .from("session_participants")
-        .select("*")
-        .eq("session_id", s.id)
-        .order("joined_at", { ascending: true });
-      setParticipants(ps ?? []);
+      await refetchParticipants(s.id);
       attachRealtime(s.id);
     } catch (e: any) {
       setErr(e?.message || "Failed to join game.");
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function startGameFromUpload(file: File) {
+    if (!session) return;
+    setUploadErr(null);
+    setUploadBusy(true);
+    try {
+      const payload = await buildRoundPayloadFromOCR(file);
+      await setSessionStatus(session.id, WRITE_STATUS["in_progress"]);
+      const r = await startRound(session.id, 1, payload);
+      setRound(r);
+    } catch (er: any) {
+      setUploadErr(er?.message || "OCR failed");
+    } finally {
+      setUploadBusy(false);
     }
   }
 
@@ -397,17 +352,14 @@ export default function WineOptionsGame({ initialCode = "" }: { initialCode?: st
   }
 
   const uiStatus = session ? READ_STATUS[session.status] : "waiting";
+  const isHost = Boolean(session?.host_user_id) && Boolean(me?.user_id) && me!.user_id === session!.host_user_id;
 
   if (!session) {
     return (
       <div className="max-w-xl mx-auto p-6 space-y-6">
         <h1 className="text-3xl font-semibold">Wine Options — Multiplayer</h1>
 
-        {err && (
-          <div className="text-sm rounded-2xl border border-red-200 bg-red-50 text-red-700 p-2">
-            {err}
-          </div>
-        )}
+        {err && <div className="text-sm rounded-2xl border border-red-200 bg-red-50 text-red-700 p-2">{err}</div>}
 
         <div className="space-y-2">
           <label className="block text-sm font-medium">Display name</label>
@@ -451,9 +403,7 @@ export default function WineOptionsGame({ initialCode = "" }: { initialCode?: st
   return (
     <div className="max-w-3xl mx-auto p-6 space-y-6">
       <div className="flex items-center justify-between">
-        <div className="text-sm">
-          Status: <span className="font-medium">{uiStatus}</span>
-        </div>
+        <div className="text-sm">Status: <span className="font-medium">{uiStatus}</span></div>
         <div className="text-sm text-gray-500">Players: {participants.length}</div>
       </div>
 
@@ -463,29 +413,25 @@ export default function WineOptionsGame({ initialCode = "" }: { initialCode?: st
         <div className="font-medium mb-2">Players</div>
         <div className="flex flex-wrap gap-2">
           {participants.map((p) => {
-            const isHost = !!(p.user_id && session?.host_user_id && p.user_id === session.host_user_id);
+            const host = Boolean(session.host_user_id) && Boolean(p.user_id) && p.user_id === session.host_user_id;
             return (
-              <div key={p.id} className={`px-3 py-1 rounded-full border ${isHost ? "bg-gray-100" : ""}`}>
-                {p.display_name} {isHost && <span className="text-xs">(host)</span>} — {p.score} pts
+              <div key={p.id} className={`px-3 py-1 rounded-full border ${host ? "bg-gray-100" : ""}`}>
+                {p.display_name} {host && <span className="text-xs">(host)</span>} — {p.score} pts
               </div>
             );
           })}
         </div>
       </div>
 
-      {/* Host: upload a label to start a round */}
-      {!round && uiStatus === "waiting" && me && session && (me.user_id === session.host_user_id) && (
+      {/* Host-only upload (strictly guarded) */}
+      {!round && uiStatus === "waiting" && isHost && (
         <div className="space-y-3 p-4 rounded-2xl border bg-white shadow-sm">
           <div className="flex items-center gap-2 text-sm font-medium">
             <Camera className="h-4 w-4" />
             Upload a label to start the round
           </div>
 
-          {uploadErr && (
-            <div className="text-sm rounded-2xl border border-red-200 bg-red-50 text-red-700 p-2">
-              {uploadErr}
-            </div>
-          )}
+          {uploadErr && <div className="text-sm rounded-2xl border border-red-200 bg-red-50 text-red-700 p-2">{uploadErr}</div>}
 
           <label className="inline-flex items-center gap-2 px-3 py-2 rounded-2xl border cursor-pointer w-fit">
             <Upload className="h-4 w-4" />
@@ -495,30 +441,25 @@ export default function WineOptionsGame({ initialCode = "" }: { initialCode?: st
               accept="image/*"
               className="hidden"
               disabled={uploadBusy}
-              onChange={async (e) => {
+              onChange={(e) => {
                 const file = e.target.files?.[0];
-                if (!file) return;
-                setUploadErr(null);
-                setUploadBusy(true);
-                try {
-                  const payload = await buildRoundPayloadFromOCR(file);
-                  await setSessionStatus(session.id, WRITE_STATUS["in_progress"]);
-                  const r = await startRound(session.id, 1, payload);
-                  setRound(r);
-                } catch (er: any) {
-                  setUploadErr(er?.message || "OCR failed");
-                } finally {
-                  setUploadBusy(false);
-                }
+                if (file) startGameFromUpload(file);
               }}
             />
           </label>
         </div>
       )}
 
+      {/* Guests waiting message (no upload shown) */}
+      {!round && uiStatus === "waiting" && !isHost && (
+        <div className="p-4 rounded-2xl border bg-white shadow-sm text-sm text-gray-700">
+          Waiting for the host to start the round…
+        </div>
+      )}
+
       {round && uiStatus !== "finished" && (
         <div className="p-4 rounded-2xl border bg-white shadow-sm">
-          <QuestionStepper round={round} me={me!} onFinished={finishGame} />
+          {me && <QuestionStepper round={round} me={me} onFinished={finishGame} />}
         </div>
       )}
 
