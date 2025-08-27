@@ -11,6 +11,9 @@ import {
   submitAnswer, awardPoints, type GameSession, type Participant, type GameRound,
 } from "@/lib/gameSession";
 
+/* ---------- small util to strip HTML tags ---------- */
+const toPlain = (s?: string | null) => (s ? s.replace(/<[^>]+>/g, "") : "");
+
 /* ---------- status maps ---------- */
 const WRITE_STATUS: Record<string, GameSession["status"]> = {
   waiting: "open",
@@ -491,11 +494,11 @@ export default function WineOptionsGame({ initialCode = "" }: { initialCode?: st
             <span>You are the host — upload a label to start the round</span>
           </div>
 
-          {uploadErr && (
-            <div className="text-sm rounded-2xl border border-red-200 bg-red-50 text-red-700 p-2">
-              {uploadErr}
-            </div>
-          )}
+  {uploadErr && (
+  <div className="text-sm rounded-2xl border border-red-200 bg-red-50 text-red-700 p-2">
+    {toPlain(uploadErr)}
+  </div>
+)}
 
           <label className="inline-flex items-center gap-2 px-3 py-2 rounded-2xl border cursor-pointer w-fit">
             <Upload className="h-4 w-4" />
