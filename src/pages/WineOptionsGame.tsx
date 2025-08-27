@@ -311,11 +311,14 @@ async function buildRoundPayloadFromOCR(file: File): Promise<{ questions: StepQu
   const geo = await fetchGeoFromWineReference(text || "");
   const now = new Date().getFullYear();
 
-  // Hemisphere (prefer DB country)
-  const countryFromDB = geo.countryCorrect;
-  const isOld = geo.isOldWorld ?? isOldWorldCountry(countryFromDB) ||
-    /\b(france|italy|spain|germany|portugal|austria|greece|hungary)\b/i.test(text);
-  const hemiCorrect = isOld ? 0 : 1;
+// Hemisphere (prefer DB country)
+const countryFromDB = geo.countryCorrect;
+const isOld = geo.isOldWorld ?? (
+  isOldWorldCountry(countryFromDB) ||
+  /\b(france|italy|spain|germany|portugal|austria|greece|hungary)\b/i.test(text)
+);
+const hemiCorrect = isOld ? 0 : 1;
+
 
   // Vintage
   const vintageOpts = hints.is_non_vintage
