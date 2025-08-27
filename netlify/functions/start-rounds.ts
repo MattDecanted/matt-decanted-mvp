@@ -1,4 +1,6 @@
 // netlify/functions/start-rounds.ts
+console.log('[start-rounds] USING_RPC', new Date().toISOString());
+
 import type { Handler } from '@netlify/functions';
 import { supabase as sbServer } from './_supabaseClient'; // service-role client
 
