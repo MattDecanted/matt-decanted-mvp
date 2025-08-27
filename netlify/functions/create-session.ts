@@ -24,7 +24,7 @@ export const handler: Handler = async (event) => {
       .from('game_sessions')
       .insert([{ host_user_id, invite_code, status: 'open' }])
       // ✅ Only select columns the cache already knows (avoid is_open)
-      .select('id, invite_code, status, updated_at')
+      .select('id, invite_code, status')  // ← drop updated_at
       .single();
 
     if (error) throw error;
