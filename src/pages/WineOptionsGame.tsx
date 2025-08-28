@@ -99,8 +99,6 @@ const REGION_POOLS: Record<string, string[]> = {
   Portugal: ["Douro","Alentejo","Vinho Verde","Dão"],
 };
 
-};
-
 /* ---------- comprehensive grape dictionary + detectors ---------- */
 
 /** Pools used to fabricate good multiple-choice distractors */
