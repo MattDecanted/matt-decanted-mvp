@@ -1,25 +1,8 @@
-import React, { useState, useEffect } from 'react';
+// src/pages/Dashboard.tsx
+import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 
-// contexts (updated paths)
 import { useAuth } from '@/context/AuthContext';
-// if you don't have a language ctx yet, stub a simple t()
-const useLanguage = () => ({ t: (k: string) => ({
-  'dashboard.continueJourney': 'Let’s keep building your palate.',
-  'dashboard.upcomingMasterclasses': 'Upcoming Masterclasses',
-  'dashboard.registered': 'Registered',
-  'dashboard.register': 'Register',
-  'dashboard.upgrade': 'Upgrade required',
-  'dashboard.upgradeToAccess': 'Upgrade to access',
-  'dashboard.noUpcomingMasterclasses': 'No upcoming masterclasses',
-  'dashboard.checkBackForEvents': 'Check back soon for new events.',
-  'dashboard.topMembers': 'Top members',
-  'dashboard.viewFullLeaderboard': 'View full leaderboard',
-  'dashboard.quickActions': 'Quick actions',
-  'dashboard.member': 'member',
-}[k] ?? k) });
-
-// supabase + safeQuery helper (safeQuery is optional; we’ll inline a fallback)
 import { supabase } from '@/lib/supabase';
 
 import {
@@ -27,53 +10,50 @@ import {
   Clock, BookOpen, Brain, Target, CheckCircle
 } from 'lucide-react';
 
-// ---- Types (from your snippet)
+// ---- minimal t() stub; swap to your LanguageContext when ready
+const useLanguage = () => ({
+  t: (k: string) => ({
+    'dashboard.continueJourney': 'Let’s keep building your palate.',
+    'dashboard.upcomingMasterclasses': 'Upcoming Masterclasses',
+    'dashboard.registered': 'Registered',
+    'dashboard.register': 'Register',
+    'dashboard.upgrade': 'Upgrade required',
+    'dashboard.upgradeToAccess': 'Upgrade to access',
+    'dashboard.noUpcomingMasterclasses': 'No upcoming masterclasses',
+    'dashboard.checkBackForEvents': 'Check back soon for new events.',
+    'dashboard.topMembers': 'Top members',
+    'dashboard.viewFullLeaderboard': 'View full leaderboard',
+    'dashboard.quickActions': 'Quick actions',
+    'dashboard.member': 'member',
+  }[k] ?? k),
+});
+
+// ---- tiny spinner
+const LoadingSpinner = ({ size = 'md' }: { size?: 'md' | 'lg' }) => (
+  <div className={`animate-spin ${size === 'lg' ? 'w-10 h-10' : 'w-6 h-6'} border-2 border-gray-300 border-t-transparent rounded-full`} />
+);
+
+// ---- types
 interface LeaderboardMember {
-  id: string;
-  name: string;
-  avatar: string;
-  points: number;
-  rank: number;
-  tier: 'free' | 'basic' | 'premium';
-  badges: string[];
+  id: string; name: string; avatar: string; points: number; rank: number;
+  tier: 'free' | 'basic' | 'premium'; badges: string[];
 }
 interface UserStats {
-  shortsWatched: number;
-  modulesCompleted: number;
-  badgesEarned: number;
-  quizScore: number;
-  streakDays: number;
-  totalPoints: number;
-  rank: number;
-  swirdleStreak: number;
-  swirdleGamesWon: number;
-  blindTastingsCompleted: number;
-  communityPosts: number;
+  shortsWatched: number; modulesCompleted: number; badgesEarned: number; quizScore: number;
+  streakDays: number; totalPoints: number; rank: number; swirdleStreak: number; swirdleGamesWon: number;
+  blindTastingsCompleted: number; communityPosts: number;
 }
 interface BlindTastingVideo {
-  id: string;
-  title: string;
-  description: string;
-  thumbnailUrl: string;
-  duration: string;
-  difficulty: 'beginner' | 'intermediate' | 'advanced';
-  isNew: boolean;
+  id: string; title: string; description: string; thumbnailUrl: string; duration: string;
+  difficulty: 'beginner' | 'intermediate' | 'advanced'; isNew: boolean;
 }
 interface Masterclass {
-  id: string;
-  title: string;
-  description: string;
-  instructor: string;
-  date: string;
-  time: string;
-  duration: string;
-  maxParticipants: number;
-  currentParticipants: number;
-  tier: 'basic' | 'premium';
-  isRegistered: boolean;
+  id: string; title: string; description: string; instructor: string; date: string; time: string;
+  duration: string; maxParticipants: number; currentParticipants: number;
+  tier: 'basic' | 'premium'; isRegistered: boolean;
 }
 
-// --- helpers to mimic your getUserBadges / ACHIEVEMENT_BADGES if absent
+// ---- achievements (light stand-in)
 const ACHIEVEMENT_BADGES = [
   { id: 'harvest_hand', name: 'Harvest Hand', icon: '🌾' },
   { id: 'vocabulary_master', name: 'Vocabulary Master', icon: '🔤' },
@@ -91,14 +71,10 @@ const getUserBadges = (_courses: number, modules: number, _quizzes: number, stre
   return arr;
 };
 
-// --- small loading spinner
-const LoadingSpinner = ({ size = 'md' }: { size?: 'md' | 'lg' }) => (
-  <div className={`animate-spin ${size === 'lg' ? 'w-10 h-10' : 'w-6 h-6'} border-2 border-gray-300 border-t-transparent rounded-full`} />
-);
-
-const MemberDashboard: React.FC = () => {
+export default function Dashboard() {
   const { user, profile } = useAuth();
   const { t } = useLanguage();
+
   const [loading, setLoading] = useState(true);
   const [leaderboard, setLeaderboard] = useState<LeaderboardMember[]>([]);
   const [userStats, setUserStats] = useState<UserStats | null>(null);
@@ -116,11 +92,11 @@ const MemberDashboard: React.FC = () => {
   };
 
   const loadDashboardData = async () => {
-    // --- mock fallbacks
+    // ---- mock fallbacks for fast dev
     const mockLeaderboard: LeaderboardMember[] = [
-      { id: '1', name: 'Sarah Chen', avatar: 'https://images.pexels.com/photos/774909/pexels-photo-774909.jpeg?auto=compress&cs=tinysrgb&w=150', points: 2847, rank: 1, tier: 'premium', badges: ['harvest_hand', 'vocabulary_master', 'community_leader'] },
-      { id: '2', name: 'James Rodriguez', avatar: 'https://images.pexels.com/photos/1222271/pexels-photo-1222271.jpeg?auto=compress&cs=tinysrgb&w=150', points: 2156, rank: 2, tier: 'basic', badges: ['berry_builder', 'swirdle_champion'] },
-      { id: '3', name: 'Emma Thompson', avatar: 'https://images.pexels.com/photos/1239291/pexels-photo-1239291.jpeg?auto=compress&cs=tinysrgb&w=150', points: 1923, rank: 3, tier: 'basic', badges: ['bloom_boss', 'tasting_expert'] },
+      { id: '1', name: 'Sarah Chen', avatar: 'https://images.pexels.com/photos/774909/pexels-photo-774909.jpeg?auto=compress&cs=tinysrgb&w=150', points: 2847, rank: 1, tier: 'premium', badges: ['harvest_hand','vocabulary_master','community_leader'] },
+      { id: '2', name: 'James Rodriguez', avatar: 'https://images.pexels.com/photos/1222271/pexels-photo-1222271.jpeg?auto=compress&cs=tinysrgb&w=150', points: 2156, rank: 2, tier: 'basic', badges: ['berry_builder','swirdle_champion'] },
+      { id: '3', name: 'Emma Thompson', avatar: 'https://images.pexels.com/photos/1239291/pexels-photo-1239291.jpeg?auto=compress&cs=tinysrgb&w=150', points: 1923, rank: 3, tier: 'basic', badges: ['bloom_boss','tasting_expert'] },
     ];
     const mockUserStats: UserStats = {
       shortsWatched: 23, modulesCompleted: 8, badgesEarned: 5, quizScore: 87, streakDays: 12,
@@ -128,64 +104,50 @@ const MemberDashboard: React.FC = () => {
     };
     const mockBlindTasting: BlindTastingVideo = {
       id: '1', title: 'Burgundy vs. Pinot Noir Challenge',
-      description: 'Can you distinguish between Old World and New World Pinot Noir? Test your palate with Matt’s latest blind tasting challenge.',
-      thumbnailUrl: 'https://images.pexels.com/photos/1407846/pexels-photo-1407846.jpeg', duration: '25 min',
-      difficulty: 'intermediate', isNew: true
+      description: 'Can you distinguish between Old World and New World Pinot Noir?',
+      thumbnailUrl: 'https://images.pexels.com/photos/1407846/pexels-photo-1407846.jpeg',
+      duration: '25 min', difficulty: 'intermediate', isNew: true
     };
     const mockMasterclasses: Masterclass[] = [
       { id: '1', title: 'Burgundy Deep Dive: Terroir & Tradition', description: 'Explore Burgundy from village to Grand Cru.',
         instructor: 'Matt Decanted', date: '2025-09-25', time: '19:00', duration: '90 min',
         maxParticipants: 50, currentParticipants: 34, tier: 'premium', isRegistered: false },
-      { id: '2', title: 'Food Pairing Secrets with Matt', description: 'Professional techniques for perfect pairings.',
+      { id: '2', title: 'Food Pairing Secrets with Matt', description: 'Techniques for perfect pairings.',
         instructor: 'Matt Decanted', date: '2025-09-28', time: '18:30', duration: '60 min',
         maxParticipants: 30, currentParticipants: 18, tier: 'basic', isRegistered: true },
     ];
 
     const leaderboardData = await safeFetch(async () => {
       const { data, error } = await supabase
-        .from('user_leaderboard')
-        .select('*')
-        .order('points', { ascending: false })
-        .limit(10);
+        .from('user_leaderboard').select('*')
+        .order('points', { ascending: false }).limit(10);
       if (error) throw error;
       return data as unknown as LeaderboardMember[];
     }, mockLeaderboard);
 
     const userStatsData = await safeFetch(async () => {
       const { data, error } = await supabase
-        .from('user_stats')
-        .select('*')
-        .eq('user_id', user!.id)
-        .maybeSingle();
+        .from('user_stats').select('*')
+        .eq('user_id', user!.id).maybeSingle();
       if (error) throw error;
       return (data as unknown as UserStats) ?? mockUserStats;
     }, mockUserStats);
 
     const blindTastingData = await safeFetch(async () => {
       const { data, error } = await supabase
-        .from('blind_tasting_videos')
-        .select('*')
-        .eq('is_featured', true)
-        .maybeSingle();
+        .from('blind_tasting_videos').select('*')
+        .eq('is_featured', true).maybeSingle();
       if (error) throw error;
       const d = data as any;
       return d
-        ? ({
-            id: d.id,
-            title: d.title,
-            description: d.description,
-            thumbnailUrl: d.thumbnail_url,
-            duration: d.duration,
-            difficulty: d.difficulty,
-            isNew: true,
-          } as BlindTastingVideo)
+        ? ({ id: d.id, title: d.title, description: d.description, thumbnailUrl: d.thumbnail_url,
+             duration: d.duration, difficulty: d.difficulty, isNew: true } as BlindTastingVideo)
         : mockBlindTasting;
     }, mockBlindTasting);
 
     const masterclassData = await safeFetch(async () => {
       const { data, error } = await supabase
-        .from('masterclasses')
-        .select('*')
+        .from('masterclasses').select('*')
         .gte('date', new Date().toISOString())
         .order('date');
       if (error) throw error;
@@ -208,24 +170,22 @@ const MemberDashboard: React.FC = () => {
       userStats.streakDays
     );
   };
-  const getNextBadge = () => {
-    const earnedBadges = getAchievementBadges();
-    return ACHIEVEMENT_BADGES.find(badge => !earnedBadges.some(earned => earned.id === badge.id));
-  };
-  const getDifficultyColor = (difficulty: string) => {
-    switch (difficulty) {
-      case 'advanced': return 'bg-red-100 text-red-800';
-      case 'intermediate': return 'bg-amber-100 text-amber-800';
-      default: return 'bg-green-100 text-green-800';
-    }
-  };
+
+  const getNextBadge = () =>
+    ACHIEVEMENT_BADGES.find(b => !getAchievementBadges().some(e => e.id === b.id));
+
+  const getDifficultyColor = (d: string) =>
+    d === 'advanced' ? 'bg-red-100 text-red-800' :
+    d === 'intermediate' ? 'bg-amber-100 text-amber-800' :
+    'bg-green-100 text-green-800';
 
   const canAccessMasterclass = (m: Masterclass): boolean => {
     if (!profile) return false;
     if (profile.role === 'admin') return true;
-    if (m.tier === 'basic') return ['basic', 'premium', 'subscriber', 'admin'].includes(profile.role || 'learner');
-    if (m.tier === 'premium') return ['premium', 'admin'].includes(profile.role || '') ||
-      (profile.role === 'subscriber' && profile.subscription_status === 'active');
+    if (m.tier === 'basic') return ['basic','premium','subscriber','admin'].includes(profile.role || 'learner');
+    if (m.tier === 'premium')
+      return ['premium','admin'].includes(profile.role || '') ||
+        (profile.role === 'subscriber' && profile.subscription_status === 'active');
     return false;
   };
 
@@ -255,7 +215,7 @@ const MemberDashboard: React.FC = () => {
   return (
     <div className="min-h-screen py-8 bg-gray-50">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        {/* Welcome Header */}
+        {/* Welcome */}
         <div className="mb-8">
           <div className="flex items-center justify-between">
             <div>
@@ -267,323 +227,3 @@ const MemberDashboard: React.FC = () => {
             <div className="text-right">
               <div className={`inline-flex items-center px-3 py-1 rounded-full text-sm font-medium ${
                 profile?.role === 'admin' ? 'bg-purple-100 text-purple-800' :
-                profile?.role === 'subscriber' ? 'bg-blue-100 text-blue-800' :
-                'bg-gray-100 text-gray-800'
-              }`}>
-                {(profile?.role || 'learner').toUpperCase()} {t('dashboard.member')}
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* Quick Stats */}
-        <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4 mb-8">
-          <div className="bg-white rounded-lg shadow p-4">
-            <div className="flex items-center">
-              <div className="w-10 h-10 bg-blue-100 rounded-lg flex items-center justify-center">
-                <BookOpen className="w-5 h-5 text-blue-600" />
-              </div>
-              <div className="ml-3">
-                <p className="text-xs text-gray-600">Modules</p>
-                <p className="text-lg font-bold">{userStats.modulesCompleted}</p>
-              </div>
-            </div>
-          </div>
-          <div className="bg-white rounded-lg shadow p-4">
-            <div className="flex items-center">
-              <div className="w-10 h-10 bg-purple-100 rounded-lg flex items-center justify-center">
-                <Brain className="w-5 h-5 text-purple-600" />
-              </div>
-              <div className="ml-3">
-                <p className="text-xs text-gray-600">Swirdle</p>
-                <p className="text-lg font-bold">{userStats.swirdleStreak}</p>
-              </div>
-            </div>
-          </div>
-          <div className="bg-white rounded-lg shadow p-4">
-            <div className="flex items-center">
-              <div className="w-10 h-10 bg-amber-100 rounded-lg flex items-center justify-center">
-                <Target className="w-5 h-5 text-amber-600" />
-              </div>
-              <div className="ml-3">
-                <p className="text-xs text-gray-600">Blind Tests</p>
-                <p className="text-lg font-bold">{userStats.blindTastingsCompleted}</p>
-              </div>
-            </div>
-          </div>
-          <div className="bg-white rounded-lg shadow p-4">
-            <div className="flex items-center">
-              <div className="w-10 h-10 bg-green-100 rounded-lg flex items-center justify-center">
-                <Award className="w-5 h-5 text-green-600" />
-              </div>
-              <div className="ml-3">
-                <p className="text-xs text-gray-600">Badges</p>
-                <p className="text-lg font-bold">{earnedBadges.length}</p>
-              </div>
-            </div>
-          </div>
-          <div className="bg-white rounded-lg shadow p-4">
-            <div className="flex items-center">
-              <div className="w-10 h-10 bg-red-100 rounded-lg flex items-center justify-center">
-                <Clock className="w-5 h-5 text-red-600" />
-              </div>
-              <div className="ml-3">
-                <p className="text-xs text-gray-600">Streak</p>
-                <p className="text-lg font-bold">{userStats.streakDays}</p>
-              </div>
-            </div>
-          </div>
-          <div className="bg-white rounded-lg shadow p-4">
-            <div className="flex items-center">
-              <div className="w-10 h-10 bg-indigo-100 rounded-lg flex items-center justify-center">
-                <TrendingUp className="w-5 h-5 text-indigo-600" />
-              </div>
-              <div className="ml-3">
-                <p className="text-xs text-gray-600">Rank</p>
-                <p className="text-lg font-bold">#{userStats.rank}</p>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-          {/* Main Content */}
-          <div className="lg:col-span-2 space-y-6">
-            {/* Daily Swirdle */}
-            <div className="bg-gradient-to-r from-purple-600 to-blue-600 rounded-lg shadow p-6 text-white">
-              <div className="flex items-center justify-between mb-4">
-                <div className="flex items-center">
-                  <Brain className="w-8 h-8 mr-3" />
-                  <div>
-                    <h2 className="text-xl font-bold">Today's Swirdle</h2>
-                    <p className="text-purple-100">Daily wine word challenge</p>
-                  </div>
-                </div>
-                <div className="text-right">
-                  <div className="text-2xl font-bold">{userStats.swirdleStreak}</div>
-                  <div className="text-purple-100 text-sm">day streak</div>
-                </div>
-              </div>
-              <div className="bg-white bg-opacity-20 rounded p-4">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <h3 className="font-semibold mb-1">Challenge Your Vocabulary</h3>
-                    <p className="text-purple-100 text-sm">Guess today's wine term in 6 tries</p>
-                  </div>
-                  <Link to="/swirdle" className="bg-white text-purple-600 px-4 py-2 rounded font-medium hover:bg-purple-50 transition-colors flex items-center">
-                    <Brain className="w-4 h-4 mr-2" />
-                    Play Now
-                  </Link>
-                </div>
-              </div>
-            </div>
-
-            {/* Featured Blind Tasting */}
-            {blindTastingVideo && (
-              <div className="bg-white rounded-lg shadow overflow-hidden">
-                <div className="aspect-video bg-gray-200 relative">
-                  <img src={blindTastingVideo.thumbnailUrl} alt={blindTastingVideo.title} className="w-full h-full object-cover" />
-                  <div className="absolute inset-0 bg-black/40 flex items-center justify-center">
-                    <div className="text-center text-white">
-                      <Play className="w-16 h-16 mx-auto mb-4 bg-white/20 rounded-full p-4" />
-                      <h3 className="text-xl font-bold mb-2">{blindTastingVideo.title}</h3>
-                      <p className="text-sm opacity-90">{blindTastingVideo.description}</p>
-                    </div>
-                  </div>
-                  <div className={`absolute top-4 right-4 px-2 py-1 rounded-full text-xs font-medium ${getDifficultyColor(blindTastingVideo.difficulty)}`}>
-                    {blindTastingVideo.difficulty}
-                  </div>
-                </div>
-                <div className="p-6">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center text-sm text-gray-500">
-                      <Clock className="w-4 h-4 mr-1" />
-                      <span>{blindTastingVideo.duration}</span>
-                    </div>
-                    <Link to="/content" className="bg-amber-600 hover:bg-amber-700 text-white px-4 py-2 rounded font-medium transition-colors">
-                      Start Challenge
-                    </Link>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* Upcoming Masterclasses */}
-            <div className="bg-white rounded-lg shadow p-6">
-              <div className="flex justify-between items-center mb-6">
-                <h2 className="text-xl font-bold">{t('dashboard.upcomingMasterclasses')}</h2>
-                <Link to="/courses" className="text-blue-600 hover:text-blue-800 font-medium text-sm">
-                  View All →
-                </Link>
-              </div>
-
-              <div className="space-y-4">
-                {masterclasses.slice(0, 2).map((m) => {
-                  const hasAccess = canAccessMasterclass(m);
-                  return (
-                    <div key={m.id} className="border border-gray-200 rounded p-4">
-                      <div className="flex items-start justify-between">
-                        <div className="flex-1">
-                          <div className="flex items-center mb-2">
-                            <h3 className="font-semibold">{m.title}</h3>
-                            <span className={`ml-2 px-2 py-1 text-xs rounded-full ${m.tier === 'premium' ? 'bg-purple-100 text-purple-800' : 'bg-blue-100 text-blue-800'}`}>
-                              {m.tier}
-                            </span>
-                            {m.isRegistered && <CheckCircle className="w-4 h-4 text-green-600 ml-2" />}
-                          </div>
-                          <p className="text-gray-600 text-sm mb-3">{m.description}</p>
-                          <div className="flex items-center text-sm text-gray-500">
-                            <Calendar className="w-4 h-4 mr-1" />
-                            <span>{new Date(m.date).toLocaleDateString()} at {m.time}</span>
-                            <span className="mx-2">•</span>
-                            <Clock className="w-4 h-4 mr-1" />
-                            <span>{m.duration}</span>
-                            <span className="mx-2">•</span>
-                            <Users className="w-4 h-4 mr-1" />
-                            <span>{m.currentParticipants}/{m.maxParticipants}</span>
-                          </div>
-                        </div>
-                        <div className="ml-4">
-                          {hasAccess ? (
-                            <button className={`px-4 py-2 rounded font-medium transition-colors ${m.isRegistered ? 'bg-green-100 text-green-800' : 'bg-blue-600 hover:bg-blue-700 text-white'}`}>
-                              {m.isRegistered ? 'Registered' : 'Register'}
-                            </button>
-                          ) : (
-                            <div className="text-center">
-                              <div className="text-xs text-gray-500 mb-1">Upgrade required</div>
-                              <Link to="/pricing" className="bg-purple-600 hover:bg-purple-700 text-white px-3 py-1 rounded text-xs font-medium transition-colors">
-                                Upgrade to access
-                              </Link>
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-
-              {masterclasses.length === 0 && (
-                <div className="text-center py-8">
-                  <Calendar className="w-12 h-12 text-gray-400 mx-auto mb-4" />
-                  <h3 className="text-lg font-semibold">No upcoming masterclasses</h3>
-                  <p className="text-gray-600">Check back soon for new events.</p>
-                </div>
-              )}
-            </div>
-          </div>
-
-          {/* Sidebar */}
-          <div className="space-y-6">
-            {/* Achievements */}
-            <div className="bg-white rounded-lg shadow p-6">
-              <h2 className="text-lg font-bold mb-4 flex items-center">
-                <Award className="w-5 h-5 text-amber-600 mr-2" />
-                Your Achievements
-              </h2>
-              <div className="grid grid-cols-2 gap-3 mb-4">
-                {earnedBadges.slice(0, 4).map((badge) => (
-                  <div key={badge.id} className="text-center p-3 bg-amber-50 border border-amber-200 rounded">
-                    <div className="text-2xl mb-1">{badge.icon}</div>
-                    <div className="text-xs font-medium text-amber-800">{badge.name}</div>
-                  </div>
-                ))}
-                {nextBadge && (
-                  <div className="text-center p-3 bg-gray-50 border border-gray-200 rounded opacity-60">
-                    <div className="text-2xl mb-1 grayscale">{nextBadge.icon}</div>
-                    <div className="text-xs font-medium text-gray-600">{nextBadge.name}</div>
-                  </div>
-                )}
-              </div>
-              <div className="text-center">
-                <p className="text-sm text-gray-600 mb-2">
-                  {earnedBadges.length} of {ACHIEVEMENT_BADGES.length} badges earned
-                </p>
-                <div className="w-full bg-gray-200 rounded h-2">
-                  <div
-                    className="bg-amber-600 h-2 rounded"
-                    style={{ width: `${(earnedBadges.length / ACHIEVEMENT_BADGES.length) * 100}%` }}
-                  />
-                </div>
-              </div>
-            </div>
-
-            {/* Leaderboard */}
-            <div className="bg-white rounded-lg shadow p-6">
-              <div className="flex justify-between items-center mb-4">
-                <h2 className="text-lg font-bold flex items-center">
-                  <Trophy className="w-5 h-5 text-amber-600 mr-2" />
-                  Top members
-                </h2>
-                <Link to="/leaderboard" className="text-blue-600 hover:text-blue-800 text-sm font-medium">
-                  View full leaderboard →
-                </Link>
-              </div>
-
-              <div className="space-y-3">
-                {leaderboard.slice(0, 5).map((member, index) => (
-                  <div key={member.id} className="flex items-center justify-between">
-                    <div className="flex items-center">
-                      <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold ${
-                        index === 0 ? 'bg-amber-100 text-amber-800' :
-                        index === 1 ? 'bg-gray-100 text-gray-800' :
-                        index === 2 ? 'bg-orange-100 text-orange-800' :
-                        'bg-blue-100 text-blue-800'
-                      }`}>
-                        {index + 1}
-                      </div>
-                      <img src={member.avatar} alt={member.name} className="w-8 h-8 rounded-full ml-3 mr-2" />
-                      <div>
-                        <div className="font-medium text-sm">{member.name}</div>
-                        <div className="text-xs text-gray-500">{member.points} points</div>
-                      </div>
-                    </div>
-                    <div className="text-right font-bold text-amber-600">#{member.rank}</div>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            {/* Quick Actions */}
-            <div className="bg-white rounded-lg shadow p-6">
-              <h3 className="text-lg font-semibold mb-4">Quick actions</h3>
-              <div className="grid grid-cols-1 gap-3">
-                <Link to="/swirdle" className="flex items-center justify-between p-3 bg-purple-50 hover:bg-purple-100 rounded transition-colors">
-                  <div className="flex items-center">
-                    <Brain className="w-5 h-5 text-purple-600 mr-3" />
-                    <span className="font-medium text-purple-900">Play Swirdle</span>
-                  </div>
-                  <span>→</span>
-                </Link>
-                <Link to="/content" className="flex items-center justify-between p-3 bg-amber-50 hover:bg-amber-100 rounded transition-colors">
-                  <div className="flex items-center">
-                    <Target className="w-5 h-5 text-amber-600 mr-3" />
-                    <span className="font-medium text-amber-900">Blind Tasting</span>
-                  </div>
-                  <span>→</span>
-                </Link>
-                <Link to="/courses" className="flex items-center justify-between p-3 bg-blue-50 hover:bg-blue-100 rounded transition-colors">
-                  <div className="flex items-center">
-                    <BookOpen className="w-5 h-5 text-blue-600 mr-3" />
-                    <span className="font-medium text-blue-900">Wine Courses</span>
-                  </div>
-                  <span>→</span>
-                </Link>
-                <Link to="/community" className="flex items-center justify-between p-3 bg-green-50 hover:bg-green-100 rounded transition-colors">
-                  <div className="flex items-center">
-                    <Users className="w-5 h-5 text-green-600 mr-3" />
-                    <span className="font-medium text-green-900">Join Discussion</span>
-                  </div>
-                  <span>→</span>
-                </Link>
-              </div>
-            </div>
-          </div>
-        </div>
-
-      </div>
-    </div>
-  );
-};
-
-export default MemberDashboard;
