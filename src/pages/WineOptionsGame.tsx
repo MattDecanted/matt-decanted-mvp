@@ -21,6 +21,10 @@ const ensureFour = (first: string, pool: string[]) => {
   for (const p of pad) if (out.length < 4 && !out.includes(p)) out.push(p);
   return out.slice(0, 4);
 };
+const parseVarList = (v: unknown): string[] =>
+  Array.isArray(v) ? (v as string[]).filter(Boolean)
+  : typeof v === "string" ? v.split(/[,;/]| and /i).map(x => x.trim()).filter(Boolean)
+  : [];
 
 /* ---------- status maps ---------- */
 const WRITE_STATUS: Record<string, GameSession["status"]> = {
@@ -46,38 +50,31 @@ const OLD_WORLD = new Set(["france","italy","spain","germany","portugal","austri
 const hasStrongFrenchCue = (t: string) =>
   /(appellation|grand\s+cru|premier\s+cru|mis\s+en\s+bouteille|ch[âa]teau|c[ôo]te)/i.test(t);
 
-/* ---------- Country & Region pools ---------- */
+/* ---------- Region pools (added Canada/China/India + expanded AU) ---------- */
 const REGION_POOLS: Record<string, string[]> = {
   France: ["Bordeaux","Burgundy","Beaujolais","Loire","Rhône","Champagne","Alsace","Provence"],
   Italy: ["Tuscany","Piedmont","Veneto","Sicily"],
   Spain: ["Rioja","Ribera del Duero","Priorat","Rías Baixas"],
   USA: ["Napa Valley","Sonoma","Willamette Valley","Columbia Valley"],
-
-  // Australia: expanded regions (South Australia, Victoria, NSW, WA, Tasmania)
   Australia: [
-    // South Australia
     "Barossa","McLaren Vale","Clare Valley","Coonawarra","Adelaide Hills","Riverland","Langhorne Creek",
-    // Victoria
     "Yarra Valley","Mornington Peninsula","Rutherglen","Heathcote",
-    // New South Wales
     "Hunter Valley","Orange","Mudgee",
-    // Western Australia
     "Margaret River","Great Southern","Swan Valley",
-    // Tasmania
     "Tamar Valley","Coal River Valley","Derwent Valley","Pipers River","Huon Valley","North East Tasmania","North West Tasmania",
   ],
-
   "New Zealand": ["Marlborough","Central Otago","Hawke's Bay","Nelson"],
   Chile: ["Maipo","Colchagua","Casablanca","Maule"],
   Argentina: ["Mendoza","Salta","Patagonia","Uco Valley"],
   "South Africa": ["Stellenbosch","Swartland","Walker Bay","Paarl"],
   Germany: ["Mosel","Rheingau","Pfalz","Nahe"],
   Portugal: ["Douro","Alentejo","Vinho Verde","Dão"],
+  Canada: ["Okanagan Valley","Niagara Peninsula","Prince Edward County","Lake Erie North Shore"],
+  China: ["Ningxia","Yantai","Hebei","Xinjiang"],
+  India: ["Nashik","Nandi Hills","Akluj","Baramati"],
 };
 
-/* ---------- grape pools + synonyms ---------- */
-
-// For color-appropriate distractors
+/* ---------- comprehensive grape dictionary + detectors ---------- */
 const WHITE_POOL = [
   "Chardonnay","Sauvignon Blanc","Riesling","Pinot Gris","Pinot Grigio","Gewürztraminer","Chenin Blanc","Viognier",
   "Semillon","Muscat Blanc à Petits Grains","Trebbiano","Verdelho","Albariño","Garganega","Marsanne","Roussanne",
@@ -85,7 +82,6 @@ const WHITE_POOL = [
   "Godello","Verdejo","Palomino Fino","Macabeo","Xarel·lo","Parellada","Loureiro","Fernão Pires","Grüner Veltliner",
   "Silvaner","Scheurebe","Kerner","Assyrtiko","Moscato Giallo","Torrontés","Koshu","Furmint","Hárslevelű","Savagnin"
 ];
-
 const RED_POOL = [
   "Cabernet Sauvignon","Merlot","Pinot Noir","Syrah","Shiraz","Grenache","Tempranillo","Sangiovese","Nebbiolo",
   "Zinfandel","Primitivo","Malbec","Carignan","Cabernet Franc","Mourvèdre","Cinsault","Tannat","Counoise",
@@ -93,12 +89,10 @@ const RED_POOL = [
   "Touriga Nacional","Touriga Franca","Trincadeira","Castelão","Blaufränkisch","Zweigelt","St. Laurent","Gamay",
   "Carménère","Pinotage","Saperavi","Kadarka","Plavac Mali","Xinomavro","Agiorgitiko","Negroamaro","Lambrusco","Schiava"
 ];
-
-// Canonical → synonyms (normalized searches)
 const GRAPE_SYNONYMS: Record<string, string[]> = {
   // Whites
   "Chardonnay": ["blanc de bourgogne","chablis"],
-  "Sauvignon Blanc": ["fumé blanc","blanc fumé","sauv blanc","fume blanc"],
+  "Sauvignon Blanc": ["fumé blanc","blanc fumé","sauv blanc"],
   "Riesling": ["johannisberg riesling","weisser riesling","weißer riesling","white riesling"],
   "Pinot Gris": ["pinot grigio","grauburgunder","ruländer","rulaender"],
   "Gewürztraminer": ["traminer aromatico","savagnin rose","gewurztraminer"],
@@ -139,8 +133,7 @@ const GRAPE_SYNONYMS: Record<string, string[]> = {
   "Koshu": [],
   "Furmint": [],
   "Hárslevelű": ["harslevelu"],
-  "Savagnin": ["heida","paien"],
-
+  "Savagnin": ["nature (jura savagnin)","heida","paien"],
   // Reds
   "Cabernet Sauvignon": ["cab sauv","cabernet-sauvignon"],
   "Merlot": ["merlot noir"],
@@ -186,11 +179,9 @@ const GRAPE_SYNONYMS: Record<string, string[]> = {
   "Agiorgitiko": [],
   "Negroamaro": [],
   "Lambrusco": ["lambruschi"],
-  "Schiava": ["vernatsch","trollinger"]
+  "Schiava": ["vernatsch","trollinger"],
 };
-
 const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-
 function findGrapesInText(text: string): string[] {
   const t = norm(text);
   const hits: string[] = [];
@@ -202,111 +193,160 @@ function findGrapesInText(text: string): string[] {
   return Array.from(new Set(hits));
 }
 
-/* ---------- Burgundy color → grape rule (and Champagne) ---------- */
-function detectVarietyOrBlend(
-  textRaw: string,
-  regionName?: string | null
-): { label: string; distractors: string[] } {
+/* ---------- Burgundy vocabulary ---------- */
+const BOURGOGNE_MARKERS = [
+  "bourgogne","burgundy","cote d'or","côte d'or","cote de beaune","côte de beaune","cote de nuits","côte de nuits",
+  "beaujolais","chablis","cote chalonnaise","côte chalonnaise"
+];
+const VILLAGES_BEaune = [
+  "chassagne-montrachet","puligny-montrachet","meursault","beaune","pommard","volnay","aloxe-corton",
+  "savigny-les-beaune","savigny-lès-beaune","pernand-vergelesses","st-aubin","saint-aubin","santenay"
+];
+const VILLAGES_Nuits = [
+  "gevrey-chambertin","chambolle-musigny","vosne-romanee","vosne-romanée","vougeot","morey-saint-denis",
+  "nuits-saint-georges","fixin","marsannay"
+];
+
+/* ---------- DB-first geo fetch from wine_reference ---------- */
+type GeoPick = {
+  countryCorrect?: string;
+  countryOptions: string[];
+  regionCorrect?: string;
+  regionOptions: string[];
+  subregionCorrect?: string | null;
+  subregionOptions?: string[] | null;
+  typicalVarieties?: string[];
+  isOldWorld?: boolean;
+};
+async function fetchGeoFromWineReference(ocrText: string): Promise<GeoPick | null> {
+  const t = norm(ocrText);
+  const tokens = Array.from(new Set((t.match(/[a-z0-9'-]{3,}/g) || []).slice(0, 10)));
+  if (!tokens.length) return null;
+
+  const ors = tokens.map(n =>
+    `country.ilike.%${n}%,region.ilike.%${n}%,subregion.ilike.%${n}%`
+  ).join(",");
+
+  const { data } = await supabase
+    .from("wine_reference")
+    .select("country,region,subregion,varieties")
+    .or(ors)
+    .limit(100);
+
+  const rows = (data || []) as Array<{country: string|null; region: string|null; subregion: string|null; varieties?: any}>;
+  if (!rows.length) return null;
+
+  // score rows: exact string presences
+  const score = (r: any) => {
+    let s = 0;
+    if (r.country && t.includes(norm(r.country))) s += 2;
+    if (r.region && t.includes(norm(r.region))) s += 4;
+    if (r.subregion && t.includes(norm(r.subregion))) s += 5;
+    return s;
+  };
+  const best = rows.map(r => ({ r, s: score(r) }))
+                   .sort((a,b)=>b.s-a.s)[0].r;
+
+  const countryCorrect = best.country || undefined;
+  const regionCorrect = best.region || undefined;
+
+  const countries = unique(rows.map(r => r.country || "").filter(Boolean));
+  const regions   = unique(rows.filter(r => r.country === countryCorrect).map(r => r.region || "").filter(Boolean));
+
+  const subrows = rows.filter(r => r.country === countryCorrect && r.region === regionCorrect && r.subregion);
+  const sublist = unique(subrows.map(r => (r.subregion || "").trim()).filter(Boolean));
+
+  return {
+    countryCorrect,
+    countryOptions: ensureFour(countryCorrect || "France", countries.filter(c => c !== countryCorrect)),
+    regionCorrect,
+    regionOptions: ensureFour(regionCorrect || (REGION_POOLS[countryCorrect || "France"]?.[0] || "Burgundy"),
+                              regions.filter(r => r !== regionCorrect)),
+    subregionCorrect: sublist[0] || null,
+    subregionOptions: sublist.length ? ensureFour(sublist[0], sublist.slice(1)) : null,
+    typicalVarieties: parseVarList(best.varieties),
+    isOldWorld: !!countryCorrect && OLD_WORLD.has((countryCorrect || "").toLowerCase()),
+  };
+}
+
+/* ---------- Variety/blend with Champagne + Burgundy rules ---------- */
+function detectVarietyOrBlend(textRaw: string, ocrHint?: string | null, typical?: string[]): { label: string; distractors: string[] } {
   const t = norm(textRaw);
 
-  // Champagne rules
+  // Champagne
   if (/\bchampagne\b/i.test(textRaw)) {
-    if (/\bblanc\s+de\s+blancs?\b/i.test(textRaw)) {
-      return { label: "Chardonnay", distractors: ["Sauvignon Blanc","Riesling","Blend"] };
-    }
-    if (/\bblanc\s+de\s+noirs?\b/i.test(textRaw)) {
-      return { label: "Pinot Noir", distractors: ["Gamay","Merlot","Blend"] };
-    }
+    if (/\bblanc\s+de\s+blancs?\b/i.test(textRaw)) return { label: "Chardonnay", distractors: ["Sauvignon Blanc","Riesling","Blend"] };
+    if (/\bblanc\s+de\s+noirs?\b/i.test(textRaw))  return { label: "Pinot Noir", distractors: ["Gamay","Merlot","Blend"] };
     return { label: "Blend", distractors: ["Pinot Noir","Chardonnay","Pinot Meunier"] };
   }
 
-  // Direct grape mentions
+  // Burgundy villages
+  const whiteBurg = VILLAGES_BEaune.some(v => t.includes(v)) || /\b(chablis|corton-charlemagne)\b/.test(t);
+  const redBurg   = VILLAGES_Nuits.some(v => t.includes(v))   || /\b(gevrey|vosne|volnay|pommard|nuits)\b/.test(t);
+
+  // Blends or 2+ grapes
+  const explicitBlend = /\b(?:blend|assemblage|field\s*blend|gs?m)\b/.test(t);
   const hits = findGrapesInText(textRaw);
-  if (/\b(?:blend|assemblage|field\s*blend|gs?m)\b/.test(t) || hits.length >= 2) {
-    return { label: "Blend", distractors: ["Cabernet Sauvignon","Pinot Noir","Chardonnay"] };
-  }
+  if (explicitBlend || hits.length >= 2) return { label: "Blend", distractors: ["Cabernet Sauvignon","Pinot Noir","Chardonnay"] };
+
   if (hits.length === 1) {
     const v = hits[0];
     const isWhite = WHITE_POOL.includes(v);
-    const more = isWhite ? ["Pinot Gris","Chenin Blanc","Sauvignon Blanc","Riesling"] : ["Merlot","Syrah","Grenache","Gamay"];
+    const more = isWhite ? ["Sauvignon Blanc","Riesling","Chenin Blanc"] : ["Merlot","Syrah","Grenache"];
     return { label: v, distractors: more.filter(x => x !== v).slice(0,3) };
   }
 
-  // **Burgundy mapping** (incl. Bourgogne synonyms)
-  const isBurgundy =
-    (regionName && /burgundy/i.test(regionName)) ||
-    /\bbourgogne\b|\bburgundy\b|\bcôte d'?or\b|\bbeaune\b|\bnuits\b/i.test(textRaw);
+  if (whiteBurg) return { label: "Chardonnay", distractors: ["Sauvignon Blanc","Riesling","Blend"] };
+  if (redBurg)   return { label: "Pinot Noir", distractors: ["Gamay","Merlot","Blend"] };
 
-  if (isBurgundy) {
-    // Explicit Beaujolais ⇒ Gamay
-    if (/\bbeaujolais\b/i.test(textRaw) || (regionName && /beaujolais/i.test(regionName))) {
-      return { label: "Gamay", distractors: ["Pinot Noir","Merlot","Blend"] };
-    }
-
-    const whiteTokens = /\bblanc|white\b/i;
-    const redTokens   = /\brouge|red\b/i;
-
-    // White-leaning communes/appellations
-    const burgWhiteRX = /chablis|meursault|puligny|chassagne|pouilly[-\s]fuiss[ée]|saint[-\s]aubin|corton-?charlemagne|m[âa]con|rully/i;
-    // Red-leaning communes/appellations
-    const burgRedRX   = /c[ôo]te\s+de\s+nuits|gevrey|vosne|nuits[-\s]saint|pommard|volnay|chambolle|corton(?!-charlemagne)/i;
-
-    if (whiteTokens.test(textRaw) || burgWhiteRX.test(textRaw)) {
-      return { label: "Chardonnay", distractors: ["Sauvignon Blanc","Riesling","Blend"] };
-    }
-    if (redTokens.test(textRaw) || burgRedRX.test(textRaw)) {
-      return { label: "Pinot Noir", distractors: ["Gamay","Merlot","Blend"] };
-    }
-
-    // Unknown color → safe Burgundy defaults (slightly favor PN; Chardonnay if Côte de Beaune cue)
-    if (/c[ôo]te\s+de\s+beaune|beaune/i.test(textRaw)) {
-      return { label: "Chardonnay", distractors: ["Sauvignon Blanc","Riesling","Blend"] };
-    }
-    return { label: "Pinot Noir", distractors: ["Gamay","Merlot","Blend"] };
+  // Table hint if available
+  if (typical && typical[0]) {
+    const v = typical[0];
+    const isWhite = WHITE_POOL.includes(v);
+    const more = isWhite ? ["Sauvignon Blanc","Riesling","Pinot Gris"] : ["Merlot","Syrah","Grenache"];
+    return { label: v, distractors: more };
   }
 
-  // Regional nudges (generic)
-  const regionHints: Array<[RegExp, string]> = [
-    [/chablis/i, "Chardonnay"],
-    [/beaujolais/i, "Gamay"],
-    [/marlborough/i, "Sauvignon Blanc"],
-    [/mosel/i, "Riesling"],
-    [/rioja/i, "Tempranillo"],
-    [/barolo/i, "Nebbiolo"],
-    [/chianti/i, "Sangiovese"],
-  ];
-  for (const [rx, v] of regionHints) {
-    if (rx.test(textRaw)) {
-      const isWhite = WHITE_POOL.includes(v);
-      const more = isWhite ? ["Sauvignon Blanc","Riesling","Chenin Blanc"] : ["Merlot","Syrah","Grenache"];
-      return { label: v, distractors: more };
-    }
+  // OCR hint if sensible
+  if (ocrHint && (WHITE_POOL.includes(ocrHint) || RED_POOL.includes(ocrHint))) {
+    const isWhite = WHITE_POOL.includes(ocrHint);
+    const more = isWhite ? ["Sauvignon Blanc","Riesling","Pinot Gris"] : ["Merlot","Syrah","Grenache"];
+    return { label: ocrHint, distractors: more };
   }
-
-  // Fallback
   return { label: "Blend", distractors: ["Cabernet Sauvignon","Pinot Noir","Chardonnay"] };
 }
 
-/* ---------- Country & Region detection (OCR-only, lightweight) ---------- */
-function detectCountryRegion(textRaw: string) {
+/* ---------- Country & Region detection (OCR fallback) ---------- */
+function detectCountryRegionFallback(textRaw: string) {
   const t = norm(textRaw);
   const countryRules: Array<[string, RegExp]> = [
-    ["France", /(france|bordeaux|bourgogne|burgundy|loire|alsace|rhone|rhône|beaujolais|champagne|sancerre|chablis|côte|chateau|appellation|grand\s*cru|premier\s*cru|mis\s*en\s*bouteille)/],
+    ["France", /(france|bordeaux|bourgogne|burgundy|loire|alsace|rhone|rhône|beaujolais|champagne|sancerre|chablis|côte|cote|chateau|appellation)/],
     ["Italy", /(italy|italia|toscana|chianti|barolo|barbaresco|piemonte|piedmont|veneto|sicilia|etna|prosecco|valpolicella|soave)/],
     ["Spain", /(spain|rioja|ribera\s+del\s+duero|priorat|r[íi]as?\s*baixas|cava|jerez|sherry)/],
     ["Germany", /(germany|deutschland|mosel|rheingau|pfalz|nahe|sp[äa]tlese|kabinett|trocken)/],
     ["Portugal", /(portugal|douro|dao|d[ãa]o|alentejo|vinho\s*verde|porto)/],
     ["USA", /(usa|united\s+states|american\s+viticultural|ava|california|napa|sonoma|oregon|washington|willamette|columbia\s+valley)/],
-    ["Australia", /(australia|barossa|mclaren\s*vale|margaret\s*river|yarra\s*valley|clare\s*valley|coonawarra|adelaide\s*hills|tasmania)/],
+    ["Australia", /(australia|barossa|mclaren\s*vale|margaret\s*river|yarra\s*valley|clare\s*valley|coonawarra)/],
     ["New Zealand", /(new\s+zealand|marlborough|central\s+otago|hawke'?s\s+bay|nelson)/],
     ["Chile", /(chile|maipo|colchagua|casablanca|aconcagua|maule)/],
     ["Argentina", /(argentina|mendoza|salta|patagonia|uco\s*valley)/],
     ["South Africa", /(south\s+africa|stellenbosch|swartland|western\s+cape|walker\s+bay|paarl)/],
+    ["Canada", /(canada|okanagan|niagara|ontario|british\s+columbia|bc)/],
+    ["China", /(china|ningxia|xinjiang|yantai|shandong)/],
+    ["India", /(india|nashik|nandi\s*hills|maharashtra|karnataka|baramati|akluj)/],
   ];
 
   let country: string | undefined;
-  for (const [name, rx] of countryRules) {
-    if (rx.test(t)) { country = name; break; }
+  for (const [name, rx] of countryRules) if (rx.test(t)) { country = name; break; }
+
+  // Burgundy force
+  let regionFromBurgundy: string | undefined;
+  let subregionFromBurgundy: string | null = null;
+  if ([...BOURGOGNE_MARKERS, ...VILLAGES_BEaune, ...VILLAGES_Nuits].some(k => t.includes(k))) {
+    country = "France";
+    regionFromBurgundy = "Burgundy";
+    if (VILLAGES_BEaune.some(v => t.includes(v))) subregionFromBurgundy = "Côte de Beaune";
+    if (VILLAGES_Nuits.some(v => t.includes(v))) subregionFromBurgundy = "Côte de Nuits";
   }
 
   const isOldWorld =
@@ -317,30 +357,34 @@ function detectCountryRegion(textRaw: string) {
   if (!country) country = isOldWorld ? "France" : "USA";
 
   const pool = REGION_POOLS[country] || [];
-  let region: string | undefined = pool.find(r => norm(textRaw).includes(norm(r))) || pool[0];
+  let region: string | undefined =
+    regionFromBurgundy ||
+    pool.find(r => norm(textRaw).includes(norm(r))) ||
+    (country === "France" && /\bbeaujolais\b/i.test(textRaw) ? "Beaujolais" : undefined) ||
+    pool[0];
 
-  let subregion: string | null = null;
-  if (region === "Bordeaux") {
+  let subregion: string | null = subregionFromBurgundy;
+  if (!subregion && region === "Bordeaux") {
     if (/(pauillac|margaux|st[.\s-]*julien|st[.\s-]*est[eé]phe|m[ée]doc)/i.test(textRaw)) subregion = "Left Bank";
     else if (/(pomerol|saint[ -]?emilion)/i.test(textRaw)) subregion = "Right Bank";
   }
-  if (region === "Burgundy") {
-    if (/chablis/i.test(textRaw)) subregion = "Chablis";
-    else if (/c[oô]te\s+de\s+nuits/i.test(textRaw)) subregion = "Côte de Nuits";
+  if (!subregion && region === "Burgundy") {
+    if (/c[oô]te\s+de\s+nuits/i.test(textRaw)) subregion = "Côte de Nuits";
     else if (/c[oô]te\s+de\s+beaune/i.test(textRaw)) subregion = "Côte de Beaune";
   }
-  if (region === "Napa Valley") {
+  if (!subregion && region === "Napa Valley") {
     if (/(oakville|rutherford|st[.\s-]*helena|mount\s*veeder|howell\s*mountain)/i.test(textRaw)) subregion = "Oakville/Rutherford";
   }
 
-  const countryOptions = ensureFour(country, isOldWorld ? ["France","Italy","Spain","Germany","Portugal"] : ["USA","Australia","New Zealand","Chile","Argentina"]);
-  const regionOptions  = ensureFour(region || pool[0] || "Bordeaux", pool.filter(r => r !== region));
+  const newWorldList = ["USA","Australia","New Zealand","Chile","Argentina","South Africa","Canada","China","India"];
+  const countryOptions = ensureFour(country, isOldWorld ? ["France","Italy","Spain","Germany","Portugal"] : newWorldList);
+  const regionOptions  = ensureFour(region || pool[0] || "Burgundy", pool.filter(r => r !== region));
 
   let subregionOptions: string[] | null = null;
   if (subregion) {
     const SUBS: Record<string, string[]> = {
       Bordeaux: ["Left Bank","Right Bank","Graves","Entre-Deux-Mers"],
-      Burgundy: ["Chablis","Côte de Nuits","Côte de Beaune","Mâconnais"],
+      Burgundy: ["Côte de Beaune","Côte de Nuits","Chablis","Côte Chalonnaise"],
       "Napa Valley": ["Oakville/Rutherford","St. Helena","Mount Veeder","Howell Mountain"],
       Rioja: ["Rioja Alta","Rioja Alavesa","Rioja Oriental"],
     };
@@ -352,7 +396,7 @@ function detectCountryRegion(textRaw: string) {
     isOldWorld,
     countryCorrect: country,
     countryOptions,
-    regionCorrect: region || pool[0] || "Bordeaux",
+    regionCorrect: region || pool[0] || "Burgundy",
     regionOptions,
     subregionCorrect: subregion,
     subregionOptions,
@@ -371,7 +415,7 @@ function detectVintage(text: string) {
   return ["NV", String(now), String(now-1), String(now-2)];
 }
 
-/* ---------- Build round payload from OCR ---------- */
+/* ---------- Build round payload from OCR (DB-first) ---------- */
 async function buildRoundPayloadFromOCR(file: File): Promise<{ questions: StepQuestion[] }> {
   const form = new FormData();
   form.append("file", file);
@@ -379,24 +423,35 @@ async function buildRoundPayloadFromOCR(file: File): Promise<{ questions: StepQu
   if (!res.ok) throw new Error(await res.text());
   const { text } = await res.json();
 
-  const geo = detectCountryRegion(text || "");
-  const hemiCorrect = geo.isOldWorld ? 0 : 1;
+  // 1) Try DB
+  const fromDB = await fetchGeoFromWineReference(text || "");
+
+  // 2) Fallback to OCR heuristics
+  const fall = detectCountryRegionFallback(text || "");
+
+  const isOld = fromDB?.isOldWorld ?? fall.isOldWorld;
+  const hemiCorrect = isOld ? 0 : 1;
+
+  const countryCorrect = fromDB?.countryCorrect ?? fall.countryCorrect!;
+  const regionCorrect  = fromDB?.regionCorrect  ?? fall.regionCorrect!;
+  const countryOptions = fromDB?.countryOptions?.length ? fromDB.countryOptions : fall.countryOptions;
+  const regionOptions  = fromDB?.regionOptions?.length  ? fromDB.regionOptions  : fall.regionOptions;
+  const subregionOptions = fromDB?.subregionOptions ?? fall.subregionOptions;
 
   const vintageOpts = detectVintage(text || "");
 
-  // IMPORTANT FIX: build choices from {label, distractors}
-  const vdet = detectVarietyOrBlend(text || "", geo.regionCorrect);
-  const varietyOpts = ensureFour(vdet.label, vdet.distractors);
+  const vb = detectVarietyOrBlend(text || "", undefined, fromDB?.typicalVarieties);
+  const varietyOpts = ensureFour(vb.label, vb.distractors);
 
   const questions: StepQuestion[] = [
     { key: "hemisphere", prompt: "Old World or New World?", options: ["Old World","New World"], correctIndex: hemiCorrect },
     { key: "vintage",    prompt: "Pick the vintage",        options: vintageOpts,                correctIndex: 0 },
     { key: "variety",    prompt: "Pick the variety / blend",options: varietyOpts,                correctIndex: 0 },
-    { key: "country",    prompt: "Pick the country",        options: geo.countryOptions,         correctIndex: 0 },
-    { key: "region",     prompt: "Pick the region",         options: geo.regionOptions,          correctIndex: 0 },
+    { key: "country",    prompt: "Pick the country",        options: countryOptions,             correctIndex: 0 },
+    { key: "region",     prompt: "Pick the region",         options: regionOptions,              correctIndex: 0 },
   ];
-  if (geo.subregionOptions && geo.subregionOptions.length) {
-    questions.push({ key: "subregion", prompt: "Pick the subregion", options: geo.subregionOptions, correctIndex: 0 });
+  if (subregionOptions && subregionOptions.length) {
+    questions.push({ key: "subregion", prompt: "Pick the subregion", options: subregionOptions, correctIndex: 0 });
   }
   return { questions };
 }
@@ -406,10 +461,8 @@ function InviteBar({ inviteCode }: { inviteCode: string }) {
   const [copied, setCopied] = useState(false);
   const base = typeof window !== "undefined" ? window.location.origin : "";
   const joinUrl = `${base}/join/${inviteCode}`;
-
   async function copy() { try { await navigator.clipboard.writeText(joinUrl); setCopied(true); setTimeout(()=>setCopied(false), 1500); } catch {} }
   async function share() { try { if (navigator.share) await navigator.share({ title: "Join my Wine Options game", text: `Use code ${inviteCode}`, url: joinUrl }); else await copy(); } catch {} }
-
   return (
     <div className="flex items-center gap-3 p-4 rounded-2xl border bg-white shadow-sm">
       <div>
@@ -437,7 +490,7 @@ function QuestionStepper({ round, me, onFinished }: { round: GameRound; me: Part
   useEffect(() => { setIndex(0); setSelected(null); }, [round?.id]);
 
   async function handleNext() {
-    if (!q || selected == null || busy) return;
+    if (selected == null || busy) return;
     setBusy(true);
     const isCorrect = selected === q.correctIndex;
     try {
@@ -674,16 +727,21 @@ export default function WineOptionsGame({ initialCode = "" }: { initialCode?: st
     if (!session || !round) return;
     await endRound(round.id);
     await setSessionStatus(session.id, WRITE_STATUS["finished"]);
-    // update UI immediately
     setRound(null);
     setSession(s => (s ? { ...s, status: "finished" } as GameSession : s));
   }
+  async function playAgain() {
+    if (!session) return;
+    // Re-open the session so the upload UI appears again
+    await setSessionStatus(session.id, WRITE_STATUS["waiting"]);
+    // Optimistic UI so everyone immediately sees the waiting screen
+    setSession((s) => (s ? ({ ...s, status: "open" } as GameSession) : s));
+    setRound(null);
+  }
 
   const uiStatus = round ? "in_progress" : (session ? READ_STATUS[session.status] : "waiting");
-
   const isHost =
     (!!session?.host_user_id && !!me?.user_id && me.user_id === session.host_user_id) || !!me?.is_host;
-
   const isParticipantHost = (p: Participant, s: GameSession) =>
     (!!s.host_user_id && !!p.user_id && p.user_id === s.host_user_id) || !!p.is_host;
 
@@ -805,10 +863,44 @@ export default function WineOptionsGame({ initialCode = "" }: { initialCode?: st
         </div>
       )}
 
-      {uiStatus === "finished" && (
-        <div className="p-4 rounded-2xl border bg-white shadow-sm space-y-3">
-          <div className="text-xl font-semibold flex items-center gap-2">
-            <Trophy className="h-5 w-5" /> Results
+   {uiStatus === "finished" && (
+  <div className="p-4 rounded-2xl border bg-white shadow-sm space-y-3">
+    <div className="text-xl font-semibold flex items-center gap-2">
+      <Trophy className="h-5 w-5" /> Results
+    </div>
+
+    <ul className="space-y-1">
+      {[...participants].sort((a, b) => b.score - a.score).map((p, i) => (
+        <li key={p.id} className="flex justify-between">
+          <span>{i + 1}. {p.display_name}</span>
+          <span className="font-medium">{p.score} pts</span>
+        </li>
+      ))}
+    </ul>
+
+    {/* Host sees Play again; others see a waiting hint */}
+    <div className="flex items-center justify-between">
+      {!isHost ? (
+        <div className="text-sm text-gray-600">Waiting for the host to play again…</div>
+      ) : (
+        <button
+          onClick={playAgain}
+          className="inline-flex items-center gap-2 px-3 py-2 rounded-2xl bg-black text-white"
+        >
+          Play again
+        </button>
+      )}
+
+      <button
+        onClick={() => window.location.assign("/wine-options/multiplayer")}
+        className="inline-flex items-center gap-2 px-3 py-2 rounded-2xl border"
+      >
+        <LogOut className="h-4 w-4" /> Leave
+      </button>
+    </div>
+  </div>
+)}
+
           </div>
           <ul className="space-y-1">
             {[...participants].sort((a, b) => b.score - a.score).map((p, i) => (
