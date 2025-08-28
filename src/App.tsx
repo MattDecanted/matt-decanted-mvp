@@ -1,6 +1,6 @@
 // src/App.tsx
 import React from 'react';
-import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 
 // UI / Providers
 import { Toaster } from '@/components/ui/sonner';
@@ -72,16 +72,17 @@ function AutoResumeOnAccount() {
   return null;
 }
 
-/** ✅ RequireAuth wrapper */
+/** ✅ RequireAuth wrapper with "return to where you came from" */
 function RequireAuth({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuth();
+  const location = useLocation();
 
   if (loading) {
     return <div className="p-8">Loading...</div>;
   }
 
   if (!user) {
-    return <Navigate to="/signin" replace />;
+    return <Navigate to="/signin" replace state={{ from: location }} />;
   }
 
   return <>{children}</>;
