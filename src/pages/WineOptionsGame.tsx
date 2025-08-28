@@ -54,7 +54,7 @@ const REGION_POOLS: Record<string, string[]> = {
   Spain: ["Rioja","Ribera del Duero","Priorat","Rías Baixas"],
   USA: ["Napa Valley","Sonoma","Willamette Valley","Columbia Valley"],
 
-  // ⬇️ UPDATED: Australia regions (grouped by state; flat list for matching)
+  // Australia regions (flat list)
   Australia: [
     // South Australia
     "Barossa",
@@ -81,7 +81,7 @@ const REGION_POOLS: Record<string, string[]> = {
     "Great Southern",
     "Swan Valley",
 
-    // Tasmania (expanded)
+    // Tasmania
     "Tamar Valley",
     "Coal River Valley",
     "Derwent Valley",
@@ -116,15 +116,15 @@ const RED_POOL = [
   "Montepulciano","Aglianico","Nero d’Avola","Barbera","Corvina","Lagrein","Dolcetto","Mencía","Bobal","Graciano",
   "Touriga Nacional","Touriga Franca","Trincadeira","Castelão","Blaufränkisch","Zweigelt","St. Laurent","Gamay",
   "Carménère","Pinotage","Saperavi","Kadarka","Plavac Mali","Xinomavro","Agiorgitiko","Negroamaro","Lambrusco",
-  "Schiava" // (= Vernatsch/Trollinger)
+  "Schiava"
 ];
 
-/** Canonical → synonyms (lowercase, we’ll normalize both sides) */
+/** Canonical → synonyms (lowercase, normalized) */
 const GRAPE_SYNONYMS: Record<string, string[]> = {
   // Whites
-  "Chardonnay": ["blanc de bourgogne","chablis"],                // “Chablis” style ⇒ Chardonnay
-  "Sauvignon Blanc": ["fumé blanc","blanc fumé","sauv blanc"],
-  "Riesling": ["johannisberg riesling","weisser riesling","weißer riesling","white riesling"],
+  "Chardonnay": ["blanc de bourgogne","chablis"],
+  "Sauvignon Blanc": ["fumé blanc","blanc fumé","sauv blanc","fume blanc","blanc fume"],
+  "Riesling": ["johannisberg riesling","weisser riesling","weißer riesling","white riesling","weisser"],
   "Pinot Gris": ["pinot grigio","grauburgunder","ruländer","rulaender"],
   "Gewürztraminer": ["traminer aromatico","savagnin rose","gewurztraminer"],
   "Chenin Blanc": ["steen"],
@@ -164,16 +164,16 @@ const GRAPE_SYNONYMS: Record<string, string[]> = {
   "Koshu": [],
   "Furmint": [],
   "Hárslevelű": ["harslevelu"],
-  "Savagnin": ["nature (jura savagnin)", "heida","paien"],
+  "Savagnin": ["nature (jura savagnin)","heida","paien"],
 
   // Reds
   "Cabernet Sauvignon": ["cab sauv","cabernet-sauvignon"],
   "Merlot": ["merlot noir"],
   "Pinot Noir": ["spätburgunder","blauburgunder","pinot nero","spatburgunder"],
   "Syrah": ["shiraz"],
-  "Shiraz": ["syrah"], // keep both canonical names to accept either as answer text if needed
+  "Shiraz": ["syrah"],
   "Grenache": ["garnacha","cannonau"],
-  "Tempranillo": ["tinta roriz","aragonez","aragonês","cencibel","tinto fino"],
+  "Tempranillo": ["tinta roriz","aragonez","aragonês","cencibel","tinto fino","aragones"],
   "Sangiovese": ["brunello","prugnolo gentile","morellino"],
   "Nebbiolo": ["spanna","chiavennasca"],
   "Zinfandel": ["primitivo","crljenak kaštelanski","crljenak kastelanski"],
@@ -217,20 +217,19 @@ const GRAPE_SYNONYMS: Record<string, string[]> = {
 /** Escape for regex building */
 const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
-/** Given text (already OCR), return canonical grape hits (deduped) */
+/** Given text (OCR), return canonical grape hits (deduped) */
 function findGrapesInText(text: string): string[] {
-  const t = norm(text); // lowercase + strip diacritics
+  const t = norm(text);
   const hits: string[] = [];
   for (const [canon, syns] of Object.entries(GRAPE_SYNONYMS)) {
     const needles = [canon, ...syns].map(norm);
-    // \b boundaries over normalized tokens (allow spaces/hyphens)
     const rx = new RegExp(`\\b(?:${needles.map(esc).join("|")})\\b`, "i");
     if (rx.test(t)) hits.push(canon);
   }
   return Array.from(new Set(hits));
 }
 
-/** Smart variety/blend decision with Champagne rules & good distractors */
+/** Smart variety/blend with Champagne rules & distractors */
 function detectVarietyOrBlend(textRaw: string, hint?: string | null): { label: string; distractors: string[] } {
   const t = norm(textRaw);
 
@@ -242,28 +241,24 @@ function detectVarietyOrBlend(textRaw: string, hint?: string | null): { label: s
     if (/\bblanc\s+de\s+noirs?\b/i.test(textRaw)) {
       return { label: "Pinot Noir", distractors: ["Gamay","Merlot","Blend"] };
     }
-    // default Champagne = PN/PM/Chardonnay blend
     return { label: "Blend", distractors: ["Pinot Noir","Chardonnay","Pinot Meunier"] };
   }
 
-  // Explicit blend keywords or 2+ grapes mentioned
   const explicitBlend = /\b(?:blend|assemblage|field\s*blend|gs?m)\b/.test(t);
   const hits = findGrapesInText(textRaw);
   if (explicitBlend || hits.length >= 2) {
     return { label: "Blend", distractors: ["Cabernet Sauvignon","Pinot Noir","Chardonnay"] };
   }
 
-  // Single grape found
   if (hits.length === 1) {
     const v = hits[0];
     const isWhite = WHITE_POOL.includes(v);
-    const pool = isWhite ? WHITE_POOL : RED_POOL;
-    // a few more color-appropriate foils
-    const more = isWhite ? ["Pinot Gris","Chenin Blanc","Sauvignon Blanc","Riesling"] : ["Merlot","Syrah","Grenache","Gamay"];
+    const more = isWhite
+      ? ["Pinot Gris","Chenin Blanc","Sauvignon Blanc","Riesling"]
+      : ["Merlot","Syrah","Grenache","Gamay"];
     return { label: v, distractors: more.filter(x => x !== v).slice(0,3) };
   }
 
-  // No hit: try regional nudges (very light / safe)
   const regionHints: Array<[RegExp, string]> = [
     [/chablis/i, "Chardonnay"],
     [/beaujolais/i, "Gamay"],
@@ -281,7 +276,6 @@ function detectVarietyOrBlend(textRaw: string, hint?: string | null): { label: s
     }
   }
 
-  // Still nothing: lean on OCR hint if present; otherwise neutral Blend
   if (hint && (WHITE_POOL.includes(hint) || RED_POOL.includes(hint))) {
     const isWhite = WHITE_POOL.includes(hint);
     const more = isWhite ? ["Sauvignon Blanc","Riesling","Pinot Gris"] : ["Merlot","Syrah","Grenache"];
@@ -291,12 +285,10 @@ function detectVarietyOrBlend(textRaw: string, hint?: string | null): { label: s
   return { label: "Blend", distractors: ["Cabernet Sauvignon","Pinot Noir","Chardonnay"] };
 }
 
-
 /* ---------- Country & Region detection (OCR-only, no DB) ---------- */
 function detectCountryRegion(textRaw: string) {
   const t = norm(textRaw);
 
-  // Countries (direct names & strong cues)
   const countryRules: Array<[string, RegExp]> = [
     ["France", /(france|bordeaux|bourgogne|burgundy|loire|alsace|rhone|rhône|beaujolais|champagne|sancerre|chablis|côte|chateau|appellation|grand\s*cru|premier\s*cru|mis\s*en\s*bouteille)/],
     ["Italy", /(italy|italia|toscana|chianti|barolo|barbaresco|piemonte|piedmont|veneto|sicilia|etna|prosecco|valpolicella|soave)/],
@@ -316,7 +308,6 @@ function detectCountryRegion(textRaw: string) {
     if (rx.test(t)) { country = name; break; }
   }
 
-  // Old/New world fallback
   const isOldWorld =
     (!!country && OLD_WORLD.has(country.toLowerCase())) ||
     hasStrongFrenchCue(textRaw) ||
@@ -324,11 +315,9 @@ function detectCountryRegion(textRaw: string) {
 
   if (!country) country = isOldWorld ? "France" : "USA";
 
-  // Region: pick the first pool item that appears; else default first
   const pool = REGION_POOLS[country] || [];
   let region: string | undefined = pool.find(r => norm(textRaw).includes(norm(r))) || pool[0];
 
-  // Optional subregion mini-heuristics
   let subregion: string | null = null;
   if (region === "Bordeaux") {
     if (/(pauillac|margaux|st[.\s-]*julien|st[.\s-]*est[eé]phe|m[ée]doc)/i.test(textRaw)) subregion = "Left Bank";
@@ -343,11 +332,9 @@ function detectCountryRegion(textRaw: string) {
     if (/(oakville|rutherford|st[.\s-]*helena|mount\s*veeder|howell\s*mountain)/i.test(textRaw)) subregion = "Oakville/Rutherford";
   }
 
-  // Build options
   const countryOptions = ensureFour(country, isOldWorld ? ["France","Italy","Spain","Germany","Portugal"] : ["USA","Australia","New Zealand","Chile","Argentina"]);
   const regionOptions  = ensureFour(region || pool[0] || "Bordeaux", pool.filter(r => r !== region));
 
-  // Subregion options (optional)
   let subregionOptions: string[] | null = null;
   if (subregion) {
     const SUBS: Record<string, string[]> = {
@@ -396,7 +383,8 @@ async function buildRoundPayloadFromOCR(file: File): Promise<{ questions: StepQu
 
   const vintageOpts = detectVintage(text || "");
   const vdet = detectVarietyOrBlend(text || "");
-  const varietyOpts = vdet.options;
+  // ✅ FIX: build options from {label, distractors}
+  const varietyOpts = ensureFour(vdet.label, vdet.distractors);
 
   const questions: StepQuestion[] = [
     { key: "hemisphere", prompt: "Old World or New World?", options: ["Old World","New World"], correctIndex: hemiCorrect },
@@ -684,12 +672,11 @@ export default function WineOptionsGame({ initialCode = "" }: { initialCode?: st
     if (!session || !round) return;
     await endRound(round.id);
     await setSessionStatus(session.id, WRITE_STATUS["finished"]);
-    // Make UI finish immediately even if realtime lags:
+    // Ensure UI reflects finish instantly
     setRound(null);
     setSession(s => (s ? { ...s, status: "finished" } as GameSession : s));
   }
 
-  // Prefer live round for status; else reflect session status
   const uiStatus = round ? "in_progress" : (session ? READ_STATUS[session.status] : "waiting");
 
   const isHost =
