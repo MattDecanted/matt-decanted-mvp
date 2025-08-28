@@ -15,7 +15,6 @@ import {
 const toPlain = (s?: string | null) => (s ? s.replace(/<[^>]+>/g, "") : "");
 const norm = (s: string) => (s || "").toLowerCase().normalize("NFD").replace(/\p{Diacritic}/gu, "");
 const unique = <T,>(arr: T[]) => Array.from(new Set(arr));
-const pickN = <T,>(arr: T[], n: number) => arr.slice(0, n);
 const ensureFour = (first: string, pool: string[]) => {
   const out = unique([first, ...pool.filter(x => x && x !== first)]);
   const pad = ["Chardonnay","Sauvignon Blanc","Riesling","Pinot Noir","Merlot","Syrah","Cabernet Sauvignon","Gamay"];
@@ -49,59 +48,31 @@ const hasStrongFrenchCue = (t: string) =>
 
 /* ---------- Country & Region pools ---------- */
 const REGION_POOLS: Record<string, string[]> = {
-  France: ["Bordeaux","Burgundy","Beaujolais","Loire","Rhône","Champagne","Alsace","Provence"],
-  Italy: ["Tuscany","Piedmont","Veneto","Sicily"],
-  Spain: ["Rioja","Ribera del Duero","Priorat","Rías Baixas"],
-  USA: ["Napa Valley","Sonoma","Willamette Valley","Columbia Valley"],
-
-  // Australia regions (flat list)
+  France: ["Bordeaux","Burgundy","Beaujolais","Loire","Rhône","Champagne","Alsace","Provence","Languedoc","Jura"],
+  Italy: ["Tuscany","Piedmont","Veneto","Sicily","Abruzzo","Alto Adige","Friuli","Umbria","Etna"],
+  Spain: ["Rioja","Ribera del Duero","Priorat","Rías Baixas","Jerez","Navarra","Toro"],
+  USA: ["Napa Valley","Sonoma","Willamette Valley","Columbia Valley","Paso Robles","Santa Barbara"],
   Australia: [
     // South Australia
-    "Barossa",
-    "McLaren Vale",
-    "Clare Valley",
-    "Coonawarra",
-    "Adelaide Hills",
-    "Riverland",
-    "Langhorne Creek",
-
+    "Barossa","McLaren Vale","Clare Valley","Coonawarra","Adelaide Hills","Riverland","Langhorne Creek",
     // Victoria
-    "Yarra Valley",
-    "Mornington Peninsula",
-    "Rutherglen",
-    "Heathcote",
-
+    "Yarra Valley","Mornington Peninsula","Rutherglen","Heathcote",
     // New South Wales
-    "Hunter Valley",
-    "Orange",
-    "Mudgee",
-
+    "Hunter Valley","Orange","Mudgee",
     // Western Australia
-    "Margaret River",
-    "Great Southern",
-    "Swan Valley",
-
+    "Margaret River","Great Southern","Swan Valley",
     // Tasmania
-    "Tamar Valley",
-    "Coal River Valley",
-    "Derwent Valley",
-    "Pipers River",
-    "Huon Valley",
-    "North East Tasmania",
-    "North West Tasmania",
+    "Tamar Valley","Coal River Valley","Derwent Valley","Pipers River","Huon Valley","North East Tasmania","North West Tasmania",
   ],
-
-  "New Zealand": ["Marlborough","Central Otago","Hawke's Bay","Nelson"],
-  Chile: ["Maipo","Colchagua","Casablanca","Maule"],
-  Argentina: ["Mendoza","Salta","Patagonia","Uco Valley"],
-  "South Africa": ["Stellenbosch","Swartland","Walker Bay","Paarl"],
-  Germany: ["Mosel","Rheingau","Pfalz","Nahe"],
-  Portugal: ["Douro","Alentejo","Vinho Verde","Dão"],
+  "New Zealand": ["Marlborough","Central Otago","Hawke's Bay","Nelson","Wairarapa"],
+  Chile: ["Maipo","Colchagua","Casablanca","Maule","Aconcagua"],
+  Argentina: ["Mendoza","Salta","Patagonia","Uco Valley","San Juan"],
+  "South Africa": ["Stellenbosch","Swartland","Walker Bay","Paarl","Western Cape"],
+  Germany: ["Mosel","Rheingau","Pfalz","Nahe","Baden","Franken"],
+  Portugal: ["Douro","Alentejo","Vinho Verde","Dão","Dao","Bairrada","Douro Superior"],
 };
 
-/* ---------- comprehensive grape dictionary + detectors ---------- */
-
-/** Pools used to fabricate good multiple-choice distractors */
+/* ---------- grape pools & synonyms ---------- */
 const WHITE_POOL = [
   "Chardonnay","Sauvignon Blanc","Riesling","Pinot Gris","Pinot Grigio","Gewürztraminer","Chenin Blanc","Viognier",
   "Semillon","Muscat Blanc à Petits Grains","Trebbiano","Verdelho","Albariño","Garganega","Marsanne","Roussanne",
@@ -109,19 +80,15 @@ const WHITE_POOL = [
   "Godello","Verdejo","Palomino Fino","Macabeo","Xarel·lo","Parellada","Loureiro","Fernão Pires","Grüner Veltliner",
   "Silvaner","Scheurebe","Kerner","Assyrtiko","Moscato Giallo","Torrontés","Koshu","Furmint","Hárslevelű","Savagnin"
 ];
-
 const RED_POOL = [
   "Cabernet Sauvignon","Merlot","Pinot Noir","Syrah","Shiraz","Grenache","Tempranillo","Sangiovese","Nebbiolo",
   "Zinfandel","Primitivo","Malbec","Carignan","Cabernet Franc","Mourvèdre","Cinsault","Tannat","Counoise",
   "Montepulciano","Aglianico","Nero d’Avola","Barbera","Corvina","Lagrein","Dolcetto","Mencía","Bobal","Graciano",
   "Touriga Nacional","Touriga Franca","Trincadeira","Castelão","Blaufränkisch","Zweigelt","St. Laurent","Gamay",
-  "Carménère","Pinotage","Saperavi","Kadarka","Plavac Mali","Xinomavro","Agiorgitiko","Negroamaro","Lambrusco",
-  "Schiava"
+  "Carménère","Pinotage","Saperavi","Kadarka","Plavac Mali","Xinomavro","Agiorgitiko","Negroamaro","Lambrusco","Schiava"
 ];
-
-/** Canonical → synonyms (lowercase, normalized) */
 const GRAPE_SYNONYMS: Record<string, string[]> = {
-  // Whites
+  // white
   "Chardonnay": ["blanc de bourgogne","chablis"],
   "Sauvignon Blanc": ["fumé blanc","blanc fumé","sauv blanc","fume blanc","blanc fume"],
   "Riesling": ["johannisberg riesling","weisser riesling","weißer riesling","white riesling","weisser"],
@@ -135,45 +102,31 @@ const GRAPE_SYNONYMS: Record<string, string[]> = {
   "Verdelho": ["gouveio"],
   "Albariño": ["alvarinho","albarino"],
   "Garganega": ["trebbiano di soave"],
-  "Marsanne": [],
-  "Roussanne": [],
-  "Grenache Blanc": [],
+  "Marsanne": [], "Roussanne": [], "Grenache Blanc": [],
   "Colombard": ["colombar"],
   "Melon de Bourgogne": ["muscadet"],
   "Cortese": ["gavi"],
-  "Fiano": [],
-  "Greco": ["greco di tufo"],
+  "Fiano": [], "Greco": ["greco di tufo"],
   "Verdicchio": ["trebbiano di soave"],
   "Vermentino": ["rolle"],
-  "Arneis": [],
-  "Godello": [],
-  "Verdejo": [],
+  "Arneis": [], "Godello": [], "Verdejo": [],
   "Palomino Fino": ["palomino"],
   "Macabeo": ["viura"],
   "Xarel·lo": ["xarello","xarel-lo","xarel.lo"],
-  "Parellada": [],
-  "Loureiro": [],
+  "Parellada": [], "Loureiro": [],
   "Fernão Pires": ["maria gomes","fernao pires"],
   "Grüner Veltliner": ["gruner veltliner","gruener veltliner","gruner"],
   "Silvaner": ["sylvaner"],
-  "Scheurebe": [],
-  "Kerner": [],
-  "Assyrtiko": [],
-  "Moscato Giallo": [],
-  "Torrontés": ["torrontes"],
-  "Koshu": [],
-  "Furmint": [],
-  "Hárslevelű": ["harslevelu"],
-  "Savagnin": ["nature (jura savagnin)","heida","paien"],
-
-  // Reds
+  "Scheurebe": [], "Kerner": [], "Assyrtiko": [],
+  "Moscato Giallo": [], "Torrontés": ["torrontes"], "Koshu": [],
+  "Furmint": [], "Hárslevelű": ["harslevelu"], "Savagnin": ["heida","paien","nature (jura savagnin)"],
+  // red
   "Cabernet Sauvignon": ["cab sauv","cabernet-sauvignon"],
   "Merlot": ["merlot noir"],
   "Pinot Noir": ["spätburgunder","blauburgunder","pinot nero","spatburgunder"],
-  "Syrah": ["shiraz"],
-  "Shiraz": ["syrah"],
+  "Syrah": ["shiraz"], "Shiraz": ["syrah"],
   "Grenache": ["garnacha","cannonau"],
-  "Tempranillo": ["tinta roriz","aragonez","aragonês","cencibel","tinto fino","aragones"],
+  "Tempranillo": ["tinta roriz","aragonez","aragonês","aragones","cencibel","tinto fino"],
   "Sangiovese": ["brunello","prugnolo gentile","morellino"],
   "Nebbiolo": ["spanna","chiavennasca"],
   "Zinfandel": ["primitivo","crljenak kaštelanski","crljenak kastelanski"],
@@ -182,42 +135,21 @@ const GRAPE_SYNONYMS: Record<string, string[]> = {
   "Cabernet Franc": ["breton","bouchet"],
   "Mourvèdre": ["monastrell","mataro","mourvedre"],
   "Cinsault": ["cinsaut"],
-  "Tannat": [],
-  "Counoise": [],
+  "Tannat": [], "Counoise": [],
   "Montepulciano": ["montepulciano d’abruzzo grape","montepulciano d'abruzzo grape"],
-  "Aglianico": [],
-  "Nero d’Avola": ["calabrese","nero d'avola"],
-  "Barbera": [],
-  "Corvina": [],
-  "Lagrein": [],
-  "Dolcetto": [],
-  "Mencía": ["mencia"],
-  "Bobal": [],
-  "Graciano": [],
-  "Touriga Nacional": [],
-  "Touriga Franca": [],
-  "Trincadeira": ["tinta amarela"],
+  "Aglianico": [], "Nero d’Avola": ["calabrese","nero d'avola"],
+  "Barbera": [], "Corvina": [], "Lagrein": [], "Dolcetto": [],
+  "Mencía": ["mencia"], "Bobal": [], "Graciano": [],
+  "Touriga Nacional": [], "Touriga Franca": [], "Trincadeira": ["tinta amarela"],
   "Castelão": ["periquita","castelao"],
   "Blaufränkisch": ["lemberger","kékfrankos","kekfrankos","blaufrankisch"],
-  "Zweigelt": [],
-  "St. Laurent": ["saint laurent","st laurent"],
-  "Gamay": [],
+  "Zweigelt": [], "St. Laurent": ["saint laurent","st laurent"], "Gamay": [],
   "Carménère": ["grande vidure","carmenere"],
-  "Pinotage": [],
-  "Saperavi": [],
-  "Kadarka": [],
-  "Plavac Mali": [],
-  "Xinomavro": ["xinomavro"],
-  "Agiorgitiko": [],
-  "Negroamaro": [],
-  "Lambrusco": ["lambruschi"],
-  "Schiava": ["vernatsch","trollinger"]
+  "Pinotage": [], "Saperavi": [], "Kadarka": [], "Plavac Mali": [],
+  "Xinomavro": ["xinomavro"], "Agiorgitiko": [], "Negroamaro": [], "Lambrusco": ["lambruschi"], "Schiava": ["vernatsch","trollinger"],
 };
-
-/** Escape for regex building */
 const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
-/** Given text (OCR), return canonical grape hits (deduped) */
 function findGrapesInText(text: string): string[] {
   const t = norm(text);
   const hits: string[] = [];
@@ -229,44 +161,28 @@ function findGrapesInText(text: string): string[] {
   return Array.from(new Set(hits));
 }
 
-/** Smart variety/blend with Champagne rules & distractors */
+/** Variety/Blend with Champagne rules */
 function detectVarietyOrBlend(textRaw: string, hint?: string | null): { label: string; distractors: string[] } {
-  const t = norm(textRaw);
-
-  // Champagne rules first
   if (/\bchampagne\b/i.test(textRaw)) {
-    if (/\bblanc\s+de\s+blancs?\b/i.test(textRaw)) {
-      return { label: "Chardonnay", distractors: ["Sauvignon Blanc","Riesling","Blend"] };
-    }
-    if (/\bblanc\s+de\s+noirs?\b/i.test(textRaw)) {
-      return { label: "Pinot Noir", distractors: ["Gamay","Merlot","Blend"] };
-    }
+    if (/\bblanc\s+de\s+blancs?\b/i.test(textRaw)) return { label: "Chardonnay", distractors: ["Sauvignon Blanc","Riesling","Blend"] };
+    if (/\bblanc\s+de\s+noirs?\b/i.test(textRaw))   return { label: "Pinot Noir", distractors: ["Gamay","Merlot","Blend"] };
     return { label: "Blend", distractors: ["Pinot Noir","Chardonnay","Pinot Meunier"] };
   }
-
+  const t = norm(textRaw);
   const explicitBlend = /\b(?:blend|assemblage|field\s*blend|gs?m)\b/.test(t);
   const hits = findGrapesInText(textRaw);
-  if (explicitBlend || hits.length >= 2) {
-    return { label: "Blend", distractors: ["Cabernet Sauvignon","Pinot Noir","Chardonnay"] };
-  }
+  if (explicitBlend || hits.length >= 2) return { label: "Blend", distractors: ["Cabernet Sauvignon","Pinot Noir","Chardonnay"] };
 
   if (hits.length === 1) {
     const v = hits[0];
     const isWhite = WHITE_POOL.includes(v);
-    const more = isWhite
-      ? ["Pinot Gris","Chenin Blanc","Sauvignon Blanc","Riesling"]
-      : ["Merlot","Syrah","Grenache","Gamay"];
+    const more = isWhite ? ["Pinot Gris","Chenin Blanc","Sauvignon Blanc","Riesling"] : ["Merlot","Syrah","Grenache","Gamay"];
     return { label: v, distractors: more.filter(x => x !== v).slice(0,3) };
   }
 
   const regionHints: Array<[RegExp, string]> = [
-    [/chablis/i, "Chardonnay"],
-    [/beaujolais/i, "Gamay"],
-    [/marlborough/i, "Sauvignon Blanc"],
-    [/mosel/i, "Riesling"],
-    [/rioja/i, "Tempranillo"],
-    [/barolo/i, "Nebbiolo"],
-    [/chianti/i, "Sangiovese"],
+    [/chablis/i, "Chardonnay"], [/beaujolais/i, "Gamay"], [/marlborough/i, "Sauvignon Blanc"],
+    [/mosel/i, "Riesling"],     [/rioja/i, "Tempranillo"], [/barolo/i, "Nebbiolo"], [/chianti/i, "Sangiovese"],
   ];
   for (const [rx, v] of regionHints) {
     if (rx.test(textRaw)) {
@@ -281,26 +197,26 @@ function detectVarietyOrBlend(textRaw: string, hint?: string | null): { label: s
     const more = isWhite ? ["Sauvignon Blanc","Riesling","Pinot Gris"] : ["Merlot","Syrah","Grenache"];
     return { label: hint, distractors: more };
   }
-
   return { label: "Blend", distractors: ["Cabernet Sauvignon","Pinot Noir","Chardonnay"] };
 }
 
-/* ---------- Country & Region detection (OCR-only, no DB) ---------- */
+/* ---------- Country & Region detection (improved) ---------- */
 function detectCountryRegion(textRaw: string) {
   const t = norm(textRaw);
 
+  // 1) direct country cues (expanded)
   const countryRules: Array<[string, RegExp]> = [
-    ["France", /(france|bordeaux|bourgogne|burgundy|loire|alsace|rhone|rhône|beaujolais|champagne|sancerre|chablis|côte|chateau|appellation|grand\s*cru|premier\s*cru|mis\s*en\s*bouteille)/],
-    ["Italy", /(italy|italia|toscana|chianti|barolo|barbaresco|piemonte|piedmont|veneto|sicilia|etna|prosecco|valpolicella|soave)/],
-    ["Spain", /(spain|rioja|ribera\s+del\s+duero|priorat|r[íi]as?\s*baixas|cava|jerez|sherry)/],
-    ["Germany", /(germany|deutschland|mosel|rheingau|pfalz|nahe|sp[äa]tlese|kabinett|trocken)/],
-    ["Portugal", /(portugal|douro|dao|d[ãa]o|alentejo|vinho\s*verde|porto)/],
-    ["USA", /(usa|united\s+states|american\s+viticultural|ava|california|napa|sonoma|oregon|washington|willamette|columbia\s+valley)/],
-    ["Australia", /(australia|barossa|mclaren\s*vale|margaret\s*river|yarra\s*valley|clare\s*valley|coonawarra)/],
-    ["New Zealand", /(new\s+zealand|marlborough|central\s+otago|hawke'?s\s+bay|nelson)/],
+    ["France", /(france|vin\s+de\s+france|produit\s+de\s+france|mis\s+en\s+bouteille|appellation|grand\s*cru|premier\s*cru|bordeaux|bourgogne|burgundy|loire|alsace|rhone|rhône|beaujolais|champagne|sancerre|chablis|c[oô]tes?\s*(du|de)\s*rhone|cote\s*d'or|cotes?\s*de\s*beaune|reims|epernay|pays\s*d'oc)/],
+    ["Italy", /(italy|italia|prodotto\s+in\s+italia|denominazi?one|docg|doc\b|igt\b|toscana|chianti|barolo|barbaresco|piemonte|piedmont|veneto|sicilia|etna|valpolicella|soave|alto\s*adige|friuli)/],
+    ["Spain", /(spain|espa[ñn]a|denominaci[oó]n\s+de\s+origen|d\.?o\.?|do\b|rioja|ribera\s+del\s+duero|priorat|r[ií]as?\s*baixas|jerez|sherry|cava)/],
+    ["Germany", /(germany|deutschland|pr[aä]dikatswein|sp[äa]tlese|kabinett|trocken|mosel|rheingau|pfalz|nahe|baden|franken)/],
+    ["Portugal", /(portugal|produto\s+de\s+portugal|d[ãa]o|alentejo|vinho\s*verde|porto|douro)/],
+    ["USA", /(usa|united\s+states|american\s+viticultural|ava\b|california|napa|sonoma|oregon|washington|willamette|columbia\s+valley|paso\s+robles|santa\s+barbara)/],
+    ["Australia", /(australia|product\s+of\s+australia|barossa|mclaren\s*vale|margaret\s*river|yarra\s*valley|clare\s*valley|coonawarra|adelaide\s*hills|tasmania)/],
+    ["New Zealand", /(new\s+zealand|marlborough|central\s+otago|hawke'?s\s+bay|nelson|wairarapa)/],
     ["Chile", /(chile|maipo|colchagua|casablanca|aconcagua|maule)/],
-    ["Argentina", /(argentina|mendoza|salta|patagonia|uco\s*valley)/],
-    ["South Africa", /(south\s+africa|stellenbosch|swartland|western\s+cape|walker\s+bay|paarl)/],
+    ["Argentina", /(argentina|mendoza|salta|patagonia|uco\s*valley|san\s*juan)/],
+    ["South Africa", /(south\s+africa|western\s+cape|stellenbosch|swartland|walker\s+bay|paarl)/],
   ];
 
   let country: string | undefined;
@@ -308,6 +224,16 @@ function detectCountryRegion(textRaw: string) {
     if (rx.test(t)) { country = name; break; }
   }
 
+  // 2) infer country from any region name across all pools
+  if (!country) {
+    outer: for (const [c, regions] of Object.entries(REGION_POOLS)) {
+      for (const r of regions) {
+        if (t.includes(norm(r))) { country = c; break outer; }
+      }
+    }
+  }
+
+  // 3) old/new fallback
   const isOldWorld =
     (!!country && OLD_WORLD.has(country.toLowerCase())) ||
     hasStrongFrenchCue(textRaw) ||
@@ -315,9 +241,11 @@ function detectCountryRegion(textRaw: string) {
 
   if (!country) country = isOldWorld ? "France" : "USA";
 
+  // 4) region
   const pool = REGION_POOLS[country] || [];
-  let region: string | undefined = pool.find(r => norm(textRaw).includes(norm(r))) || pool[0];
+  let region: string | undefined = pool.find(r => t.includes(norm(r))) || pool[0];
 
+  // 5) optional subregion heuristics
   let subregion: string | null = null;
   if (region === "Bordeaux") {
     if (/(pauillac|margaux|st[.\s-]*julien|st[.\s-]*est[eé]phe|m[ée]doc)/i.test(textRaw)) subregion = "Left Bank";
@@ -378,12 +306,18 @@ async function buildRoundPayloadFromOCR(file: File): Promise<{ questions: StepQu
   if (!res.ok) throw new Error(await res.text());
   const { text } = await res.json();
 
+  if (import.meta.env?.DEV) {
+    console.debug("[OCR text length]", (text || "").length);
+  }
+
   const geo = detectCountryRegion(text || "");
+  if (import.meta.env?.DEV) {
+    console.debug("[Geo detection]", geo);
+  }
   const hemiCorrect = geo.isOldWorld ? 0 : 1;
 
   const vintageOpts = detectVintage(text || "");
   const vdet = detectVarietyOrBlend(text || "");
-  // ✅ FIX: build options from {label, distractors}
   const varietyOpts = ensureFour(vdet.label, vdet.distractors);
 
   const questions: StepQuestion[] = [
@@ -440,12 +374,30 @@ function QuestionStepper({ round, me, onFinished }: { round: GameRound; me: Part
     const isCorrect = selected === q.correctIndex;
     try {
       await submitAnswer(round.id, me.id, selected, isCorrect).catch(() => {});
-      if (isCorrect) await awardPoints(me.id, 10).catch(() => {});
+      if (isCorrect) {
+        await awardPoints(me.id, 10).catch(() => {});
+        // optimistic UI so scoreboard updates immediately
+        // (server/realtime will reconcile shortly)
+        // @ts-ignore score can be null in type, so coerce to number
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (window as any)._noop = null;
+      }
     } finally {
+      if (isCorrect) {
+        // local optimistic increment
+        // eslint-disable-next-line @typescript-eslint/no-use-before-define
+        _optimisticallyBumpScore(me.id);
+      }
       if (index < questions.length - 1) { setIndex(i => i + 1); setSelected(null); }
       else { onFinished(); }
       setBusy(false);
     }
+  }
+
+  // simple helper lives inside component so it can see state setter
+  function _optimisticallyBumpScore(pid: string) {
+    // eslint-disable-next-line @typescript-eslint/no-use-before-define
+    setParticipants(prev => prev.map(p => p.id === pid ? { ...p, score: (Number(p.score) || 0) + 10 } : p));
   }
 
   if (!q) return null;
@@ -672,7 +624,7 @@ export default function WineOptionsGame({ initialCode = "" }: { initialCode?: st
     if (!session || !round) return;
     await endRound(round.id);
     await setSessionStatus(session.id, WRITE_STATUS["finished"]);
-    // Ensure UI reflects finish instantly
+    // finish immediately even if realtime lags:
     setRound(null);
     setSession(s => (s ? { ...s, status: "finished" } as GameSession : s));
   }
@@ -694,7 +646,7 @@ export default function WineOptionsGame({ initialCode = "" }: { initialCode?: st
 
         <div className="flex items-start gap-2 text-xs text-gray-600">
           <AlertTriangle className="h-4 w-4 mt-0.5" />
-          <p>Magic-link sign-in may not persist in private/incognito windows (cookies/localStorage blocked). Use a normal window or email+password/OAuth for hosting.</p>
+          <p>Magic-link sign-in may not persist in private/incognito windows. Use a normal window or email+password/OAuth for hosting.</p>
         </div>
 
         <div className="space-y-2">
