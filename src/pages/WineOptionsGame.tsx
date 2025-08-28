@@ -21,6 +21,8 @@ const ensureFour = (first: string, pool: string[]) => {
   for (const p of pad) if (out.length < 4 && !out.includes(p)) out.push(p);
   return out.slice(0, 4);
 };
+const withTimeout = <T,>(p: Promise<T>, ms = 2000): Promise<T> =>
+  Promise.race([p, new Promise<T>((_, rej) => setTimeout(() => rej(new Error("timeout")), ms))]);
 
 /* ---------- status maps ---------- */
 const WRITE_STATUS: Record<string, GameSession["status"]> = {
@@ -71,6 +73,31 @@ const REGION_POOLS: Record<string, string[]> = {
   Germany: ["Mosel","Rheingau","Pfalz","Nahe","Baden","Franken"],
   Portugal: ["Douro","Alentejo","Vinho Verde","Dão","Dao","Bairrada","Douro Superior"],
 };
+
+/* Build a region→country index (normalized) so we can infer country from region-only labels */
+const REGION_TO_COUNTRY: Record<string, string> = (() => {
+  const map: Record<string,string> = {};
+  for (const [country, regions] of Object.entries(REGION_POOLS)) {
+    for (const r of regions) map[norm(r)] = country;
+  }
+  // a few lone famous appellations that imply country:
+  Object.assign(map, {
+    [norm("Châteauneuf-du-Pape")]: "France",
+    [norm("Chateauneuf du Pape")]: "France",
+    [norm("Hermitage")]: "France",
+    [norm("Côte Rôtie")]: "France",
+    [norm("Cotes du Rhone")]: "France",
+    [norm("Chianti")]: "Italy",
+    [norm("Barolo")]: "Italy",
+    [norm("Barbaresco")]: "Italy",
+    [norm("Jerez")]: "Spain",
+    [norm("Sherry")]: "Spain",
+    [norm("Stellenbosch")]: "South Africa",
+    [norm("Beaujolais")]: "France",
+    [norm("Chablis")]: "France",
+  });
+  return map;
+})();
 
 /* ---------- grape pools & synonyms ---------- */
 const WHITE_POOL = [
@@ -200,13 +227,13 @@ function detectVarietyOrBlend(textRaw: string, hint?: string | null): { label: s
   return { label: "Blend", distractors: ["Cabernet Sauvignon","Pinot Noir","Chardonnay"] };
 }
 
-/* ---------- Country & Region detection (improved) ---------- */
+/* ---------- Country & Region detection (robust) ---------- */
 function detectCountryRegion(textRaw: string) {
   const t = norm(textRaw);
 
   // 1) direct country cues (expanded)
   const countryRules: Array<[string, RegExp]> = [
-    ["France", /(france|vin\s+de\s+france|produit\s+de\s+france|mis\s+en\s+bouteille|appellation|grand\s*cru|premier\s*cru|bordeaux|bourgogne|burgundy|loire|alsace|rhone|rhône|beaujolais|champagne|sancerre|chablis|c[oô]tes?\s*(du|de)\s*rhone|cote\s*d'or|cotes?\s*de\s*beaune|reims|epernay|pays\s*d'oc)/],
+    ["France", /(france|vin\s+de\s+france|produit\s+de\s+france|mis\s+en\s+bouteille|appellation|grand\s*cru|premier\s*cru|bordeaux|bourgogne|burgundy|loire|alsace|rhone|rhône|beaujolais|champagne|sancerre|chablis|c[oô]tes?\s*(du|de)\s*rhone|reims|epernay|pays\s*d'oc)/],
     ["Italy", /(italy|italia|prodotto\s+in\s+italia|denominazi?one|docg|doc\b|igt\b|toscana|chianti|barolo|barbaresco|piemonte|piedmont|veneto|sicilia|etna|valpolicella|soave|alto\s*adige|friuli)/],
     ["Spain", /(spain|espa[ñn]a|denominaci[oó]n\s+de\s+origen|d\.?o\.?|do\b|rioja|ribera\s+del\s+duero|priorat|r[ií]as?\s*baixas|jerez|sherry|cava)/],
     ["Germany", /(germany|deutschland|pr[aä]dikatswein|sp[äa]tlese|kabinett|trocken|mosel|rheingau|pfalz|nahe|baden|franken)/],
@@ -224,12 +251,10 @@ function detectCountryRegion(textRaw: string) {
     if (rx.test(t)) { country = name; break; }
   }
 
-  // 2) infer country from any region name across all pools
+  // 2) infer country from any region name in text
   if (!country) {
-    outer: for (const [c, regions] of Object.entries(REGION_POOLS)) {
-      for (const r of regions) {
-        if (t.includes(norm(r))) { country = c; break outer; }
-      }
+    for (const [regNorm, c] of Object.entries(REGION_TO_COUNTRY)) {
+      if (t.includes(regNorm)) { country = c; break; }
     }
   }
 
@@ -241,9 +266,14 @@ function detectCountryRegion(textRaw: string) {
 
   if (!country) country = isOldWorld ? "France" : "USA";
 
-  // 4) region
+  // 4) choose a region (score by presence)
   const pool = REGION_POOLS[country] || [];
-  let region: string | undefined = pool.find(r => t.includes(norm(r))) || pool[0];
+  let region = pool[0];
+  let bestScore = -1;
+  for (const r of pool) {
+    const s = t.includes(norm(r)) ? r.length : -1;
+    if (s > bestScore) { bestScore = s; region = r; }
+  }
 
   // 5) optional subregion heuristics
   let subregion: string | null = null;
@@ -261,7 +291,7 @@ function detectCountryRegion(textRaw: string) {
   }
 
   const countryOptions = ensureFour(country, isOldWorld ? ["France","Italy","Spain","Germany","Portugal"] : ["USA","Australia","New Zealand","Chile","Argentina"]);
-  const regionOptions  = ensureFour(region || pool[0] || "Bordeaux", pool.filter(r => r !== region));
+  const regionOptions  = ensureFour(region, pool.filter(r => r !== region));
 
   let subregionOptions: string[] | null = null;
   if (subregion) {
@@ -271,7 +301,7 @@ function detectCountryRegion(textRaw: string) {
       "Napa Valley": ["Oakville/Rutherford","St. Helena","Mount Veeder","Howell Mountain"],
       Rioja: ["Rioja Alta","Rioja Alavesa","Rioja Oriental"],
     };
-    const poolS = SUBS[region || ""] || [];
+    const poolS = SUBS[region] || [];
     subregionOptions = ensureFour(subregion, poolS.filter(s => s !== subregion));
   }
 
@@ -279,7 +309,7 @@ function detectCountryRegion(textRaw: string) {
     isOldWorld,
     countryCorrect: country,
     countryOptions,
-    regionCorrect: region || pool[0] || "Bordeaux",
+    regionCorrect: region,
     regionOptions,
     subregionCorrect: subregion,
     subregionOptions,
@@ -306,18 +336,12 @@ async function buildRoundPayloadFromOCR(file: File): Promise<{ questions: StepQu
   if (!res.ok) throw new Error(await res.text());
   const { text } = await res.json();
 
-  if (import.meta.env?.DEV) {
-    console.debug("[OCR text length]", (text || "").length);
-  }
-
   const geo = detectCountryRegion(text || "");
-  if (import.meta.env?.DEV) {
-    console.debug("[Geo detection]", geo);
-  }
   const hemiCorrect = geo.isOldWorld ? 0 : 1;
 
   const vintageOpts = detectVintage(text || "");
   const vdet = detectVarietyOrBlend(text || "");
+  // ✅ Correct: build options from label + distractors (this was the bug)
   const varietyOpts = ensureFour(vdet.label, vdet.distractors);
 
   const questions: StepQuestion[] = [
@@ -359,7 +383,14 @@ function InviteBar({ inviteCode }: { inviteCode: string }) {
   );
 }
 
-function QuestionStepper({ round, me, onFinished }: { round: GameRound; me: Participant; onFinished: () => void; }) {
+function QuestionStepper({
+  round, me, onFinished, onCorrect,
+}: {
+  round: GameRound;
+  me: Participant;
+  onFinished: () => void;
+  onCorrect: (participantId: string) => void;
+}) {
   const questions: StepQuestion[] = round.payload?.questions ?? [];
   const [index, setIndex] = useState(0);
   const [selected, setSelected] = useState<number | null>(null);
@@ -372,32 +403,19 @@ function QuestionStepper({ round, me, onFinished }: { round: GameRound; me: Part
     if (selected == null || busy) return;
     setBusy(true);
     const isCorrect = selected === q.correctIndex;
+
     try {
-      await submitAnswer(round.id, me.id, selected, isCorrect).catch(() => {});
+      // Never hang: time out network in 2s and keep moving
+      await withTimeout(submitAnswer(round.id, me.id, selected, isCorrect)).catch(() => {});
       if (isCorrect) {
-        await awardPoints(me.id, 10).catch(() => {});
-        // optimistic UI so scoreboard updates immediately
-        // (server/realtime will reconcile shortly)
-        // @ts-ignore score can be null in type, so coerce to number
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        (window as any)._noop = null;
+        await withTimeout(awardPoints(me.id, 10)).catch(() => {});
+        onCorrect(me.id); // optimistic UI
       }
     } finally {
-      if (isCorrect) {
-        // local optimistic increment
-        // eslint-disable-next-line @typescript-eslint/no-use-before-define
-        _optimisticallyBumpScore(me.id);
-      }
       if (index < questions.length - 1) { setIndex(i => i + 1); setSelected(null); }
       else { onFinished(); }
       setBusy(false);
     }
-  }
-
-  // simple helper lives inside component so it can see state setter
-  function _optimisticallyBumpScore(pid: string) {
-    // eslint-disable-next-line @typescript-eslint/no-use-before-define
-    setParticipants(prev => prev.map(p => p.id === pid ? { ...p, score: (Number(p.score) || 0) + 10 } : p));
   }
 
   if (!q) return null;
@@ -637,6 +655,11 @@ export default function WineOptionsGame({ initialCode = "" }: { initialCode?: st
   const isParticipantHost = (p: Participant, s: GameSession) =>
     (!!s.host_user_id && !!p.user_id && p.user_id === s.host_user_id) || !!p.is_host;
 
+  // optimistic scoreboard bump when a player answers correctly
+  function handleCorrect(pid: string) {
+    setParticipants(prev => prev.map(p => p.id === pid ? { ...p, score: (Number(p.score) || 0) + 10 } : p));
+  }
+
   if (!session) {
     return (
       <div className="max-w-xl mx-auto p-6 space-y-6">
@@ -751,7 +774,7 @@ export default function WineOptionsGame({ initialCode = "" }: { initialCode?: st
 
       {round && uiStatus !== "finished" && (
         <div className="p-4 rounded-2xl border bg-white shadow-sm">
-          {me && <QuestionStepper round={round} me={me} onFinished={finishGame} />}
+          {me && <QuestionStepper round={round} me={me} onFinished={finishGame} onCorrect={handleCorrect} />}
         </div>
       )}
 
