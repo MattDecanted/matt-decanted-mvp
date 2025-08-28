@@ -15,7 +15,6 @@ import {
 const toPlain = (s?: string | null) => (s ? s.replace(/<[^>]+>/g, "") : "");
 const pickFour = (correct: string, pool: string[]) => {
   const uniq = Array.from(new Set([correct, ...pool.filter(p => p && p !== correct)]));
-  // ensure we always have 4
   const fallback = ["Cabernet Sauvignon","Pinot Noir","Chardonnay","Sauvignon Blanc","Riesling","Merlot","Syrah"];
   for (const f of fallback) if (uniq.length < 4 && !uniq.includes(f)) uniq.push(f);
   return uniq.slice(0, 4);
@@ -27,37 +26,20 @@ const parseVarList = (v: unknown): string[] =>
   typeof v === "string" ? v.split(/[,;/]| and /i).map(x => x.trim()).filter(Boolean) : [];
 
 /* ---------- status maps ---------- */
-const WRITE_STATUS: Record<string, GameSession["status"]> = {
-  waiting: "open",
-  in_progress: "active",
-  finished: "finished",
-  closed: "cancelled",
-};
-const READ_STATUS: Record<GameSession["status"], string> = {
-  open: "waiting",
-  active: "in_progress",
-  finished: "finished",
-  cancelled: "closed",
-};
+const WRITE_STATUS: Record<string, GameSession["status"]> = { waiting: "open", in_progress: "active", finished: "finished", closed: "cancelled" };
+const READ_STATUS: Record<GameSession["status"], string> = { open: "waiting", active: "in_progress", finished: "finished", cancelled: "closed" };
 
 /* ---------- OCR helpers ---------- */
 const FN_OCR = "/.netlify/functions/ocr-label";
 
-type LabelHints = {
-  vintage_year?: number | null;
-  is_non_vintage?: boolean;
-  inferred_variety?: string | null;
-};
+type LabelHints = { vintage_year?: number | null; is_non_vintage?: boolean; inferred_variety?: string | null; };
 
 function extractLabelHints(text: string): LabelHints {
   const t = norm(text);
-
-  // Vintage / NV
   const years = Array.from(t.matchAll(/\b(19|20)\d{2}\b/g)).map((m) => Number(m[0]));
   const possibleYear = years.find((y) => y >= 1980 && y <= new Date().getFullYear());
   const isNV = /\b(?:nv|non\s*-?\s*vintage)\b/.test(t);
 
-  // Variety (tolerant; catches "blanc de blancs" => Chardonnay)
   const rx = {
     chardonnay: /\bchard[a-z0-9-]*onn?ay\b|\bblanc\s+de\s+blancs?\b/,
     pinotNoir:  /\bpinot\s*no[i1]r\b/,
@@ -99,11 +81,7 @@ function extractLabelHints(text: string): LabelHints {
   else if (rx.malbec.test(t)) inferred_variety = "Malbec";
   else if (rx.zinfandel.test(t)) inferred_variety = "Zinfandel";
 
-  return {
-    vintage_year: isNV ? null : possibleYear ?? null,
-    is_non_vintage: isNV || undefined,
-    inferred_variety,
-  };
+  return { vintage_year: isNV ? null : possibleYear ?? null, is_non_vintage: isNV || undefined, inferred_variety };
 }
 
 export type StepQuestion = {
@@ -127,113 +105,152 @@ type GeoPick = {
   regionOptions: string[];
   subregionCorrect?: string | null;
   subregionOptions?: string[] | null;
-  typicalVarieties?: string[]; // parsed from `varieties`
+  typicalVarieties?: string[];
   isOldWorld?: boolean;
 };
 
 function uniq<T>(arr: T[]) { return Array.from(new Set(arr)); }
+
+/** Heuristic country guess if DB lookup yields nothing */
+function guessCountry(text: string): string | undefined {
+  const t = norm(text);
+  if (/(appellation|grand\s+cru|premier\s+cru|mis\s+en\s+bouteille|ch[âa]teau|c[ôo]te[s]?|bourgogne|bordeaux|champagne|loire|alsace|beaujolais|r[hôo]ne|provence|languedoc|jura|sancerre|chablis)/i.test(t)) return "France";
+  if (/(denominazi|docg\b|doc\b|toscana|chianti|barolo|barbaresco|piemonte|piedmont|veneto|sicilia|etna|montepulciano|valpolicella|soave|prosecco)/i.test(t)) return "Italy";
+  if (/(denominaci[óo]n\s+de\s+origen|rioja|ribera\s+del\s+duero|priorat|r[íi]as?\s*baixas|cava)/i.test(t)) return "Spain";
+  if (/(qualit[äa]tswein|pr[äa]dikatswein|trocken|kabinett|sp[äa]tlese|rheingau|mosel|pfalz)/i.test(t)) return "Germany";
+  if (/(douro|vinho\s+verde|alentejo|d[ãa]o|portugal)/i.test(t)) return "Portugal";
+  if (/(napa|sonoma|california|ava\b|american\s+viticultural|willamette|columbia\s+valley|washington)/i.test(t)) return "USA";
+  if (/(barossa|mclaren\s+vale|margaret\s+river|yarra\s+valley|coonawarra|clare\s+valley)/i.test(t)) return "Australia";
+  if (/(marlborough|central\s+otago|hawke'?s\s+bay)/i.test(t)) return "New Zealand";
+  if (/(mendoza|uco\s+valley|patagonia|salta)/i.test(t)) return "Argentina";
+  if (/(maipo|colchagua|casablanca|aconcagua)/i.test(t)) return "Chile";
+  if (/(stellenbosch|swartland|walker\s+bay|western\s+cape)/i.test(t)) return "South Africa";
+  return undefined;
+}
+
+const REGION_POOLS: Record<string, string[]> = {
+  France: ["Bordeaux","Burgundy","Beaujolais","Loire","Rhône","Champagne","Alsace","Provence"],
+  Italy: ["Tuscany","Piedmont","Veneto","Sicily"],
+  Spain: ["Rioja","Ribera del Duero","Priorat","Rías Baixas"],
+  USA: ["Napa Valley","Sonoma","Willamette Valley","Columbia Valley"],
+  Australia: ["Barossa","McLaren Vale","Margaret River","Yarra Valley"],
+  "New Zealand": ["Marlborough","Central Otago","Hawke's Bay","Nelson"],
+  Chile: ["Maipo","Colchagua","Casablanca","Maule"],
+  Argentina: ["Mendoza","Salta","Patagonia","Uco Valley"],
+  "South Africa": ["Stellenbosch","Swartland","Walker Bay","Paarl"],
+  Germany: ["Mosel","Rheingau","Pfalz","Nahe"],
+  Portugal: ["Douro","Alentejo","Vinho Verde","Dão"],
+};
 
 async function fetchGeoFromWineReference(ocrText: string): Promise<GeoPick> {
   try {
     const t = norm(ocrText);
     const toks = tokenize(ocrText);
 
-    // Strong country hints
-    let hintCountry: string | undefined;
-    if (/\bvin\s+de\s+france\b|\bproduit\s+de\s+france\b|\bfrance\b/.test(t)) hintCountry = "France";
-    if (/\bitaly\b|\bitalia\b/.test(t)) hintCountry = hintCountry || "Italy";
-    if (/\bspain\b|espa[nñ]a/.test(t)) hintCountry = hintCountry || "Spain";
-
-    // 1) Name matches on country/region/subregion
+    // 1) Try DB fuzzy match first
     const needles = toks.slice(0, 8);
     const ors = needles.map(n =>
       `country.ilike.%${n}%,region.ilike.%${n}%,subregion.ilike.%${n}%`
     ).join(",");
 
-    const { data: nameRows, error } = ors
-      ? await supabase
-          .from("wine_reference")
+    const { data: nameRows } = ors
+      ? await supabase.from("wine_reference")
           .select("country,region,subregion,varieties")
           .or(ors)
-      : { data: [] as WineRefRow[], error: null as any };
+      : { data: [] as WineRefRow[] };
 
-    if (error) {
-      console.warn("[wine_reference] lookup error:", error.message);
-    }
+    if (nameRows && nameRows.length) {
+      const scoreRow = (r: WineRefRow) => {
+        let s = 0;
+        if (r.region && t.includes(norm(r.region))) s += 4;
+        if (r.subregion && t.includes(norm(r.subregion))) s += 5;
+        if (r.country && t.includes(norm(r.country))) s += 2;
+        s += (r.region ? Math.min(3, r.region.length / 10) : 0);
+        return s;
+      };
+      const scored = nameRows.map(r => ({ r, s: scoreRow(r) })).sort((a,b)=>b.s-a.s);
+      const best = scored[0].r;
 
-    const rows: WineRefRow[] = [...(nameRows || [])];
-    if (!rows.length) return { countryOptions: [], regionOptions: [] };
+      const countryCorrect = best.country || undefined;
+      const byCountry = scored.filter(x => x.r.country === countryCorrect);
 
-    // Score rows
-    const scoreRow = (r: WineRefRow) => {
-      let s = 0;
-      if (r.region && t.includes(norm(r.region))) s += 4;
-      if (r.subregion && t.includes(norm(r.subregion))) s += 5;
-      if (r.country && t.includes(norm(r.country))) s += 2;
-      if (hintCountry && r.country === hintCountry) s += 3;
-      s += (r.region ? Math.min(3, r.region.length / 10) : 0);
-      return s;
-    };
-    const scored = rows.map(r => ({ r, s: scoreRow(r) }))
-                       .sort((a,b) => b.s - a.s || (hintCountry ? (a.r.country === hintCountry ? -1 : 1) : 0));
-    const best = scored[0].r;
+      const countryOptions = uniq([
+        ...(countryCorrect ? [countryCorrect] : []),
+        ...scored.map(x => x.r.country || "").filter(Boolean)
+      ]).slice(0,4) as string[];
 
-    const countryCorrect = (best.country || undefined) as string | undefined;
-    const byCountry = scored.filter(x => x.r.country === countryCorrect);
+      const regionCounts = new Map<string, number>();
+      byCountry.forEach(x => {
+        const key = (x.r.region || "").trim();
+        if (key) regionCounts.set(key, (regionCounts.get(key) || 0) + x.s);
+      });
+      const regionCorrect = (regionCounts.size
+        ? [...regionCounts.entries()].sort((a,b)=>b[1]-a[1])[0][0]
+        : (best.region || undefined)) as string | undefined;
 
-    const countriesSorted = uniq(scored.map(x => x.r.country || "").filter(Boolean));
-    const countryOptions = [countryCorrect, ...countriesSorted.filter(c => c !== countryCorrect)]
-      .filter(Boolean).slice(0,4) as string[];
+      const regionOptions = uniq([
+        ...(regionCorrect ? [regionCorrect] : []),
+        ...byCountry.map(x => (x.r.region || "").trim()).filter(Boolean)
+      ]).slice(0,4);
 
-    // Regions
-    const regionCounts = new Map<string, number>();
-    byCountry.forEach(x => {
-      const key = (x.r.region || "").trim();
-      if (key) regionCounts.set(key, (regionCounts.get(key) || 0) + x.s);
-    });
-    const regionCorrect = (regionCounts.size
-      ? [...regionCounts.entries()].sort((a,b)=>b[1]-a[1])[0][0]
-      : (best.region || undefined)) as string | undefined;
-
-    const regionOptions = uniq([
-      ...(regionCorrect ? [regionCorrect] : []),
-      ...byCountry.map(x => (x.r.region || "").trim()).filter(Boolean)
-    ]).slice(0,4);
-
-    // Subregions (optional)
-    let subregionCorrect: string | null = null;
-    let subregionOptions: string[] | null = null;
-    if (regionCorrect) {
-      const subs = byCountry
-        .filter(x => (x.r.region || "").trim() === regionCorrect && x.r.subregion)
-        .map(x => (x.r.subregion || "").trim())
-        .filter(Boolean);
-      const uniqSubs = uniq(subs);
-      if (uniqSubs.length) {
-        subregionCorrect = uniqSubs[0];
-        subregionOptions = [subregionCorrect, ...uniqSubs.slice(1)].slice(0,4);
+      let subregionCorrect: string | null = null;
+      let subregionOptions: string[] | null = null;
+      if (regionCorrect) {
+        const subs = byCountry
+          .filter(x => (x.r.region || "").trim() === regionCorrect && x.r.subregion)
+          .map(x => (x.r.subregion || "").trim())
+          .filter(Boolean);
+        const uniqSubs = uniq(subs);
+        if (uniqSubs.length) {
+          subregionCorrect = uniqSubs[0];
+          subregionOptions = [subregionCorrect, ...uniqSubs.slice(1)].slice(0,4);
+        }
       }
+
+      return {
+        countryCorrect,
+        countryOptions,
+        regionCorrect,
+        regionOptions,
+        subregionCorrect,
+        subregionOptions,
+        typicalVarieties: parseVarList(best.varieties),
+        isOldWorld: isOldWorldCountry(countryCorrect),
+      };
     }
 
-    const typicalVarieties = parseVarList(best.varieties);
-    const isOldWorld = isOldWorldCountry(countryCorrect);
+    // 2) Fallback heuristics (what was missing before)
+    const guess = guessCountry(ocrText);
+    if (guess) {
+      const pool = REGION_POOLS[guess] || [];
+      const regionHit = pool.find(r => t.includes(norm(r)));
+      const countryOptions = (OLD_WORLD.has(guess)
+        ? ["France","Italy","Spain","Germany","Portugal"]
+        : ["USA","Australia","New Zealand","Chile"]).slice(0,4);
+      const regionOptions = pickFour(regionHit || (pool[0] || ""), pool.filter(x => x !== regionHit));
+      return {
+        countryCorrect: guess,
+        countryOptions: pickFour(guess, countryOptions),
+        regionCorrect: regionHit || (pool[0] || undefined),
+        regionOptions,
+        subregionCorrect: null,
+        subregionOptions: null,
+        typicalVarieties: undefined,
+        isOldWorld: isOldWorldCountry(guess),
+      };
+    }
 
-    return {
-      countryCorrect,
-      countryOptions,
-      regionCorrect,
-      regionOptions,
-      subregionCorrect,
-      subregionOptions,
-      typicalVarieties,
-      isOldWorld,
-    };
+    // Nothing found
+    return { countryOptions: [], regionOptions: [] };
   } catch {
     return { countryOptions: [], regionOptions: [] };
   }
 }
 
-/* ---------- variety/blend detection (uses typicalVarieties when helpful) ---------- */
+/* ---------- variety/blend detection (smarter, color-aware) ---------- */
+const WHITE_SET = new Set(["Chardonnay","Sauvignon Blanc","Riesling","Pinot Gris","Chenin Blanc","Viognier","Moscato"]);
+const RED_SET   = new Set(["Pinot Noir","Gamay","Nebbiolo","Sangiovese","Tempranillo","Cabernet Sauvignon","Merlot","Syrah","Grenache","Malbec","Zinfandel","Mourvèdre"]);
+
 function detectVarietyOrBlend(
   text: string,
   hint?: string | null,
@@ -241,8 +258,6 @@ function detectVarietyOrBlend(
   typicalVarieties?: string[]
 ): { label: string; distractors: string[] } {
   const t = norm(text);
-
-  // Explicit multi-grape patterns (NOT "cuvée")
   const explicitBlend =
     /\bblend\b|\bgsm\b|\bfield\s*blend\b|cabernet.+merlot|merlot.+cabernet|grenache.+syrah|syrah.+grenache/.test(t);
 
@@ -279,36 +294,26 @@ function detectVarietyOrBlend(
     "Mosel": "Riesling",
   };
 
-  // Use table's typicalVarieties if we didn't get a direct OCR hit
   const tv = (typicalVarieties || []).filter(Boolean);
   const tvTop = tv[0];
 
   if (hits.length >= 2 || explicitBlend) return { label: "Blend", distractors: ["Cabernet Sauvignon","Pinot Noir","Chardonnay"] };
   if (hits.length === 1) {
     const v = hits[0];
-    const d: Record<string, string[]> = {
-      "Chardonnay": ["Sauvignon Blanc","Riesling","Blend"],
-      "Pinot Noir": ["Gamay","Merlot","Blend"],
-      "Cabernet Sauvignon": ["Merlot","Syrah","Blend"],
-      "Riesling": ["Chenin Blanc","Sauvignon Blanc","Blend"],
-      "Gamay": ["Pinot Noir","Merlot","Blend"],
-    };
-    return { label: v, distractors: d[v] || ["Cabernet Sauvignon","Pinot Noir","Chardonnay"] };
+    const pool = WHITE_SET.has(v) ? ["Sauvignon Blanc","Riesling","Chardonnay","Pinot Gris","Chenin Blanc"] :
+                                    ["Pinot Noir","Gamay","Merlot","Syrah","Cabernet Sauvignon"];
+    const d = pool.filter(x => x !== v).slice(0,3);
+    return { label: v, distractors: d.length ? d : ["Cabernet Sauvignon","Pinot Noir","Chardonnay"] };
   }
 
-  // No OCR hit: prefer table hint → then region hint → then original OCR hint
   const fallback = tvTop || (regionName ? byRegion[regionName] : undefined) || hint || "Blend";
-  const fallbackD = {
-    "Blend": ["Cabernet Sauvignon","Pinot Noir","Chardonnay"],
-    "Chardonnay": ["Sauvignon Blanc","Riesling","Blend"],
-    "Pinot Noir": ["Gamay","Merlot","Blend"],
-    "Sauvignon Blanc": ["Chardonnay","Riesling","Blend"],
-    "Riesling": ["Chenin Blanc","Sauvignon Blanc","Blend"],
-  } as Record<string,string[]>;
-  return { label: fallback, distractors: fallbackD[fallback] || ["Cabernet Sauvignon","Pinot Noir","Chardonnay"] };
+  const pool = WHITE_SET.has(fallback) ? ["Sauvignon Blanc","Riesling","Chardonnay","Pinot Gris","Chenin Blanc"]
+                                       : ["Pinot Noir","Gamay","Merlot","Syrah","Cabernet Sauvignon"];
+  const d = pool.filter(x => x !== fallback).slice(0,3);
+  return { label: fallback, distractors: d.length ? d : ["Cabernet Sauvignon","Pinot Noir","Chardonnay"] };
 }
 
-/* ---------- build steps from OCR + wine_reference (UPDATED) ---------- */
+/* ---------- build steps from OCR + wine_reference ---------- */
 async function buildRoundPayloadFromOCR(file: File): Promise<{ questions: StepQuestion[] }> {
   const form = new FormData();
   form.append("file", file);
@@ -320,41 +325,34 @@ async function buildRoundPayloadFromOCR(file: File): Promise<{ questions: StepQu
   const geo = await fetchGeoFromWineReference(text || "");
   const now = new Date().getFullYear();
 
-  // Hemisphere (prefer DB country) — NO ambiguous ?? / ||
   const countryFromDB = geo.countryCorrect;
-  const isOld = (geo.isOldWorld === true)
-    || isOldWorldCountry(countryFromDB)
-    || /\b(france|italy|spain|germany|portugal|austria|greece|hungary|georgia)\b/i.test(text || "");
+  const isOld =
+    (geo.isOldWorld === true) ||
+    isOldWorldCountry(countryFromDB) ||
+    /\b(france|italy|spain|germany|portugal|austria|greece|hungary|georgia)\b/i.test(text || "") ||
+    /(appellation|grand\s+cru|premier\s+cru|mis\s+en\s+bouteille|ch[âa]teau|c[ôo]te)/i.test(text || "");
   const hemiCorrect = isOld ? 0 : 1;
 
-  // Vintage
   const vintageOpts = hints.is_non_vintage
     ? ["NV", String(now), String(now - 1), String(now - 2)]
     : hints.vintage_year
       ? [String(hints.vintage_year), String(hints.vintage_year - 1), String(hints.vintage_year + 1), "NV"]
       : ["NV", String(now), String(now - 1), String(now - 2)];
 
-  // Country/Region/Subregion (DB-first, with fallbacks)
   const countryCorrect = countryFromDB || (isOld ? "France" : "USA");
   const countryOptions = geo.countryOptions.length
     ? pickFour(countryCorrect, geo.countryOptions)
     : (isOld ? ["France","Italy","Spain","Germany"] : ["USA","Australia","New Zealand","Chile"]);
 
-  const regionCorrect = geo.regionCorrect
-    || (countryCorrect === "France" ? "Bordeaux"
-      : countryCorrect === "USA" ? "Napa Valley"
-      : "Rioja");
+  const regionCorrect =
+    geo.regionCorrect ||
+    (REGION_POOLS[countryCorrect]?.[0] ?? undefined);
   const regionOptions = geo.regionOptions.length
-    ? pickFour(regionCorrect, geo.regionOptions)
-    : (countryCorrect === "France"
-        ? ["Bordeaux","Burgundy","Beaujolais","Loire"]
-        : countryCorrect === "USA"
-          ? ["Napa Valley","Sonoma","Willamette Valley","Columbia Valley"]
-          : ["Rioja","Ribera del Duero","Priorat","Rías Baixas"]);
+    ? pickFour(regionCorrect || "", geo.regionOptions)
+    : (REGION_POOLS[countryCorrect] ? pickFour(REGION_POOLS[countryCorrect][0], REGION_POOLS[countryCorrect].slice(1)) : ["Bordeaux","Burgundy","Beaujolais","Loire"]);
 
   const subregionOptions = geo.subregionOptions || null;
 
-  // Variety/Blend (use varieties from wine_reference)
   const vb = detectVarietyOrBlend(text || "", hints.inferred_variety, regionCorrect, geo.typicalVarieties);
   const varietyOpts = pickFour(vb.label, vb.distractors);
 
@@ -376,24 +374,8 @@ function InviteBar({ inviteCode }: { inviteCode: string }) {
   const [copied, setCopied] = useState(false);
   const base = typeof window !== "undefined" ? window.location.origin : "";
   const joinUrl = `${base}/join/${inviteCode}`;
-
-  async function copy() {
-    try {
-      await navigator.clipboard.writeText(joinUrl);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
-    } catch {}
-  }
-  async function share() {
-    try {
-      if (navigator.share) {
-        await navigator.share({ title: "Join my Wine Options game", text: `Use code ${inviteCode}`, url: joinUrl });
-      } else {
-        await copy();
-      }
-    } catch {}
-  }
-
+  async function copy() { try { await navigator.clipboard.writeText(joinUrl); setCopied(true); setTimeout(()=>setCopied(false),1500);} catch {} }
+  async function share() { try { if (navigator.share) await navigator.share({ title:"Join my Wine Options game", text:`Use code ${inviteCode}`, url:joinUrl }); else await copy(); } catch {} }
   return (
     <div className="flex items-center gap-3 p-4 rounded-2xl border bg-white shadow-sm">
       <div>
@@ -401,19 +383,13 @@ function InviteBar({ inviteCode }: { inviteCode: string }) {
         <div className="font-mono text-2xl font-semibold tracking-wide">{inviteCode}</div>
       </div>
       <div className="flex-1" />
-      <button onClick={copy} className="inline-flex items-center gap-2 px-3 py-2 rounded-2xl border hover:shadow">
-        <Copy className="h-4 w-4" /> {copied ? "Copied" : "Copy"}
-      </button>
-      <button onClick={share} className="inline-flex items-center gap-2 px-3 py-2 rounded-2xl bg-black text-white hover:shadow">
-        <Share2 className="h-4 w-4" /> Share
-      </button>
+      <button onClick={copy} className="inline-flex items-center gap-2 px-3 py-2 rounded-2xl border hover:shadow"><Copy className="h-4 w-4" /> {copied ? "Copied" : "Copy"}</button>
+      <button onClick={share} className="inline-flex items-center gap-2 px-3 py-2 rounded-2xl bg-black text-white hover:shadow"><Share2 className="h-4 w-4" /> Share</button>
     </div>
   );
 }
 
-function QuestionStepper({
-  round, me, onFinished,
-}: { round: GameRound; me: Participant; onFinished: () => void; }) {
+function QuestionStepper({ round, me, onFinished }: { round: GameRound; me: Participant; onFinished: () => void; }) {
   const questions: StepQuestion[] = round.payload?.questions ?? [];
   const [index, setIndex] = useState(0);
   const [selected, setSelected] = useState<number | null>(null);
@@ -426,23 +402,12 @@ function QuestionStepper({
     if (selected == null || busy) return;
     setBusy(true);
     const isCorrect = selected === q.correctIndex;
-
     try {
-      await submitAnswer(round.id, me.id, selected, isCorrect).catch((e) =>
-        console.error("[submitAnswer] failed", e)
-      );
-      if (isCorrect) {
-        await awardPoints(me.id, 10).catch((e) =>
-          console.error("[awardPoints] failed", e)
-        );
-      }
+      await submitAnswer(round.id, me.id, selected, isCorrect).catch((e) => console.error("[submitAnswer] failed", e));
+      if (isCorrect) await awardPoints(me.id, 10).catch((e) => console.error("[awardPoints] failed", e));
     } finally {
-      if (index < questions.length - 1) {
-        setIndex((i) => i + 1);
-        setSelected(null);
-      } else {
-        onFinished();
-      }
+      if (index < questions.length - 1) { setIndex(i => i + 1); setSelected(null); }
+      else { onFinished(); }
       setBusy(false);
     }
   }
@@ -474,11 +439,7 @@ function QuestionStepper({
         })}
       </div>
       <div className="flex justify-end">
-        <button
-          onClick={handleNext}
-          disabled={selected == null || busy}
-          className="inline-flex items-center gap-2 px-5 py-2.5 rounded-2xl bg-black text-white disabled:opacity-60"
-        >
+        <button onClick={handleNext} disabled={selected == null || busy} className="inline-flex items-center gap-2 px-5 py-2.5 rounded-2xl bg-black text-white disabled:opacity-60">
           {index < questions.length - 1 ? (busy ? "Saving…" : "Next") : (busy ? "Finishing…" : "See Results")}
         </button>
       </div>
@@ -503,38 +464,20 @@ export default function WineOptionsGame({ initialCode = "" }: { initialCode?: st
   useEffect(() => () => unsubscribe(channelRef.current), []);
 
   async function refetchParticipants(sessionId: string) {
-    const { data: ps } = await supabase
-      .from("session_participants")
-      .select("*")
-      .eq("session_id", sessionId)
-      .order("joined_at", { ascending: true });
-
+    const { data: ps } = await supabase.from("session_participants").select("*").eq("session_id", sessionId).order("joined_at", { ascending: true });
     setParticipants(ps ?? []);
-
     const { data: auth } = await supabase.auth.getUser();
     const uid = auth?.user?.id ?? null;
-
     if (ps) {
-      if (me) {
-        const mineById = ps.find((p: any) => p.id === me.id) as Participant | undefined;
-        if (mineById) { setMe(mineById); return; }
-      }
-      if (uid) {
-        const mineByUid = ps.find((p: any) => p.user_id === uid) as Participant | undefined;
-        if (mineByUid) { setMe(mineByUid); return; }
-      }
+      if (me) { const mineById = ps.find((p: any) => p.id === me.id) as Participant | undefined; if (mineById) { setMe(mineById); return; } }
+      if (uid) { const mineByUid = ps.find((p: any) => p.user_id === uid) as Participant | undefined; if (mineByUid) { setMe(mineByUid); return; } }
       const hostRow = ps.find((p: any) => p.is_host) as Participant | undefined;
       if (!me && hostRow) setMe(hostRow);
     }
   }
 
   async function refetchLatestRound(sessionId: string) {
-    const { data: r } = await supabase
-      .from("game_rounds")
-      .select("*")
-      .eq("session_id", sessionId)
-      .order("started_at", { ascending: false })
-      .limit(1);
+    const { data: r } = await supabase.from("game_rounds").select("*").eq("session_id", sessionId).order("started_at", { ascending: false }).limit(1);
     if (r && r[0]) setRound(r[0] as GameRound);
   }
 
@@ -547,7 +490,6 @@ export default function WineOptionsGame({ initialCode = "" }: { initialCode?: st
     });
   }
 
-  // Polling backs up realtime for participants + latest round
   useEffect(() => {
     if (!session?.id) return;
     const t = setInterval(() => {
@@ -557,33 +499,22 @@ export default function WineOptionsGame({ initialCode = "" }: { initialCode?: st
     return () => clearInterval(t);
   }, [session?.id]);
 
-  // Auto-join if we landed on /join/:code
+  // Auto-join if /join/:code
   useEffect(() => {
     const run = async () => {
       if (!initialCode || session) return;
       setLoading(true); setErr(null);
       try {
         const res = await fetch("/.netlify/functions/join-session", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            invite_code: initialCode.trim().toUpperCase(),
-            user_id: null,
-            display_name: displayName || "Guest",
-          }),
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ invite_code: initialCode.trim().toUpperCase(), user_id: null, display_name: displayName || "Guest" }),
         });
         if (!res.ok) throw new Error(await res.text());
         const { session: s, participant } = await res.json();
-        setSession(s);
-        setMe(participant);
-        setCodeInput(s.invite_code);
-        await refetchParticipants(s.id);
-        attachRealtime(s.id);
-      } catch (e: any) {
-        setErr(e?.message || "Failed to join game.");
-      } finally {
-        setLoading(false);
-      }
+        setSession(s); setMe(participant); setCodeInput(s.invite_code);
+        await refetchParticipants(s.id); attachRealtime(s.id);
+      } catch (e: any) { setErr(e?.message || "Failed to join game."); }
+      finally { setLoading(false); }
     };
     run();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -594,39 +525,19 @@ export default function WineOptionsGame({ initialCode = "" }: { initialCode?: st
     try {
       const { data } = await supabase.auth.getUser();
       const uid = data?.user?.id;
-      if (!uid) {
-        setErr("Please sign in to host a game.");
-        setLoading(false);
-        return;
-      }
-
+      if (!uid) { setErr("Please sign in to host a game."); setLoading(false); return; }
       const res = await fetch("/.netlify/functions/create-session", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
+        method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ host_user_id: uid, display_name: displayName || "Host" }),
       });
       if (!res.ok) throw new Error(await res.text());
       const { session: s } = await res.json();
-
-      setSession(s);
-      await refetchParticipants(s.id);
-
-      const { data: psMe } = await supabase
-        .from("session_participants")
-        .select("*")
-        .eq("session_id", s.id)
-        .or(`is_host.eq.true,user_id.eq.${uid}`)
-        .limit(1);
-
+      setSession(s); await refetchParticipants(s.id);
+      const { data: psMe } = await supabase.from("session_participants").select("*").eq("session_id", s.id).or(`is_host.eq.true,user_id.eq.${uid}`).limit(1);
       if (psMe && psMe[0]) setMe(psMe[0] as Participant);
-
-      setCodeInput(s.invite_code);
-      attachRealtime(s.id);
-    } catch (e: any) {
-      setErr(e?.message || "Failed to create game.");
-    } finally {
-      setLoading(false);
-    }
+      setCodeInput(s.invite_code); attachRealtime(s.id);
+    } catch (e: any) { setErr(e?.message || "Failed to create game."); }
+    finally { setLoading(false); }
   }
 
   async function handleJoin() {
@@ -636,116 +547,62 @@ export default function WineOptionsGame({ initialCode = "" }: { initialCode?: st
       if (!code) { setErr("Enter an invite code."); setLoading(false); return; }
       const { data } = await supabase.auth.getUser();
       const uid = data?.user?.id ?? null;
-
       const res = await fetch("/.netlify/functions/join-session", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
+        method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ invite_code: code, user_id: uid, display_name: displayName || "Guest" }),
       });
       if (!res.ok) throw new Error(await res.text());
       const { session: s, participant } = await res.json();
-
-      setSession(s);
-      setMe(participant);
-      setCodeInput(s.invite_code);
-      await refetchParticipants(s.id);
-      attachRealtime(s.id);
-    } catch (e: any) {
-      setErr(e?.message || "Failed to join game.");
-    } finally {
-      setLoading(false);
-    }
+      setSession(s); setMe(participant); setCodeInput(s.invite_code);
+      await refetchParticipants(s.id); attachRealtime(s.id);
+    } catch (e: any) { setErr(e?.message || "Failed to join game."); }
+    finally { setLoading(false); }
   }
 
   async function startGameFromUpload(file: File) {
     if (!session || !me) return;
-    setUploadErr(null);
-    setUploadBusy(true);
+    setUploadErr(null); setUploadBusy(true);
     try {
       const payload = await buildRoundPayloadFromOCR(file);
-
       const res = await fetch("/.netlify/functions/start-rounds", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          session_id: session.id,
-          caller_user_id: me.user_id,
-          payload,
-          round_number: 1,
-        }),
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ session_id: session.id, caller_user_id: me.user_id, payload, round_number: 1 }),
       });
       if (!res.ok) throw new Error(await res.text());
       const { round: r } = await res.json();
-
       setRound(r);
-    } catch (er: any) {
-      setUploadErr(er?.message || "OCR/Start round failed");
-    } finally {
-      setUploadBusy(false);
-    }
+    } catch (er: any) { setUploadErr(er?.message || "OCR/Start round failed"); }
+    finally { setUploadBusy(false); }
   }
 
   async function finishGame() {
     if (!session || !round) return;
     await endRound(round.id);
     await setSessionStatus(session.id, WRITE_STATUS["finished"]);
+    // Make UI finish immediately even if realtime lags:
+    setRound(null);
+    setSession((s) => (s ? { ...s, status: "finished" } as GameSession : s));
   }
 
-  // Prefer live round for status; else reflect session status
   const uiStatus = round ? "in_progress" : (session ? READ_STATUS[session.status] : "waiting");
-
-  const isHost =
-    (!!session?.host_user_id && !!me?.user_id && me.user_id === session.host_user_id) || !!me?.is_host;
-
-  const isParticipantHost = (p: Participant, s: GameSession) =>
-    (!!s.host_user_id && !!p.user_id && p.user_id === s.host_user_id) || !!p.is_host;
+  const isHost = (!!session?.host_user_id && !!me?.user_id && me.user_id === session.host_user_id) || !!me?.is_host;
+  const isParticipantHost = (p: Participant, s: GameSession) => (!!s.host_user_id && !!p.user_id && p.user_id === s.host_user_id) || !!p.is_host;
 
   if (!session) {
     return (
       <div className="max-w-xl mx-auto p-6 space-y-6">
         <h1 className="text-3xl font-semibold">Wine Options — Multiplayer</h1>
-
         {err && <div className="text-sm rounded-2xl border border-red-200 bg-red-50 text-red-700 p-2">{toPlain(err)}</div>}
-
-        <div className="flex items-start gap-2 text-xs text-gray-600">
-          <AlertTriangle className="h-4 w-4 mt-0.5" />
-          <p>Magic-link sign-in may not persist in private/incognito windows (cookies/localStorage blocked). Use a normal window or email+password/OAuth for hosting.</p>
-        </div>
-
-        <div className="space-y-2">
-          <label className="block text-sm font-medium">Display name</label>
-          <input
-            className="w-full border rounded-2xl p-2"
-            value={displayName}
-            onChange={(e) => setDisplayName(e.target.value)}
-            placeholder="Your name"
-          />
-        </div>
+        <div className="flex items-start gap-2 text-xs text-gray-600"><AlertTriangle className="h-4 w-4 mt-0.5" /><p>Magic-link sign-in may not persist in private/incognito windows. Use a normal window or email+password/OAuth for hosting.</p></div>
+        <div className="space-y-2"><label className="block text-sm font-medium">Display name</label><input className="w-full border rounded-2xl p-2" value={displayName} onChange={(e)=>setDisplayName(e.target.value)} placeholder="Your name" /></div>
         <div className="flex items-center gap-3">
-          <button
-            disabled={loading}
-            onClick={handleHost}
-            className="px-4 py-2 rounded-2xl bg-black text-white inline-flex items-center gap-2 disabled:opacity-60"
-          >
-            {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Users className="h-4 w-4" />}
-            Host new game
+          <button disabled={loading} onClick={handleHost} className="px-4 py-2 rounded-2xl bg-black text-white inline-flex items-center gap-2 disabled:opacity-60">
+            {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Users className="h-4 w-4" />} Host new game
           </button>
           <div className="flex-1" />
-          <input
-            placeholder="Invite code"
-            className="border rounded-2xl p-2 w-40"
-            value={codeInput}
-            onChange={(e) => setCodeInput(e.target.value.toUpperCase())}
-          />
-          <button
-            disabled={loading || codeInput.length < 4}
-            onClick={handleJoin}
-            className="px-4 py-2 rounded-2xl border"
-          >
-            Join
-          </button>
+          <input placeholder="Invite code" className="border rounded-2xl p-2 w-40" value={codeInput} onChange={(e)=>setCodeInput(e.target.value.toUpperCase())} />
+          <button disabled={loading || codeInput.length < 4} onClick={handleJoin} className="px-4 py-2 rounded-2xl border">Join</button>
         </div>
-
         <div className="text-xs text-gray-500">Upload controls appear after you host or join a session.</div>
       </div>
     );
@@ -777,39 +634,18 @@ export default function WineOptionsGame({ initialCode = "" }: { initialCode?: st
       {/* Host-only upload */}
       {!round && uiStatus === "waiting" && isHost && (
         <div className="space-y-3 p-4 rounded-2xl border bg-white shadow-sm">
-          <div className="flex items-center gap-2 text-sm font-medium">
-            <Camera className="h-4 w-4" />
-            <span>You are the host — upload a label to start the round</span>
-          </div>
-
-          {uploadErr && (
-            <div className="text-sm rounded-2xl border border-red-200 bg-red-50 text-red-700 p-2">
-              {toPlain(uploadErr)}
-            </div>
-          )}
-
+          <div className="flex items-center gap-2 text-sm font-medium"><Camera className="h-4 w-4" /><span>You are the host — upload a label to start the round</span></div>
+          {uploadErr && <div className="text-sm rounded-2xl border border-red-200 bg-red-50 text-red-700 p-2">{toPlain(uploadErr)}</div>}
           <label className="inline-flex items-center gap-2 px-3 py-2 rounded-2xl border cursor-pointer w-fit">
-            <Upload className="h-4 w-4" />
-            <span>{uploadBusy ? "Reading…" : "Choose image"}</span>
-            <input
-              type="file"
-              accept="image/*"
-              className="hidden"
-              disabled={uploadBusy}
-              onChange={(e) => {
-                const file = e.target.files?.[0];
-                if (file) startGameFromUpload(file);
-              }}
-            />
+            <Upload className="h-4 w-4" /><span>{uploadBusy ? "Reading…" : "Choose image"}</span>
+            <input type="file" accept="image/*" className="hidden" disabled={uploadBusy} onChange={(e)=>{ const file = e.target.files?.[0]; if (file) startGameFromUpload(file); }} />
           </label>
         </div>
       )}
 
       {/* Guests waiting message */}
       {!round && uiStatus === "waiting" && !isHost && (
-        <div className="p-4 rounded-2xl border bg-white shadow-sm text-sm text-gray-700">
-          Waiting for the host to start the round…
-        </div>
+        <div className="p-4 rounded-2xl border bg-white shadow-sm text-sm text-gray-700">Waiting for the host to start the round…</div>
       )}
 
       {round && uiStatus !== "finished" && (
@@ -820,22 +656,14 @@ export default function WineOptionsGame({ initialCode = "" }: { initialCode?: st
 
       {uiStatus === "finished" && (
         <div className="p-4 rounded-2xl border bg-white shadow-sm space-y-3">
-          <div className="text-xl font-semibold flex items-center gap-2">
-            <Trophy className="h-5 w-5" /> Results
-          </div>
+          <div className="text-xl font-semibold flex items-center gap-2"><Trophy className="h-5 w-5" /> Results</div>
           <ul className="space-y-1">
             {[...participants].sort((a, b) => b.score - a.score).map((p, i) => (
-              <li key={p.id} className="flex justify-between">
-                <span>{i + 1}. {p.display_name}</span>
-                <span className="font-medium">{p.score} pts</span>
-              </li>
+              <li key={p.id} className="flex justify-between"><span>{i + 1}. {p.display_name}</span><span className="font-medium">{p.score} pts</span></li>
             ))}
           </ul>
           <div className="flex justify-end">
-            <button
-              onClick={() => window.location.assign("/wine-options/multiplayer")}
-              className="inline-flex items-center gap-2 px-3 py-2 rounded-2xl border"
-            >
+            <button onClick={() => window.location.assign("/wine-options/multiplayer")} className="inline-flex items-center gap-2 px-3 py-2 rounded-2xl border">
               <LogOut className="h-4 w-4" /> Leave
             </button>
           </div>
