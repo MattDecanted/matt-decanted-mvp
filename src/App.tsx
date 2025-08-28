@@ -34,6 +34,13 @@ import GamePage from '@/pages/GamePage';
 
 import Dashboard from '@/pages/Dashboard';
 
+// --- Blog pages ---
+import BlogIndex from '@/pages/blog/BlogIndex';
+import HowToBecomeWinemaker from '@/pages/blog/HowToBecomeWinemaker';
+import WSETLevel2Questions from '@/pages/blog/WSETLevel2Questions';
+import WineTastingGuide from '@/pages/blog/WineTastingGuide';
+import WineVocabularyQuiz from '@/pages/blog/WineVocabularyQuiz';
+
 import { supabase } from '@/lib/supabase';
 
 const FN_SUBMIT = '/.netlify/functions/trial-quiz-attempt';
@@ -131,6 +138,13 @@ function App() {
                 <Route path="/signin" element={<SignIn />} />
                 <Route path="/sign-in" element={<Navigate to="/signin" replace />} />
                 <Route path="/activate" element={<Activate />} />
+
+                {/* Blog */}
+                <Route path="/blog" element={<BlogIndex />} />
+                <Route path="/blog/how-to-become-winemaker" element={<HowToBecomeWinemaker />} />
+                <Route path="/blog/wset-level-2-questions" element={<WSETLevel2Questions />} />
+                <Route path="/blog/wine-tasting-guide" element={<WineTastingGuide />} />
+                <Route path="/blog/wine-vocabulary-quiz" element={<WineVocabularyQuiz />} />
 
                 {/* Games */}
                 <Route path="/games/guess-what" element={<GuessWhatPage />} />
