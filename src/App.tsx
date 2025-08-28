@@ -4,13 +4,17 @@ import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-d
 
 // UI / Providers
 import { Toaster } from '@/components/ui/sonner';
-import { AuthProvider } from '@/context/AuthContext';
+import { AuthProvider, useAuth } from '@/context/AuthContext';
 import { PointsProvider } from '@/context/PointsContext';
 import { AnalyticsProvider } from '@/context/AnalyticsContext';
 
 // Layout & Pages
 import Layout from '@/components/Layout';
 import Home from '@/pages/Home';
+import About from '@/pages/About';
+import SignIn from '@/pages/SignIn';
+import Activate from '@/pages/Activate';
+
 import GuessWhatPage from '@/pages/GuessWhatPage';
 import ShortsPage from '@/pages/ShortsPage';
 import ShortDetailPage from '@/pages/ShortDetailPage';
@@ -22,13 +26,13 @@ import BrandedDemo from '@/pages/BrandedDemo';
 import VocabChallengeManager from '@/pages/admin/VocabChallengeManager';
 import QuizManager from '@/pages/admin/QuizManager';
 import TrialQuizManager from '@/pages/admin/TrialQuizManager';
-import DashboardLite from './pages/DashboardLite';
 import Swirdle from '@/pages/Swirdle';
 import SwirdleAdmin from '@/pages/admin/SwirdleAdmin';
 import WineOptionsGame from '@/pages/WineOptionsGame';
 import SoloWineOptions from '@/pages/SoloWineOptions';
-import GamePage from '@/pages/GamePage'; // ✅ add this import
+import GamePage from '@/pages/GamePage';
 
+import Dashboard from '@/pages/Dashboard';
 
 import { supabase } from '@/lib/supabase';
 
@@ -66,6 +70,21 @@ function AutoResumeOnAccount() {
     })();
   }, []);
   return null;
+}
+
+/** ✅ RequireAuth wrapper */
+function RequireAuth({ children }: { children: React.ReactNode }) {
+  const { user, loading } = useAuth();
+
+  if (loading) {
+    return <div className="p-8">Loading...</div>;
+  }
+
+  if (!user) {
+    return <Navigate to="/signin" replace />;
+  }
+
+  return <>{children}</>;
 }
 
 /** ✅ Safe error boundary for routes */
@@ -106,6 +125,12 @@ function App() {
                 {/* Home */}
                 <Route path="/" element={<Home />} />
 
+                {/* Core info & auth */}
+                <Route path="/about" element={<About />} />
+                <Route path="/signin" element={<SignIn />} />
+                <Route path="/sign-in" element={<Navigate to="/signin" replace />} />
+                <Route path="/activate" element={<Activate />} />
+
                 {/* Games */}
                 <Route path="/games/guess-what" element={<GuessWhatPage />} />
                 <Route
@@ -124,7 +149,6 @@ function App() {
                     </RouteErrorBoundary>
                   }
                 />
-                {/* Invite links / multiplayer rooms */}
                 <Route
                   path="/game/:slug"
                   element={
@@ -148,12 +172,19 @@ function App() {
                 <Route path="/admin/trial-quizzes" element={<TrialQuizManager />} />
                 <Route path="/admin/swirdle" element={<SwirdleAdmin />} />
 
-                {/* Options (solo) */}
+                {/* Options (solo/multiplayer) */}
                 <Route path="/wine-options/solo" element={<SoloWineOptions />} />
                 <Route path="/wine-options/multiplayer" element={<WineOptionsGame />} />
 
                 {/* Dashboard / Account */}
-                <Route path="/dashboard" element={<DashboardLite />} />
+                <Route
+                  path="/dashboard"
+                  element={
+                    <RequireAuth>
+                      <Dashboard />
+                    </RequireAuth>
+                  }
+                />
                 <Route path="/Dashboard" element={<Navigate to="/dashboard" replace />} />
                 <Route
                   path="/account"
@@ -171,7 +202,7 @@ function App() {
                 {/* (Optional) Legacy demo route */}
                 <Route path="/demo" element={<BrandedDemo />} />
 
-                {/* 404 fallback (optional) */}
+                {/* 404 fallback */}
                 <Route path="*" element={<Navigate to="/" replace />} />
               </Routes>
             </Layout>
