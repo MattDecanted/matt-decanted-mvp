@@ -1,6 +1,6 @@
 import React from 'react';
 import { Link, useLocation } from 'react-router-dom';
-import { Trophy, Play, User, CreditCard } from 'lucide-react';
+import { Trophy, Play, User, CreditCard, BookOpen, Brain, Joystick, Newspaper } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import { usePoints } from '@/context/PointsContext';
 import { Button } from '@/components/ui/button';
@@ -15,7 +15,20 @@ export default function Layout({ children }: LayoutProps) {
   const { user } = useAuth();
   const { totalPoints, trialDaysLeft, isTrialUser } = usePoints();
 
-  const isActive = (path: string) => location.pathname === path;
+  // Highlight exact match AND subpaths (e.g. /blog/* keeps Blog active)
+  const isActive = (path: string) => {
+    const p = location.pathname;
+    if (p === path) return true;
+    if (path !== '/' && p.startsWith(path + '/')) return true;
+    return false;
+  };
+
+  const linkClass = (path: string) =>
+    `flex items-center space-x-1 px-3 py-2 rounded-md text-sm font-medium transition-colors ${
+      isActive(path)
+        ? 'bg-primary text-primary-foreground'
+        : 'text-muted-foreground hover:text-foreground hover:bg-muted'
+    }`;
 
   return (
     <div className="min-h-screen bg-background">
@@ -40,38 +53,37 @@ export default function Layout({ children }: LayoutProps) {
 
               {/* Main Nav Links */}
               <nav className="hidden md:flex space-x-6">
-                <Link
-                  to="/games/guess-what"
-                  className={`flex items-center space-x-1 px-3 py-2 rounded-md text-sm font-medium transition-colors ${
-                    isActive('/games/guess-what')
-                      ? 'bg-primary text-primary-foreground'
-                      : 'text-muted-foreground hover:text-foreground hover:bg-muted'
-                  }`}
-                >
+                <Link to="/games/guess-what" className={linkClass('/games/guess-what')}>
                   <Trophy className="h-4 w-4" />
                   <span>Guess What</span>
                 </Link>
 
-                <Link
-                  to="/shorts"
-                  className={`flex items-center space-x-1 px-3 py-2 rounded-md text-sm font-medium transition-colors ${
-                    isActive('/shorts')
-                      ? 'bg-primary text-primary-foreground'
-                      : 'text-muted-foreground hover:text-foreground hover:bg-muted'
-                  }`}
-                >
+                <Link to="/shorts" className={linkClass('/shorts')}>
                   <Play className="h-4 w-4" />
                   <span>Shorts</span>
                 </Link>
 
-                <Link
-                  to="/pricing"
-                  className={`flex items-center space-x-1 px-3 py-2 rounded-md text-sm font-medium transition-colors ${
-                    isActive('/pricing')
-                      ? 'bg-primary text-primary-foreground'
-                      : 'text-muted-foreground hover:text-foreground hover:bg-muted'
-                  }`}
-                >
+                <Link to="/vocab" className={linkClass('/vocab')}>
+                  <BookOpen className="h-4 w-4" />
+                  <span>Vino Vocab</span>
+                </Link>
+
+                <Link to="/swirdle" className={linkClass('/swirdle')}>
+                  <Brain className="h-4 w-4" />
+                  <span>Swirdle</span>
+                </Link>
+
+                <Link to="/wine-options/solo" className={linkClass('/wine-options/solo')}>
+                  <Joystick className="h-4 w-4" />
+                  <span>Wine Options</span>
+                </Link>
+
+                <Link to="/blog" className={linkClass('/blog')}>
+                  <Newspaper className="h-4 w-4" />
+                  <span>Blog</span>
+                </Link>
+
+                <Link to="/pricing" className={linkClass('/pricing')}>
                   <CreditCard className="h-4 w-4" />
                   <span>Pricing</span>
                 </Link>
