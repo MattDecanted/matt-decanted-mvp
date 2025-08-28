@@ -2,7 +2,7 @@
   "name": "matt-decanted-mvp",
   "private": true,
   "version": "0.0.1",
-   "scripts": {
+  "scripts": {
     "dev": "vite",
     "dev:api": "netlify dev --targetPort=5173 --port=8888",
     "build": "vite build",
@@ -29,10 +29,14 @@
     "@supabase/supabase-js": "^2.45.0",
     "class-variance-authority": "^0.7.0",
     "clsx": "^2.1.1",
+    "i18next": "^23.11.0",
+    "i18next-browser-languagedetector": "^7.1.0",
+    "i18next-http-backend": "^2.5.2",
     "lucide-react": "*",
     "parse-multipart-data": "^1.5.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
+    "react-i18next": "^14.0.1",
     "react-router-dom": "^6.26.2",
     "sonner": "^1.5.0",
     "tailwind-merge": "^2.5.2"
