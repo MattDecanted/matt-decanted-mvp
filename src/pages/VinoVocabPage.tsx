@@ -1,60 +1,14 @@
-// ==============================
-// FILE: src/contexts/PointsContext.tsx
-// Minimal points + streak provider wired to Supabase RPCs below
-// - Expects RPCs: vv_get_user_stats() and vv_award_points(term, was_correct, points)
-// ==============================
-import React, { createContext, useContext, useEffect, useState } from "react";
-import { supabase } from "@/lib/supabase";
-
-interface PointsContextType {
-  totalPoints: number;
-  currentStreak: number;
-  loading: boolean;
-  refreshPoints: () => Promise<void>;
-}
-
-const PointsContext = createContext<PointsContextType | undefined>(undefined);
-
-export function PointsProvider({ children }: { children: React.ReactNode }) {
-  const [totalPoints, setTotalPoints] = useState(0);
-  const [currentStreak, setCurrentStreak] = useState(0);
-  const [loading, setLoading] = useState(true);
-
-  const refreshPoints = async () => {
-    setLoading(true);
-    const { data, error } = await supabase.rpc("vv_get_user_stats");
-    if (!error && data && Array.isArray(data) && data.length > 0) {
-      const row = data[0] as { total_points: number; current_streak: number };
-      setTotalPoints(row.total_points || 0);
-      setCurrentStreak(row.current_streak || 0);
-    }
-    setLoading(false);
-  };
-
-  useEffect(() => {
-    refreshPoints();
-  }, []);
-
-  return (
-    <PointsContext.Provider value={{ totalPoints, currentStreak, loading, refreshPoints }}>
-      {children}
-    </PointsContext.Provider>
-  );
-}
-
-export const usePoints = () => {
-  const ctx = useContext(PointsContext);
-  if (!ctx) throw new Error("usePoints must be used within a PointsProvider");
-  return ctx;
-};
-
-// ==============================
 // FILE: src/pages/VinoVocabPage.tsx
-// Single demo question for "Ruby" + points/streak wiring + colour label + themed banner colour
-// ==============================
+// Minimal Vino Vocab page with:
+// - Aliased usePoints import (useVocabPoints) to avoid name collisions
+// - Points + Streak banner (themeable: orange/green)
+// - Bold COLOUR label + Ruby lesson
+// - MCQ: “Which statement best applies to Ruby?”
+// - Supabase RPC calls: vv_award_points (awards 10 on correct), vv_get_user_stats via provider
+
 import React, { useMemo, useState } from "react";
-import { usePoints } from "@/contexts/PointsContext"; // ensure path matches where you place the file
 import { supabase } from "@/lib/supabase";
+import { usePoints as useVocabPoints } from "@/contexts/PointsContext"; // <-- aliased to prevent conflicts
 import { CheckCircle2, AlertTriangle } from "lucide-react";
 
 // --- THEME: change to "green" to switch banner/button accents ---
@@ -72,56 +26,62 @@ const themeClasses = {
   },
 }[THEME];
 
-// --- Demo content (can be swapped later) ---
+// --- Demo content (edit later if needed) ---
 const TERM = "Ruby";
 const QUESTION = "Which statement best applies to Ruby?";
 const OPTIONS = [
   {
     id: "A",
-    text: "Typically a medium to deep red hue seen in youthful red wines like Pinot Noir and Grenache.",
+    text:
+      "Typically a medium to deep red hue seen in youthful red wines like Pinot Noir and Grenache.",
     correct: true,
     explain:
-      "Ruby describes a clear, bright red core common in younger reds (e.g. Pinot Noir, Grenache); it fades towards garnet with age.",
+      "Ruby describes a clear, bright red core common in younger reds (e.g. Pinot Noir, Grenache); it fades toward garnet with age.",
   },
   {
     id: "B",
-    text: "A pale onion‑skin tint typical of aged rosé wines.",
+    text: "A pale onion-skin tint typical of aged rosé wines.",
     correct: false,
-    explain: "Onion‑skin is more aligned with older rosé, not ruby reds.",
+    explain: "Onion-skin aligns with older rosé, not ruby reds.",
   },
   {
     id: "C",
-    text: "An amber‑gold colour associated with mature white wines.",
+    text: "An amber-gold colour associated with mature white wines.",
     correct: false,
-    explain: "Amber/gold points to oxidative development in whites, not ruby reds.",
+    explain: "Amber/gold indicates oxidative development in whites, not ruby reds.",
   },
   {
     id: "D",
-    text: "A deep purple‑black shade most common in very old Cabernet Sauvignon.",
+    text:
+      "A deep purple-black shade most common in very old Cabernet Sauvignon.",
     correct: false,
-    explain: "Very old Cabernets lose purple/black intensity, trending to garnet/brick rather than ruby.",
+    explain:
+      "Very old Cabernets lose purple/black intensity, trending to garnet/brick rather than ruby.",
   },
 ];
 
 export default function VinoVocabPage() {
-  const { totalPoints, currentStreak, refreshPoints } = usePoints();
+  const { totalPoints, currentStreak, refreshPoints } = useVocabPoints(); // aliased hook
   const [choice, setChoice] = useState<string | null>(null);
   const [submitted, setSubmitted] = useState(false);
   const [result, setResult] = useState<null | { correct: boolean; explain: string }>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
-  const selected = useMemo(() => OPTIONS.find(o => o.id === choice) || null, [choice]);
+  const selected = useMemo(
+    () => OPTIONS.find((o) => o.id === choice) || null,
+    [choice]
+  );
 
   const onSubmit = async () => {
     if (!selected) return;
     setBusy(true);
     setErr(null);
-    const wasCorrect = !!selected.correct;
 
-    // Award points only if correct. Tweak amount if you like.
+    const wasCorrect = !!selected.correct;
     const pointsToAward = wasCorrect ? 10 : 0;
-    const { data, error } = await supabase.rpc("vv_award_points", {
+
+    const { error } = await supabase.rpc("vv_award_points", {
       p_term: TERM,
       p_was_correct: wasCorrect,
       p_points: pointsToAward,
@@ -140,10 +100,14 @@ export default function VinoVocabPage() {
   return (
     <div className="mx-auto max-w-3xl p-4 sm:p-6">
       {/* Top banner with Points + Streak (colours adjustable via THEME) */}
-      <div className={`mb-6 rounded-2xl border ${themeClasses.banner} p-4 sm:p-5`}> 
+      <div className={`mb-6 rounded-2xl border ${themeClasses.banner} p-4 sm:p-5`}>
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-3">
-            <span className={`px-3 py-1 rounded-full text-sm font-semibold ${themeClasses.chip}`}>COLOUR</span>
+            <span
+              className={`px-3 py-1 rounded-full text-sm font-semibold ${themeClasses.chip}`}
+            >
+              COLOUR
+            </span>
             <h1 className="text-xl sm:text-2xl font-bold">Vino Vocab Daily</h1>
           </div>
           <div className="flex items-center gap-4 text-sm sm:text-base">
@@ -164,8 +128,8 @@ export default function VinoVocabPage() {
       <div className="mb-2 text-sm uppercase tracking-wide font-bold">Colour</div>
       <div className="mb-6 text-3xl font-extrabold">{TERM}</div>
       <p className="mb-8 text-base text-black/70">
-        Confidence in wine tasting often comes down to vocabulary. "{TERM}" describes a bright, youthful red core most
-        common in younger red wines; with age it trends toward garnet at the rim.
+        Confidence in wine tasting often comes down to vocabulary. “{TERM}” describes a bright,
+        youthful red core most common in younger red wines; with age it trends toward garnet at the rim.
       </p>
 
       {/* Question card */}
@@ -173,9 +137,14 @@ export default function VinoVocabPage() {
         <div className="mb-4 text-lg font-semibold">{QUESTION}</div>
         <div className="space-y-3">
           {OPTIONS.map((opt) => (
-            <label key={opt.id} className={`flex items-start gap-3 rounded-xl border p-3 cursor-pointer transition focus-within:ring-2 focus-within:ring-offset-2 ${
-              choice === opt.id ? "border-black/30 shadow-sm" : "border-black/10 hover:border-black/20"
-            }`}>
+            <label
+              key={opt.id}
+              className={`flex items-start gap-3 rounded-xl border p-3 cursor-pointer transition focus-within:ring-2 focus-within:ring-offset-2 ${
+                choice === opt.id
+                  ? "border-black/30 shadow-sm"
+                  : "border-black/10 hover:border-black/20"
+              }`}
+            >
               <input
                 type="radio"
                 name="ruby-q"
@@ -185,7 +154,9 @@ export default function VinoVocabPage() {
                 disabled={submitted}
               />
               <div>
-                <div className="font-medium">{opt.id}. {opt.text}</div>
+                <div className="font-medium">
+                  {opt.id}. {opt.text}
+                </div>
               </div>
             </label>
           ))}
@@ -199,23 +170,25 @@ export default function VinoVocabPage() {
           >
             Submit
           </button>
-          {submitted && result && (
-            <div className="flex items-center gap-2 text-sm">
-              {result.correct ? (
-                <>
-                  <CheckCircle2 className="h-5 w-5" />
-                  <span className="font-semibold">Correct!</span>
-                </>
-              ) : (
-                <>
-                  <AlertTriangle className="h-5 w-5" />
-                  <span className="font-semibold">Not quite.</span>
-                </>
-              )}
-              <span className="text-black/70">{result.explain}</span>
-            </div>
-          )}
-          {err && <div className="text-sm text-red-600">{err}</div>}
+
+            {submitted && result && (
+              <div className="flex items-center gap-2 text-sm">
+                {result.correct ? (
+                  <>
+                    <CheckCircle2 className="h-5 w-5" />
+                    <span className="font-semibold">Correct!</span>
+                  </>
+                ) : (
+                  <>
+                    <AlertTriangle className="h-5 w-5" />
+                    <span className="font-semibold">Not quite.</span>
+                  </>
+                )}
+                <span className="text-black/70">{result.explain}</span>
+              </div>
+            )}
+
+            {err && <div className="text-sm text-red-600">{err}</div>}
         </div>
       </div>
     </div>
