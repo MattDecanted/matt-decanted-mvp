@@ -29,6 +29,7 @@
     "@supabase/supabase-js": "^2.45.0",
     "class-variance-authority": "^0.7.0",
     "clsx": "^2.1.1",
+    "framer-motion": "^11.0.0",
     "i18next": "^23.11.0",
     "i18next-browser-languagedetector": "^7.1.0",
     "i18next-http-backend": "^2.5.2",
