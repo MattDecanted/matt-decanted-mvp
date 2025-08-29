@@ -1,3 +1,4 @@
+
 // src/pages/VinoVocabPage.tsx
 import React, { createContext, useContext, useEffect, useMemo, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
@@ -521,15 +522,22 @@ function VinoVocabInner() {
                       {saving && <div className="text-sm text-neutral-500">Saving…</div>}
                     </div>
 
-                    {/* NEW: Next challenge shortcuts */}
-                    <div className="mt-5 flex flex-wrap items-center gap-2">
-                      <a href="/swirlde" className="inline-flex items-center gap-2 rounded-xl border border-neutral-300 bg-white px-3 py-2 text-sm hover:bg-neutral-50">
-                        Play Swirlde <ArrowRight className="h-4 w-4" />
-                      </a>
-                      <a href="/daily-wine-quiz" className="inline-flex items-center gap-2 rounded-xl border border-neutral-300 bg-white px-3 py-2 text-sm hover:bg-neutral-50">
-                        Daily Wine Quiz <ArrowRight className="h-4 w-4" />
-                      </a>
-                    </div>
+                    {/* Next challenge shortcuts */}
+<div className="mt-5 flex flex-wrap items-center gap-2">
+  <Link
+    to={ROUTES.swirdle}
+    className="inline-flex items-center gap-2 rounded-xl border border-neutral-300 bg-white px-3 py-2 text-sm hover:bg-neutral-50"
+  >
+    Play Swirdle <ArrowRight className="h-4 w-4" />
+  </Link>
+  <Link
+    to={ROUTES.dailyQuiz}
+    className="inline-flex items-center gap-2 rounded-xl border border-neutral-300 bg-white px-3 py-2 text-sm hover:bg-neutral-50"
+  >
+    Daily Wine Quiz <ArrowRight className="h-4 w-4" />
+  </Link>
+</div>
+
                   </motion.div>
                 )}
               </AnimatePresence>
