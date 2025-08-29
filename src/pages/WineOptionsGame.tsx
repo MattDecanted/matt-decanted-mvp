@@ -3,7 +3,7 @@ import React, { useEffect, useRef, useState } from "react";
 import type { RealtimeChannel } from "@supabase/supabase-js";
 import {
   Users, Share2, Copy, Loader2, Trophy, ChevronRight, CheckCircle2,
-  LogOut, Camera, Upload, AlertTriangle, Lightbulb
+  LogOut, Camera, Upload, AlertTriangle
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import {
@@ -454,7 +454,7 @@ async function buildRoundPayloadFromOCR(file: File): Promise<{ questions: StepQu
   const hemiCorrect = isOld ? 0 : 1;
 
   const countryCorrect = fromDB?.countryCorrect ?? fall.countryCorrect!;
-  const regionCorrect  = fromDB?.regionCorrect  ?? fall.regionCorrect!;
+  the const regionCorrect  = fromDB?.regionCorrect  ?? fall.regionCorrect!;
   const countryOptions = fromDB?.countryOptions?.length ? fromDB.countryOptions : fall.countryOptions;
   const regionOptions  = fromDB?.regionOptions?.length  ? fromDB.regionOptions  : fall.regionOptions;
   const subregionOptions = fromDB?.subregionOptions ?? fall.subregionOptions;
@@ -501,18 +501,44 @@ function InviteBar({ inviteCode }: { inviteCode: string }) {
   );
 }
 
-/* ✅ New: yellow “How to play” card (inline component for easy drop-in) */
-function HowToPlayCard({ className = "" }: { className?: string }) {
+function ProcessingCard() {
   return (
-    <div className={`rounded-xl border border-amber-300 bg-amber-50 p-4 sm:p-5 ${className}`}>
-      <div className="flex items-start gap-3">
-        <Lightbulb className="h-5 w-5 text-amber-600 mt-0.5 shrink-0" />
-        <div>
-          <h3 className="font-semibold text-amber-900">How to play it truly blind</h3>
-          <ul className="mt-2 list-disc pl-5 space-y-1 text-amber-900/90 text-sm">
-            <li>Ask a friend who <em>isn’t playing</em> to take/upload the label photo for you (or cover the label).</li>
-            <li>No black glass? A simple blindfold works — it keeps color a secret.</li>
-            <li>Best with friends: smell, taste, debate your answers before you lock them in.</li>
+    <div className="rounded-2xl border bg-white shadow-sm p-10 text-center">
+      <div className="mx-auto mb-4 h-10 w-10 animate-spin rounded-full border-2 border-violet-500 border-t-transparent" />
+      <div className="text-xl font-semibold">Processing Your Wine Label</div>
+      <div className="text-sm text-gray-500 mt-1">Hang tight—just a moment…</div>
+    </div>
+  );
+}
+
+/** Intro + “How to play” (Bolt-like tone/colors) */
+function GameIntro() {
+  return (
+    <div className="rounded-2xl border bg-gradient-to-br from-violet-50 to-blue-50 p-6 sm:p-8 shadow-sm">
+      <h1 className="text-3xl sm:text-4xl font-bold text-gray-900">Wine Options Game</h1>
+      <p className="mt-3 text-gray-700 leading-relaxed">
+        Wine Options, thanks to Len Evans, is proof that blind tasting doesn’t need to be intimidating — it should be
+        fun, challenging, and a little bit cheeky. What I like about it is how it strips things back to simple choices,
+        letting you build confidence step by step, and reminding us all that wine is meant to be enjoyed together.
+      </p>
+
+      <div className="mt-6 grid sm:grid-cols-2 gap-4">
+        <div className="rounded-2xl bg-white border p-4">
+          <div className="font-semibold mb-2">How to play</div>
+          <ol className="list-decimal pl-5 space-y-2 text-sm text-gray-700">
+            <li className="flex items-center gap-2"><Users className="h-4 w-4 text-gray-500" /> Choose a display name and <strong>host</strong> a game or <strong>join</strong> with a friend’s code.</li>
+            <li className="flex items-center gap-2"><Camera className="h-4 w-4 text-gray-500" /> The host <strong>uploads/snaps a wine label</strong> (or covers it for true blind).</li>
+            <li className="flex items-center gap-2"><ChevronRight className="h-4 w-4 text-gray-500" /> Everyone answers step-by-step: Old/New World, vintage, variety, country, region, subregion.</li>
+            <li className="flex items-center gap-2"><Trophy className="h-4 w-4 text-gray-500" /> Earn <strong>10 points per correct</strong>. Scores update on the results board.</li>
+          </ol>
+        </div>
+
+        <div className="rounded-2xl bg-white border p-4">
+          <div className="font-semibold mb-2">Tips</div>
+          <ul className="space-y-2 text-sm text-gray-700">
+            <li>Black glass or a simple blindfold makes it truly blind.</li>
+            <li>Debate with friends before locking in answers — it’s half the fun.</li>
+            <li>Clear, well-lit label photos give the best results.</li>
           </ul>
         </div>
       </div>
@@ -787,11 +813,8 @@ export default function WineOptionsGame({ initialCode = "" }: { initialCode?: st
 
   if (!session) {
     return (
-      <div className="max-w-xl mx-auto p-6 space-y-6">
-        <h1 className="text-3xl font-semibold">Wine Options — Multiplayer</h1>
-
-        {/* How to play (top) */}
-        <HowToPlayCard />
+      <div className="max-w-3xl mx-auto p-6 space-y-6">
+        <GameIntro />
 
         {err && <div className="text-sm rounded-2xl border border-red-200 bg-red-50 text-red-700 p-2">{toPlain(err)}</div>}
 
@@ -841,8 +864,7 @@ export default function WineOptionsGame({ initialCode = "" }: { initialCode?: st
 
   return (
     <div className="max-w-3xl mx-auto p-6 space-y-6">
-      {/* How to play (top) */}
-      <HowToPlayCard />
+      <GameIntro />
 
       <div className="flex items-center justify-between">
         <div className="text-sm">Status: <span className="font-medium">{uiStatus}</span></div>
@@ -865,6 +887,8 @@ export default function WineOptionsGame({ initialCode = "" }: { initialCode?: st
         </div>
       </div>
 
+      {uploadBusy && !round && <ProcessingCard />}
+
       {/* Host-only upload */}
       {!round && uiStatus === "waiting" && isHost && (
         <div className="space-y-3 p-4 rounded-2xl border bg-white shadow-sm">
@@ -885,7 +909,7 @@ export default function WineOptionsGame({ initialCode = "" }: { initialCode?: st
             <input
               type="file"
               accept="image/*"
-              capture="environment"   // (6) allow taking a photo on mobile
+              capture="environment"
               className="hidden"
               disabled={uploadBusy}
               onChange={(e) => {
@@ -910,7 +934,7 @@ export default function WineOptionsGame({ initialCode = "" }: { initialCode?: st
         </div>
       )}
 
-      {/* (7) Single Results block, with Play again for host */}
+      {/* Results */}
       {uiStatus === "finished" && (
         <div className="p-4 rounded-2xl border bg-white shadow-sm space-y-3">
           <div className="text-xl font-semibold flex items-center gap-2">
