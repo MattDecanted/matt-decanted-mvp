@@ -237,6 +237,7 @@ function VinoVocabInner() {
   const [latest, setLatest] = useState<LatestCorrectRow | null>(null);
   const [leader, setLeader] = useState<LeaderRow[]>([]);
 
+  // ✅ Declare isSubscribed ONCE here:
   const isSubscribed = !!profileTier;
 
   // bootstrap
@@ -402,8 +403,6 @@ function VinoVocabInner() {
     return DEMO_OPTIONS[selected] ?? null;
   }, [selected]);
 
-  const isSubscribed = !!profileTier;
-
   return (
     <div className="mx-auto max-w-6xl p-4 md:p-8">
       <Header
@@ -438,7 +437,7 @@ function VinoVocabInner() {
               <div className="h-5 w-28 animate-pulse rounded bg-neutral-200" />
               <div className="mt-3 h-7 w-64 animate-pulse rounded bg-neutral-200" />
               <div className="mt-4 space-y-2">
-                <div className="h-4 w-full animate-pulse rounded bg-neutral-100" />
+                <div className="h-4 w/full animate-pulse rounded bg-neutral-100" />
                 <div className="h-4 w-11/12 animate-pulse rounded bg-neutral-100" />
                 <div className="h-4 w-10/12 animate-pulse rounded bg-neutral-100" />
               </div>
@@ -593,18 +592,18 @@ function VinoVocabInner() {
                         Try again
                       </button>
 
-                        {!isSubscribed &&
-                          (userId ? (
-                            <button
-                              onClick={handleJoinFree}
-                              className="rounded-xl bg-neutral-900 px-3 py-2 text-sm text-white hover:bg-neutral-800"
-                            >
-                              Join free – save my streak
-                            </button>
-                          ) : (
-                            <div className="text-sm text-neutral-600">Sign in above to join free.</div>
-                          ))}
-                        {saving && <div className="text-sm text-neutral-500">Saving…</div>}
+                      {!isSubscribed &&
+                        (userId ? (
+                          <button
+                            onClick={handleJoinFree}
+                            className="rounded-xl bg-neutral-900 px-3 py-2 text-sm text-white hover:bg-neutral-800"
+                          >
+                            Join free – save my streak
+                          </button>
+                        ) : (
+                          <div className="text-sm text-neutral-600">Sign in above to join free.</div>
+                        ))}
+                      {saving && <div className="text-sm text-neutral-500">Saving…</div>}
                     </div>
                   </motion.div>
                 )}
