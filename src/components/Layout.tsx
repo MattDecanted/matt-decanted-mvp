@@ -73,7 +73,7 @@ export default function Layout({ children }: LayoutProps) {
                   <span>Swirdle</span>
                 </Link>
 
-                <Link to="/wine-options/solo" className={linkClass('/wine-options/solo')}>
+                <Link to="/wine-options/multiplayer" className={linkClass('/wine-options/multiplayer')}>
                   <Joystick className="h-4 w-4" />
                   <span>Wine Options</span>
                 </Link>
