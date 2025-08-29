@@ -1,18 +1,16 @@
 // FILE: src/pages/VinoVocabPage.tsx
-// Vino Vocab page (Ruby):
-// - Imports PointsContext from existing path: ../context/PointsContext
-// - Aliases usePoints -> useVocabPoints (prevents duplicate symbol errors)
-// - Uses relative imports to avoid alias issues on Netlify
-// - Points come from your existing user_points-driven context
-// - Streak fetched via vv_get_user_stats() if present (fallback = 0)
-// - Awards points via vv_award_points() (fallback comment included)
+// Layout: banner + COLOUR chip + Ruby lesson + MCQ with "Which statement best applies to {TERM}"
+// Points: uses existing PointsContext (user_points). Awards via vv_award_points() -> falls back to upserting user_points.
+// Streak: fetch via vv_get_user_stats() -> falls back to localStorage-based streak per user.
+// Imports are RELATIVE to avoid alias issues on Netlify.
 
 import React, { useEffect, useMemo, useState } from "react";
-import { supabase } from "../lib/supabase"; // relative import (no @/)
-import { usePoints as useVocabPoints } from "../context/PointsContext"; // NOTE: singular "context"
+import { supabase } from "../lib/supabase";
+import { usePoints as useVocabPoints } from "../context/PointsContext"; // singular 'context'
+import { useAuth } from "../context/AuthContext";
 import { CheckCircle2, AlertTriangle } from "lucide-react";
 
-// --- THEME: change to "green" to switch banner/button accents ---
+// --- THEME: switch to "green" if you want a green banner/buttons
 const THEME: "orange" | "green" = "orange";
 const themeClasses = {
   orange: {
@@ -27,9 +25,10 @@ const themeClasses = {
   },
 }[THEME];
 
-// --- Demo content (edit later if needed) ---
+// --- Today's term (swap later to be dynamic)
 const TERM = "Ruby";
-const QUESTION = "Which statement best applies to Ruby?";
+const QUESTION = `Which statement best applies to ${TERM}?`;
+
 const OPTIONS = [
   {
     id: "A",
@@ -39,79 +38,131 @@ const OPTIONS = [
     explain:
       "Ruby describes a clear, bright red core common in younger reds (e.g. Pinot Noir, Grenache); it fades toward garnet with age.",
   },
-  {
-    id: "B",
-    text: "A pale onion-skin tint typical of aged rosé wines.",
-    correct: false,
-    explain: "Onion-skin aligns with older rosé, not ruby reds.",
-  },
-  {
-    id: "C",
-    text: "An amber-gold colour associated with mature white wines.",
-    correct: false,
-    explain: "Amber/gold indicates oxidative development in whites, not ruby reds.",
-  },
-  {
-    id: "D",
-    text:
-      "A deep purple-black shade most common in very old Cabernet Sauvignon.",
-    correct: false,
-    explain:
-      "Very old Cabernets lose purple/black intensity, trending to garnet/brick rather than ruby.",
-  },
+  { id: "B", text: "A pale onion-skin tint typical of aged rosé wines.", correct: false, explain: "That’s rosé development, not ruby reds." },
+  { id: "C", text: "An amber-gold colour associated with mature white wines.", correct: false, explain: "Amber/gold = oxidative whites, not ruby reds." },
+  { id: "D", text: "A deep purple-black shade most common in very old Cabernet Sauvignon.", correct: false, explain: "Old Cabs trend to garnet/brick, not purple-black." },
 ];
 
+// ----- Local streak fallback (client-side) -----
+type LocalStreak = { lastCorrectISO: string; count: number };
+const localStreakKey = (uid?: string | null) => `vv_streak_${uid ?? "anon"}`;
+const isoDate = (d = new Date()) => d.toISOString().slice(0, 10); // YYYY-MM-DD
+const daysBetween = (aISO: string, bISO: string) => {
+  const a = new Date(`${aISO}T00:00:00`), b = new Date(`${bISO}T00:00:00`);
+  return Math.round((+b - +a) / (1000 * 60 * 60 * 24));
+};
+
 export default function VinoVocabPage() {
-  // Use your existing PointsContext (user_points-backed)
+  const { user } = useAuth();
   const { totalPoints, refreshPoints } = useVocabPoints();
 
-  // We handle streak locally via RPC (if available)
   const [currentStreak, setCurrentStreak] = useState<number>(0);
-
   const [choice, setChoice] = useState<string | null>(null);
   const [submitted, setSubmitted] = useState(false);
   const [result, setResult] = useState<null | { correct: boolean; explain: string }>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
-  const selected = useMemo(
-    () => OPTIONS.find((o) => o.id === choice) || null,
-    [choice]
-  );
+  const selected = useMemo(() => OPTIONS.find((o) => o.id === choice) || null, [choice]);
 
-  // --- Streak fetcher: tries vv_get_user_stats(); if missing, falls back to 0 without breaking UI
+  // Try server streak first; if not available, fall back to localStorage
   const fetchStreak = async () => {
     try {
       const { data, error } = await supabase.rpc("vv_get_user_stats");
-      if (!error && Array.isArray(data) && data.length > 0) {
-        const row = data[0] as { total_points?: number; current_streak?: number };
-        if (typeof row.current_streak === "number") {
-          setCurrentStreak(row.current_streak);
-        } else {
-          setCurrentStreak(0);
-        }
-      } else {
-        setCurrentStreak(0);
+      if (!error && Array.isArray(data) && data.length > 0 && typeof data[0]?.current_streak === "number") {
+        setCurrentStreak(data[0].current_streak);
+        return;
       }
     } catch {
+      // ignore and use local
+    }
+    // local fallback
+    const raw = localStorage.getItem(localStreakKey(user?.id));
+    if (raw) {
+      try {
+        const parsed = JSON.parse(raw) as LocalStreak;
+        const today = isoDate();
+        const delta = daysBetween(parsed.lastCorrectISO, today);
+        // If they haven't answered today, don't auto-increment; just show stored count if still contiguous
+        setCurrentStreak(delta <= 1 ? parsed.count : 0);
+      } catch {
+        setCurrentStreak(0);
+      }
+    } else {
       setCurrentStreak(0);
     }
   };
 
-  useEffect(() => {
-    // Grab streak if the RPC exists; ignore if not yet created
-    void fetchStreak();
-  }, []);
+  useEffect(() => { void fetchStreak(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [user?.id]);
 
-  // --- Award points. Default: use RPC vv_award_points(). If you haven't created it yet,
-  // run the SQL I provided earlier. (You could also implement a direct upsert fallback here if needed.)
+  // Award points: try RPC; on failure, atomically upsert user_points as a fallback
   const awardPoints = async (wasCorrect: boolean, pointsToAward: number) => {
-    const { error } = await supabase.rpc("vv_award_points", {
-      p_term: TERM,
-      p_was_correct: wasCorrect,
-      p_points: pointsToAward,
+    // Primary: server RPC (tracks proper per-day progress if you've installed it)
+    try {
+      const { error } = await supabase.rpc("vv_award_points", {
+        p_term: TERM,
+        p_was_correct: wasCorrect,
+        p_points: pointsToAward,
+      });
+      if (!error) return;
+      // If RPC returns an error, fall through to fallback
+      // eslint-disable-next-line no-empty
+    } catch {}
+
+    // Fallback: increment user_points.total_points client-side (no streak persistence)
+    if (!user?.id || !wasCorrect || pointsToAward <= 0) return;
+
+    // Ensure a row exists; then increment safely
+    // 1) Upsert row if missing
+    await supabase.from("user_points").upsert(
+      { user_id: user.id, total_points: 0 },
+      { onConflict: "user_id" }
+    );
+    // 2) Increment total_points
+    await supabase.rpc("increment_user_points", {
+      p_user_id: user.id,
+      p_delta: pointsToAward,
+    }).catch(async () => {
+      // If increment function doesn't exist, do a direct update as a last resort
+      const { data: row } = await supabase
+        .from("user_points")
+        .select("total_points")
+        .eq("user_id", user.id)
+        .maybeSingle();
+      const current = row?.total_points ?? 0;
+      await supabase
+        .from("user_points")
+        .update({ total_points: current + pointsToAward })
+        .eq("user_id", user.id);
     });
-    if (error) throw error;
+  };
+
+  // Update local streak fallback on correct answer
+  const bumpLocalStreak = () => {
+    const key = localStreakKey(user?.id);
+    const today = isoDate();
+    const raw = localStorage.getItem(key);
+    if (!raw) {
+      localStorage.setItem(key, JSON.stringify({ lastCorrectISO: today, count: 1 } as LocalStreak));
+      return 1;
+    }
+    try {
+      const parsed = JSON.parse(raw) as LocalStreak;
+      const delta = daysBetween(parsed.lastCorrectISO, today);
+      let next = 1;
+      if (delta === 0) {
+        next = parsed.count; // already answered today; keep the same
+      } else if (delta === 1) {
+        next = parsed.count + 1; // consecutive day
+      } else {
+        next = 1; // reset
+      }
+      localStorage.setItem(key, JSON.stringify({ lastCorrectISO: today, count: next } as LocalStreak));
+      return next;
+    } catch {
+      localStorage.setItem(key, JSON.stringify({ lastCorrectISO: today, count: 1 } as LocalStreak));
+      return 1;
+    }
   };
 
   const onSubmit = async () => {
@@ -127,11 +178,20 @@ export default function VinoVocabPage() {
       setSubmitted(true);
       setResult({ correct: wasCorrect, explain: selected.explain });
 
-      // Refresh local totals + streak
+      // Refresh points (server)
       await refreshPoints();
-      await fetchStreak();
+
+      // Refresh streak: try server; if server not ready, bump + read local
+      try {
+        await fetchStreak();
+      } catch {
+        // use local fallback if fetch failed
+        if (wasCorrect) {
+          const s = bumpLocalStreak();
+          setCurrentStreak(s);
+        }
+      }
     } catch (e: any) {
-      // If RPC isn't present yet, surface the error so you know to run the SQL
       setErr(e?.message ?? "Error submitting answer.");
     } finally {
       setBusy(false);
@@ -140,7 +200,7 @@ export default function VinoVocabPage() {
 
   return (
     <div className="mx-auto max-w-3xl p-4 sm:p-6">
-      {/* Top banner with Points + Streak (colours adjustable via THEME) */}
+      {/* Top banner with Points + Streak (theme via THEME) */}
       <div className={`mb-6 rounded-2xl border ${themeClasses.banner} p-4 sm:p-5`}>
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-3">
@@ -186,7 +246,7 @@ export default function VinoVocabPage() {
             >
               <input
                 type="radio"
-                name="ruby-q"
+                name={`vv-${TERM}-q`}
                 className="mt-1"
                 checked={choice === opt.id}
                 onChange={() => setChoice(opt.id)}
