@@ -454,7 +454,7 @@ async function buildRoundPayloadFromOCR(file: File): Promise<{ questions: StepQu
   const hemiCorrect = isOld ? 0 : 1;
 
   const countryCorrect = fromDB?.countryCorrect ?? fall.countryCorrect!;
-  the const regionCorrect  = fromDB?.regionCorrect  ?? fall.regionCorrect!;
+  const regionCorrect  = fromDB?.regionCorrect  ?? fall.regionCorrect!;
   const countryOptions = fromDB?.countryOptions?.length ? fromDB.countryOptions : fall.countryOptions;
   const regionOptions  = fromDB?.regionOptions?.length  ? fromDB.regionOptions  : fall.regionOptions;
   const subregionOptions = fromDB?.subregionOptions ?? fall.subregionOptions;
