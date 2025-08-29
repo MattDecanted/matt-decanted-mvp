@@ -39,12 +39,12 @@ export default function Layout({ children }: LayoutProps) {
     [
       'group relative flex items-center space-x-1 px-3 py-2 rounded-md text-sm font-medium transition-colors',
       isActive(path)
-        ? 'text-gray-900 bg-white shadow-sm'
+        ? [
+            'text-gray-900 bg-white shadow-sm',
+            // underline now renders because we set content
+            "after:content-[''] after:absolute after:left-2 after:right-2 after:-bottom-1 after:h-0.5 after:rounded-full after:bg-amber-500",
+          ].join(' ')
         : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100',
-      // active underline bar
-      isActive(path)
-        ? 'after:absolute after:left-2 after:right-2 after:-bottom-1 after:h-0.5 after:rounded-full after:bg-amber-500'
-        : 'after:content-none',
     ].join(' ');
 
   const closeMobile = () => setMobileOpen(false);
