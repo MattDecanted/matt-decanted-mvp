@@ -3,7 +3,7 @@ import React, { useEffect, useRef, useState } from "react";
 import type { RealtimeChannel } from "@supabase/supabase-js";
 import {
   Users, Share2, Copy, Loader2, Trophy, ChevronRight, CheckCircle2,
-  LogOut, Camera, Upload, AlertTriangle
+  LogOut, Camera, Upload, AlertTriangle, Lightbulb
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import {
@@ -501,6 +501,25 @@ function InviteBar({ inviteCode }: { inviteCode: string }) {
   );
 }
 
+/* ✅ New: yellow “How to play” card (inline component for easy drop-in) */
+function HowToPlayCard({ className = "" }: { className?: string }) {
+  return (
+    <div className={`rounded-xl border border-amber-300 bg-amber-50 p-4 sm:p-5 ${className}`}>
+      <div className="flex items-start gap-3">
+        <Lightbulb className="h-5 w-5 text-amber-600 mt-0.5 shrink-0" />
+        <div>
+          <h3 className="font-semibold text-amber-900">How to play it truly blind</h3>
+          <ul className="mt-2 list-disc pl-5 space-y-1 text-amber-900/90 text-sm">
+            <li>Ask a friend who <em>isn’t playing</em> to take/upload the label photo for you (or cover the label).</li>
+            <li>No black glass? A simple blindfold works — it keeps color a secret.</li>
+            <li>Best with friends: smell, taste, debate your answers before you lock them in.</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function QuestionStepper({ round, me, onFinished }: { round: GameRound; me: Participant; onFinished: () => void; }) {
   const questions: StepQuestion[] = round.payload?.questions ?? [];
   const [index, setIndex] = useState(0);
@@ -771,6 +790,9 @@ export default function WineOptionsGame({ initialCode = "" }: { initialCode?: st
       <div className="max-w-xl mx-auto p-6 space-y-6">
         <h1 className="text-3xl font-semibold">Wine Options — Multiplayer</h1>
 
+        {/* How to play (top) */}
+        <HowToPlayCard />
+
         {err && <div className="text-sm rounded-2xl border border-red-200 bg-red-50 text-red-700 p-2">{toPlain(err)}</div>}
 
         <div className="flex items-start gap-2 text-xs text-gray-600">
@@ -819,6 +841,9 @@ export default function WineOptionsGame({ initialCode = "" }: { initialCode?: st
 
   return (
     <div className="max-w-3xl mx-auto p-6 space-y-6">
+      {/* How to play (top) */}
+      <HowToPlayCard />
+
       <div className="flex items-center justify-between">
         <div className="text-sm">Status: <span className="font-medium">{uiStatus}</span></div>
         <div className="text-sm text-gray-500">Players: {participants.length}</div>
