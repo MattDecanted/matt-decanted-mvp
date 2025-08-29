@@ -72,31 +72,26 @@ function AutoResumeOnAccount() {
 
         localStorage.removeItem(PENDING_KEY);
       } catch {
-        // silent fail is fine for MVP
+        // silent fail for MVP
       }
     })();
   }, []);
   return null;
 }
 
-/** ✅ RequireAuth wrapper with "return to where you came from" */
+/** RequireAuth wrapper */
 function RequireAuth({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuth();
   const location = useLocation();
 
-  if (loading) {
-    return <div className="p-8">Loading...</div>;
-  }
-
-  if (!user) {
-    return <Navigate to="/signin" replace state={{ from: location }} />;
-  }
+  if (loading) return <div className="p-8">Loading...</div>;
+  if (!user) return <Navigate to="/signin" replace state={{ from: location }} />;
 
   return <>{children}</>;
 }
 
-/** ✅ Safe error boundary for routes */
-class RouteErrorBoundary extends React.Component<{ children: React.ReactNode }, { error: any }> {
+/** Global error boundary */
+class AppErrorBoundary extends React.Component<{ children: React.ReactNode }, { error: any }> {
   constructor(props: any) {
     super(props);
     this.state = { error: null };
@@ -105,15 +100,15 @@ class RouteErrorBoundary extends React.Component<{ children: React.ReactNode }, 
     return { error };
   }
   componentDidCatch(error: any, info: any) {
-    console.error('Route error:', error, info);
+    console.error('App crash:', error, info);
   }
   render() {
     if (this.state.error) {
       return (
         <div style={{ padding: 24 }}>
-          <h2>Something went wrong</h2>
+          <h1 className="text-xl font-bold">Something went wrong</h1>
           <pre style={{ whiteSpace: 'pre-wrap' }}>
-            {String(this.state.error?.stack || this.state.error?.message || this.state.error)}
+            {String(this.state.error?.message || this.state.error)}
           </pre>
         </div>
       );
@@ -123,105 +118,96 @@ class RouteErrorBoundary extends React.Component<{ children: React.ReactNode }, 
 }
 
 function App() {
+  // global listeners to catch runtime errors
+  React.useEffect(() => {
+    window.addEventListener('error', (e) =>
+      console.error('[window.error]', e.error || e.message)
+    );
+    window.addEventListener('unhandledrejection', (e: any) =>
+      console.error('[unhandledrejection]', e?.reason || e)
+    );
+  }, []);
+
   return (
     <AnalyticsProvider>
       <AuthProvider>
         <PointsProvider>
           <Router>
-            <Layout>
-              <Routes>
-                {/* Home */}
-                <Route path="/" element={<Home />} />
+            <AppErrorBoundary>
+              <Layout>
+                <Routes>
+                  {/* Home */}
+                  <Route path="/" element={<Home />} />
 
-                {/* Core info & auth */}
-                <Route path="/about" element={<About />} />
-                <Route path="/signin" element={<SignIn />} />
-                <Route path="/sign-in" element={<Navigate to="/signin" replace />} />
-                <Route path="/activate" element={<Activate />} />
+                  {/* Core info & auth */}
+                  <Route path="/about" element={<About />} />
+                  <Route path="/signin" element={<SignIn />} />
+                  <Route path="/sign-in" element={<Navigate to="/signin" replace />} />
+                  <Route path="/activate" element={<Activate />} />
 
-                {/* Blog */}
-                <Route path="/blog" element={<BlogIndex />} />
-                <Route path="/blog/how-to-become-winemaker" element={<HowToBecomeWinemaker />} />
-                <Route path="/blog/wset-level-2-questions" element={<WSETLevel2Questions />} />
-                <Route path="/blog/wine-tasting-guide" element={<WineTastingGuide />} />
-                <Route path="/blog/wine-vocabulary-quiz" element={<WineVocabularyQuiz />} />
+                  {/* Blog */}
+                  <Route path="/blog" element={<BlogIndex />} />
+                  <Route path="/blog/how-to-become-winemaker" element={<HowToBecomeWinemaker />} />
+                  <Route path="/blog/wset-level-2-questions" element={<WSETLevel2Questions />} />
+                  <Route path="/blog/wine-tasting-guide" element={<WineTastingGuide />} />
+                  <Route path="/blog/wine-vocabulary-quiz" element={<WineVocabularyQuiz />} />
 
-                {/* Games */}
-                <Route path="/games/guess-what" element={<GuessWhatPage />} />
-                <Route
-                  path="/swirdle"
-                  element={
-                    <RouteErrorBoundary>
-                      <Swirdle />
-                    </RouteErrorBoundary>
-                  }
-                />
-                <Route
-                  path="/play"
-                  element={
-                    <RouteErrorBoundary>
-                      <GamePage />
-                    </RouteErrorBoundary>
-                  }
-                />
-                <Route
-                  path="/game/:slug"
-                  element={
-                    <RouteErrorBoundary>
-                      <GamePage />
-                    </RouteErrorBoundary>
-                  }
-                />
+                  {/* Games */}
+                  <Route path="/games/guess-what" element={<GuessWhatPage />} />
+                  <Route path="/swirdle" element={<Swirdle />} />
+                  <Route path="/play" element={<GamePage />} />
+                  <Route path="/game/:slug" element={<GamePage />} />
 
-                {/* Shorts */}
-                <Route path="/shorts" element={<ShortsPage />} />
-                <Route path="/shorts/:slug" element={<ShortDetailPage />} />
+                  {/* Shorts */}
+                  <Route path="/shorts" element={<ShortsPage />} />
+                  <Route path="/shorts/:slug" element={<ShortDetailPage />} />
 
-                {/* Trial & Vocab */}
-                <Route path="/trial-quiz" element={<TrialQuizPage />} />
-                <Route path="/vocab" element={<VinoVocabPage />} />
+                  {/* Trial & Vocab */}
+                  <Route path="/trial-quiz" element={<TrialQuizPage />} />
+                  <Route path="/vocab" element={<VinoVocabPage />} />
 
-                {/* Admin */}
-                <Route path="/admin/vocab" element={<VocabChallengeManager />} />
-                <Route path="/admin/quizzes" element={<QuizManager />} />
-                <Route path="/admin/trial-quizzes" element={<TrialQuizManager />} />
-                <Route path="/admin/swirdle" element={<SwirdleAdmin />} />
+                  {/* Admin */}
+                  <Route path="/admin/vocab" element={<VocabChallengeManager />} />
+                  <Route path="/admin/quizzes" element={<QuizManager />} />
+                  <Route path="/admin/trial-quizzes" element={<TrialQuizManager />} />
+                  <Route path="/admin/swirdle" element={<SwirdleAdmin />} />
 
-                {/* Options (solo/multiplayer) */}
-                <Route path="/wine-options/solo" element={<SoloWineOptions />} />
-                <Route path="/wine-options/multiplayer" element={<WineOptionsGame />} />
+                  {/* Options */}
+                  <Route path="/wine-options/solo" element={<SoloWineOptions />} />
+                  <Route path="/wine-options/multiplayer" element={<WineOptionsGame />} />
 
-                {/* Dashboard / Account */}
-                <Route
-                  path="/dashboard"
-                  element={
-                    <RequireAuth>
-                      <Dashboard />
-                    </RequireAuth>
-                  }
-                />
-                <Route path="/Dashboard" element={<Navigate to="/dashboard" replace />} />
-                <Route
-                  path="/account"
-                  element={
-                    <>
-                      <AutoResumeOnAccount />
-                      <AccountPage />
-                    </>
-                  }
-                />
+                  {/* Dashboard / Account */}
+                  <Route
+                    path="/dashboard"
+                    element={
+                      <RequireAuth>
+                        <Dashboard />
+                      </RequireAuth>
+                    }
+                  />
+                  <Route path="/Dashboard" element={<Navigate to="/dashboard" replace />} />
+                  <Route
+                    path="/account"
+                    element={
+                      <>
+                        <AutoResumeOnAccount />
+                        <AccountPage />
+                      </>
+                    }
+                  />
 
-                {/* Pricing */}
-                <Route path="/pricing" element={<PricingPage />} />
+                  {/* Pricing */}
+                  <Route path="/pricing" element={<PricingPage />} />
 
-                {/* (Optional) Legacy demo route */}
-                <Route path="/demo" element={<BrandedDemo />} />
+                  {/* Legacy demo */}
+                  <Route path="/demo" element={<BrandedDemo />} />
 
-                {/* 404 fallback */}
-                <Route path="*" element={<Navigate to="/" replace />} />
-              </Routes>
-            </Layout>
-            <Toaster />
+                  {/* 404 fallback */}
+                  <Route path="*" element={<Navigate to="/" replace />} />
+                </Routes>
+              </Layout>
+              <Toaster />
+            </AppErrorBoundary>
           </Router>
         </PointsProvider>
       </AuthProvider>
