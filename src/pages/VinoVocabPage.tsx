@@ -1,14 +1,15 @@
 // FILE: src/pages/VinoVocabPage.tsx
-// Minimal Vino Vocab page with:
-// - Aliased usePoints import (useVocabPoints) to avoid name collisions
-// - Points + Streak banner (themeable: orange/green)
-// - Bold COLOUR label + Ruby lesson
-// - MCQ: “Which statement best applies to Ruby?”
-// - Supabase RPC calls: vv_award_points (awards 10 on correct), vv_get_user_stats via provider
+// Vino Vocab page (Ruby):
+// - Imports PointsContext from existing path: ../context/PointsContext
+// - Aliases usePoints -> useVocabPoints (prevents duplicate symbol errors)
+// - Uses relative imports to avoid alias issues on Netlify
+// - Points come from your existing user_points-driven context
+// - Streak fetched via vv_get_user_stats() if present (fallback = 0)
+// - Awards points via vv_award_points() (fallback comment included)
 
-import React, { useMemo, useState } from "react";
-import { supabase } from "@/lib/supabase";
-import { usePoints as useVocabPoints } from "@/contexts/PointsContext"; // <-- aliased to prevent conflicts
+import React, { useEffect, useMemo, useState } from "react";
+import { supabase } from "../lib/supabase"; // relative import (no @/)
+import { usePoints as useVocabPoints } from "../context/PointsContext"; // NOTE: singular "context"
 import { CheckCircle2, AlertTriangle } from "lucide-react";
 
 // --- THEME: change to "green" to switch banner/button accents ---
@@ -61,7 +62,12 @@ const OPTIONS = [
 ];
 
 export default function VinoVocabPage() {
-  const { totalPoints, currentStreak, refreshPoints } = useVocabPoints(); // aliased hook
+  // Use your existing PointsContext (user_points-backed)
+  const { totalPoints, refreshPoints } = useVocabPoints();
+
+  // We handle streak locally via RPC (if available)
+  const [currentStreak, setCurrentStreak] = useState<number>(0);
+
   const [choice, setChoice] = useState<string | null>(null);
   const [submitted, setSubmitted] = useState(false);
   const [result, setResult] = useState<null | { correct: boolean; explain: string }>(null);
@@ -73,6 +79,41 @@ export default function VinoVocabPage() {
     [choice]
   );
 
+  // --- Streak fetcher: tries vv_get_user_stats(); if missing, falls back to 0 without breaking UI
+  const fetchStreak = async () => {
+    try {
+      const { data, error } = await supabase.rpc("vv_get_user_stats");
+      if (!error && Array.isArray(data) && data.length > 0) {
+        const row = data[0] as { total_points?: number; current_streak?: number };
+        if (typeof row.current_streak === "number") {
+          setCurrentStreak(row.current_streak);
+        } else {
+          setCurrentStreak(0);
+        }
+      } else {
+        setCurrentStreak(0);
+      }
+    } catch {
+      setCurrentStreak(0);
+    }
+  };
+
+  useEffect(() => {
+    // Grab streak if the RPC exists; ignore if not yet created
+    void fetchStreak();
+  }, []);
+
+  // --- Award points. Default: use RPC vv_award_points(). If you haven't created it yet,
+  // run the SQL I provided earlier. (You could also implement a direct upsert fallback here if needed.)
+  const awardPoints = async (wasCorrect: boolean, pointsToAward: number) => {
+    const { error } = await supabase.rpc("vv_award_points", {
+      p_term: TERM,
+      p_was_correct: wasCorrect,
+      p_points: pointsToAward,
+    });
+    if (error) throw error;
+  };
+
   const onSubmit = async () => {
     if (!selected) return;
     setBusy(true);
@@ -81,20 +122,20 @@ export default function VinoVocabPage() {
     const wasCorrect = !!selected.correct;
     const pointsToAward = wasCorrect ? 10 : 0;
 
-    const { error } = await supabase.rpc("vv_award_points", {
-      p_term: TERM,
-      p_was_correct: wasCorrect,
-      p_points: pointsToAward,
-    });
-
-    if (error) {
-      setErr(error.message);
-    } else {
+    try {
+      await awardPoints(wasCorrect, pointsToAward);
       setSubmitted(true);
       setResult({ correct: wasCorrect, explain: selected.explain });
+
+      // Refresh local totals + streak
       await refreshPoints();
+      await fetchStreak();
+    } catch (e: any) {
+      // If RPC isn't present yet, surface the error so you know to run the SQL
+      setErr(e?.message ?? "Error submitting answer.");
+    } finally {
+      setBusy(false);
     }
-    setBusy(false);
   };
 
   return (
@@ -103,9 +144,7 @@ export default function VinoVocabPage() {
       <div className={`mb-6 rounded-2xl border ${themeClasses.banner} p-4 sm:p-5`}>
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-3">
-            <span
-              className={`px-3 py-1 rounded-full text-sm font-semibold ${themeClasses.chip}`}
-            >
+            <span className={`px-3 py-1 rounded-full text-sm font-semibold ${themeClasses.chip}`}>
               COLOUR
             </span>
             <h1 className="text-xl sm:text-2xl font-bold">Vino Vocab Daily</h1>
@@ -171,24 +210,24 @@ export default function VinoVocabPage() {
             Submit
           </button>
 
-            {submitted && result && (
-              <div className="flex items-center gap-2 text-sm">
-                {result.correct ? (
-                  <>
-                    <CheckCircle2 className="h-5 w-5" />
-                    <span className="font-semibold">Correct!</span>
-                  </>
-                ) : (
-                  <>
-                    <AlertTriangle className="h-5 w-5" />
-                    <span className="font-semibold">Not quite.</span>
-                  </>
-                )}
-                <span className="text-black/70">{result.explain}</span>
-              </div>
-            )}
+          {submitted && result && (
+            <div className="flex items-center gap-2 text-sm">
+              {result.correct ? (
+                <>
+                  <CheckCircle2 className="h-5 w-5" />
+                  <span className="font-semibold">Correct!</span>
+                </>
+              ) : (
+                <>
+                  <AlertTriangle className="h-5 w-5" />
+                  <span className="font-semibold">Not quite.</span>
+                </>
+              )}
+              <span className="text-black/70">{result.explain}</span>
+            </div>
+          )}
 
-            {err && <div className="text-sm text-red-600">{err}</div>}
+          {err && <div className="text-sm text-red-600">{err}</div>}
         </div>
       </div>
     </div>
