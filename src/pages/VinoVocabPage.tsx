@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { createClient } from "@supabase/supabase-js";
+import { supabase } from "@/lib/supabase";
 import { motion, AnimatePresence } from "framer-motion";
 import { Trophy, Flame, Sparkles, Check, X, Lock, LogIn, LogOut, Info } from "lucide-react";
 
