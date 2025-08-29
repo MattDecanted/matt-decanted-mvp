@@ -2,18 +2,23 @@
 import React, { createContext, useContext, useEffect, useMemo, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { supabase } from "@/lib/supabase";
-import { Trophy, Flame, Sparkles, Check, X, Lock, LogIn, LogOut, Info, CheckCircle2, AlertTriangle } from "lucide-react";
+import {
+  Trophy, Flame, Sparkles, Check, X, Lock, LogIn, LogOut, Info, CheckCircle2, AlertTriangle
+} from "lucide-react";
 
 /**
  * Matt Decanted — Vino Vocab (Daily)
  * Single-file page with a local PointsProvider. Default export wraps the page.
  *
- * RPCs supported (we try them in this order):
+ * Award order (graceful fallbacks):
  *   1) award_vocab_points(p_vocab uuid, p_correct boolean)
- *   2) vv_award_points(p_points int, p_term text, p_was_correct boolean)  <-- your logs indicate this order
- *   3) vv_award_points(p_term text, p_was_correct boolean, p_points int)  <-- alternate order
- * Totals/Streak:
- *   - vv_get_user_stats() -> [{ total_points, current_streak }]
+ *   2) vv_award_points(term text, was_correct boolean, points int)
+ *   3) vv_award_points(p_points int, p_term text, p_was_correct boolean)
+ *   4) REST fallback (updates vocab_user_totals + vocab_user_latest_correct)
+ *
+ * Totals/Streak read via:
+ *   - vv_get_user_stats() -> [{ total_points, current_streak }] (if present)
+ *   If vv_get_user_stats is missing, the UI still shows locally refreshed values via the REST fallback.
  */
 
 // ---------- utils ----------
@@ -23,10 +28,7 @@ function formatDateAdelaide(d = new Date()) {
     timeZone: tzAdelaide, year: "numeric", month: "2-digit", day: "2-digit",
   })
     .formatToParts(d)
-    .reduce((acc: Record<string, string>, p) => {
-      acc[p.type] = p.value;
-      return acc;
-    }, {});
+    .reduce((acc: Record<string, string>, p) => ((acc[p.type] = p.value), acc), {});
   return `${parts.year}-${parts.month}-${parts.day}`;
 }
 function cn(...xs: Array<string | false | null | undefined>) {
@@ -49,11 +51,21 @@ function PointsProvider({ children }: { children: React.ReactNode }) {
 
   const refreshPoints = async () => {
     setLoading(true);
+    // Prefer vv_get_user_stats if present; otherwise try to synthesize from tables (best-effort).
     const { data, error } = await supabase.rpc("vv_get_user_stats");
     if (!error && Array.isArray(data) && data?.[0]) {
       const row = data[0] as { total_points?: number; current_streak?: number };
       setTotalPoints(row?.total_points ?? 0);
       setCurrentStreak(row?.current_streak ?? 0);
+    } else {
+      // best-effort synthesis
+      const uid = (await supabase.auth.getUser()).data?.user?.id ?? null;
+      if (uid) {
+        const t = await supabase.from("vocab_user_totals").select("total_points").eq("user_id", uid).maybeSingle();
+        if (!t.error && t.data) setTotalPoints(t.data.total_points ?? 0);
+        const s = await supabase.from("vocab_user_latest_correct").select("streak_after").eq("user_id", uid).maybeSingle();
+        if (!s.error && s.data) setCurrentStreak(s.data.streak_after ?? 0);
+      }
     }
     setLoading(false);
   };
@@ -218,7 +230,7 @@ function LessonMeta({ lesson }: { lesson: Lesson | null }) {
   );
 }
 
-// ---------- Inner page that uses the context ----------
+// ---------- Inner page ----------
 function VinoVocabInner() {
   const { totalPoints, currentStreak, refreshPoints } = usePoints();
 
@@ -269,7 +281,7 @@ function VinoVocabInner() {
           .eq("date", todayStr)
           .maybeSingle();
 
-        if (lcErr && lcErr.code !== "PGRST116") throw lcErr; // ignore "no rows" if that code appears
+        if (lcErr && lcErr.code !== "PGRST116") throw lcErr; // ignore "no rows"
         setLesson((lc || null) as Lesson | null);
 
         // optional flair
@@ -317,7 +329,71 @@ function VinoVocabInner() {
     setProfileTier("free");
   };
 
-  // Answer submit with robust RPC fallback
+  // --- Award points with RPCs + REST fallback (no user-facing errors if a later path works)
+  async function awardPoints({ isCorrect }: { isCorrect: boolean }) {
+    const base = isCorrect ? (lesson?.points ?? 10) : 0;
+    const term = lesson?.word ?? DEMO_TERM;
+
+    // 1) award by vocab id
+    if (lesson?.id) {
+      const r1 = await supabase.rpc("award_vocab_points", { p_vocab: lesson.id, p_correct: isCorrect });
+      if (!r1.error) {
+        const row = (r1.data?.[0] ?? {}) as { points_awarded?: number; streak_after?: number };
+        return { awarded: row.points_awarded ?? base, streak: row.streak_after ?? (isCorrect ? currentStreak + 1 : currentStreak) };
+      }
+    }
+
+    // 2) canonical vv_award_points(term, was_correct, points)
+    const r2 = await supabase.rpc("vv_award_points", { term, was_correct: isCorrect, points: base });
+    if (!r2.error) {
+      const row = (r2.data?.[0] ?? {}) as { points_awarded?: number; streak_after?: number };
+      return { awarded: row.points_awarded ?? base, streak: row.streak_after ?? (isCorrect ? currentStreak + 1 : currentStreak) };
+    }
+
+    // 3) compatibility call vv_award_points(p_points, p_term, p_was_correct)
+    const r3 = await supabase.rpc("vv_award_points", { p_points: base, p_term: term, p_was_correct: isCorrect });
+    if (!r3.error) {
+      const row = (r3.data?.[0] ?? {}) as { points_awarded?: number; streak_after?: number };
+      return { awarded: row.points_awarded ?? base, streak: row.streak_after ?? (isCorrect ? currentStreak + 1 : currentStreak) };
+    }
+
+    // 4) REST fallback — persist directly if tables allow (RLS must permit)
+    const uid = userId;
+    if (!uid) return { awarded: base, streak: isCorrect ? currentStreak + 1 : currentStreak };
+
+    // totals
+    const t = await supabase.from("vocab_user_totals").select("total_points, lessons_correct").eq("user_id", uid).maybeSingle();
+    if (!t.error) {
+      const newTotals = (t.data?.total_points ?? 0) + base;
+      const newCorrects = (t.data?.lessons_correct ?? 0) + (isCorrect ? 1 : 0);
+      if (t.data) {
+        await supabase.from("vocab_user_totals").update({ total_points: newTotals, lessons_correct: newCorrects }).eq("user_id", uid);
+      } else {
+        await supabase.from("vocab_user_totals").insert({ user_id: uid, total_points: newTotals, lessons_correct: newCorrects });
+      }
+    }
+
+    // streak
+    let streak = currentStreak;
+    const s = await supabase.from("vocab_user_latest_correct").select("streak_after").eq("user_id", uid).maybeSingle();
+    if (!s.error) {
+      streak = s.data?.streak_after ?? 0;
+    }
+    if (isCorrect) streak = streak + 1;
+
+    await supabase.from("vocab_user_latest_correct").upsert(
+      {
+        user_id: uid,
+        streak_after: streak,
+        lesson_date: formatDateAdelaide(),
+        completed_at: new Date().toISOString(),
+      },
+      { onConflict: "user_id" }
+    );
+
+    return { awarded: base, streak };
+  }
+
   const handleAnswer = async (idx: number) => {
     if (!lesson?.options) return;
 
@@ -328,84 +404,47 @@ function VinoVocabInner() {
     setSaving(true);
     setErr(null);
 
-    let awarded = 0;
-    let streak = currentStreak;
-
     try {
+      let awarded = 0;
+      let streak = currentStreak;
+
       if (isSubscribed && userId) {
-        // Try #1: award by vocab id
-        const tryPrimary = await supabase.rpc("award_vocab_points", {
-          p_vocab: lesson.id,
-          p_correct: isCorrect,
-        });
+        const res = await awardPoints({ isCorrect });
+        awarded = res.awarded;
+        streak = res.streak;
 
-        if (tryPrimary.error) {
-          // Try #2: vv_award_points with order (p_points, p_term, p_was_correct) — matches your error log
-          const pointsToGive = isCorrect ? (lesson.points ?? 10) : 0;
-          const tryOrderA = await supabase.rpc("vv_award_points", {
-            p_points: pointsToGive,
-            p_term: lesson.word ?? DEMO_TERM,
-            p_was_correct: isCorrect,
-          });
-
-          if (tryOrderA.error) {
-            // Try #3: vv_award_points with alternate order (p_term, p_was_correct, p_points)
-            const tryOrderB = await supabase.rpc("vv_award_points", {
-              p_term: lesson.word ?? DEMO_TERM,
-              p_was_correct: isCorrect,
-              p_points: pointsToGive,
-            });
-
-            if (tryOrderB.error) throw tryOrderB.error;
-
-            const fr = (tryOrderB.data?.[0] ?? {}) as { points_awarded?: number; streak_after?: number };
-            awarded = fr.points_awarded ?? pointsToGive;
-            streak = fr.streak_after ?? (isCorrect ? currentStreak + 1 : 0);
-          } else {
-            const fr = (tryOrderA.data?.[0] ?? {}) as { points_awarded?: number; streak_after?: number };
-            awarded = fr.points_awarded ?? pointsToGive;
-            streak = fr.streak_after ?? (isCorrect ? currentStreak + 1 : 0);
-          }
-        } else {
-          const pr = (tryPrimary.data?.[0] ?? {}) as { points_awarded?: number; streak_after?: number };
-          awarded = pr.points_awarded ?? (isCorrect ? (lesson.points ?? 10) : 0);
-          streak = pr.streak_after ?? (isCorrect ? currentStreak + 1 : 0);
-        }
-
-        // Refresh points & optional widgets
+        // refresh sidebar + header counters
         await refreshPoints();
 
-        if (userId) {
-          const { data: t } = await supabase
-            .from("vocab_user_totals")
-            .select("user_id, total_points, lessons_correct")
-            .eq("user_id", userId)
-            .maybeSingle();
-          if (t) setTotals(t as TotalsRow);
+        const { data: t } = await supabase
+          .from("vocab_user_totals")
+          .select("user_id, total_points, lessons_correct")
+          .eq("user_id", userId)
+          .maybeSingle();
+        if (t) setTotals(t as TotalsRow);
 
-          const { data: l } = await supabase
-            .from("vocab_user_latest_correct")
-            .select("user_id, streak_after, lesson_date, completed_at")
-            .eq("user_id", userId)
-            .maybeSingle();
-          if (l) setLatest(l as LatestCorrectRow);
-        }
+        const { data: l } = await supabase
+          .from("vocab_user_latest_correct")
+          .select("user_id, streak_after, lesson_date, completed_at")
+          .eq("user_id", userId)
+          .maybeSingle();
+        if (l) setLatest(l as LatestCorrectRow);
       }
 
       setResult({
         correct: isCorrect,
-        points: awarded,
+        points: isSubscribed ? (awarded ?? 0) : 0,
         streak,
         explain:
           lesson?.explanation ??
           (isCorrect ? "Nice – locked in." : "Not quite. Read the why, then try tomorrow."),
       });
     } catch (e: any) {
-      // If RPCs fail entirely, still show local result; surface error text
+      // Last-resort UI feedback; do not surface internal RPC schema errors unless everything fails
       setResult({
         correct: isCorrect,
-        points: awarded,
-        streak,
+        points: 0,
+        streak: currentStreak,
         explain:
           lesson?.explanation ??
           (isCorrect ? "Nice – locked in." : "Not quite. Read the why, then try tomorrow."),
@@ -442,9 +481,8 @@ function VinoVocabInner() {
       <div className="mt-4 md:mt-6 rounded-2xl bg-white p-4 md:p-5 shadow ring-1 ring-neutral-200">
         <p className="text-sm md:text-base leading-relaxed text-neutral-700">
           Confidence in wine tasting often comes down to having the right vocabulary at your
-          fingertips—to describe what you’re seeing, smelling and tasting (texture and structure
-          included). I’ve put this program together to share 600+ words I reach for when I taste, so
-          you can bank them one tidy word a day.
+          fingertips—to describe what you’re seeing, smelling and tasting (texture and structure included).
+          I’ve put this program together to share 600+ words I reach for when I taste, so you can bank them one tidy word a day.
         </p>
       </div>
 
@@ -514,7 +552,7 @@ function VinoVocabInner() {
                 </div>
               )}
 
-              {/* >>> NEW PROMPT LINE <<< */}
+              {/* prompt line */}
               <div className="mt-6 text-base font-semibold text-neutral-900">
                 Which statement best represents <span className="italic">{termForPrompt}</span>?
               </div>
