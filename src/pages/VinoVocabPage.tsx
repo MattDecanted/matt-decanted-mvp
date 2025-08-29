@@ -6,20 +6,14 @@ import { Trophy, Flame, Sparkles, Check, X, Lock, LogIn, LogOut, Info, CheckCirc
 
 /**
  * Matt Decanted — Vino Vocab (Daily)
- * - Single-file drop-in
- * - Points/Streak via Supabase RPCs (see notes below)
+ * Single-file page with a local PointsProvider. Default export wraps the page
+ * in the provider to avoid “usePoints must be used within a PointsProvider”.
  *
- * Expected RPCs (any of these):
- *   1) award_vocab_points(p_vocab uuid, p_correct boolean)
- *   2) vv_award_points(p_term text, p_was_correct boolean, p_points int)
- * For totals/streak:
- *   3) vv_get_user_stats() -> [{ total_points: number, current_streak: number }]
- *
- * Tables/Views (optional, used if they exist):
- *   - vocab_challenges (id, word, description, explanation, options, correct, hint, date, category, difficulty, points)
- *   - vocab_user_totals (user_id, total_points, lessons_correct)
- *   - vocab_user_latest_correct (user_id, streak_after, lesson_date, completed_at)
- *   - vocab_leaderboard_30d (user_id, points_30d, correct_30d)
+ * RPCs supported:
+ *   - award_vocab_points(p_vocab uuid, p_correct boolean)
+ *   - vv_award_points(p_term text, p_was_correct boolean, p_points int)
+ * Totals/Streak:
+ *   - vv_get_user_stats() -> [{ total_points, current_streak }]
  */
 
 // ---------- utils ----------
@@ -27,14 +21,19 @@ const tzAdelaide = "Australia/Adelaide";
 function formatDateAdelaide(d = new Date()) {
   const parts = new Intl.DateTimeFormat("en-CA", {
     timeZone: tzAdelaide, year: "numeric", month: "2-digit", day: "2-digit",
-  }).formatToParts(d).reduce((acc: Record<string,string>, p) => { acc[p.type] = p.value; return acc; }, {});
+  })
+    .formatToParts(d)
+    .reduce((acc: Record<string, string>, p) => {
+      acc[p.type] = p.value;
+      return acc;
+    }, {});
   return `${parts.year}-${parts.month}-${parts.day}`;
 }
 function cn(...xs: Array<string | false | null | undefined>) {
   return xs.filter(Boolean).join(" ");
 }
 
-// ---------- Points Context ----------
+// ---------- Points Context (local) ----------
 interface PointsContextType {
   totalPoints: number;
   currentStreak: number;
@@ -59,7 +58,9 @@ function PointsProvider({ children }: { children: React.ReactNode }) {
     setLoading(false);
   };
 
-  useEffect(() => { void refreshPoints(); }, []);
+  useEffect(() => {
+    void refreshPoints();
+  }, []);
 
   return (
     <PointsContext.Provider value={{ totalPoints, currentStreak, loading, refreshPoints }}>
@@ -147,7 +148,7 @@ const DEMO_OPTIONS = [
   { id: "D", text: "A deep purple-black shade most common in very old Cabernet Sauvignon.", correct: false, explain: "Old Cabs trend to garnet/brick." },
 ];
 
-// ---------- page ----------
+// ---------- header ----------
 function Header({
   userId,
   onSignOut,
@@ -166,9 +167,7 @@ function Header({
             <span className="text-xs tracking-widest uppercase">Matt Decanted</span>
           </div>
           <h1 className="mt-2 text-3xl md:text-4xl font-semibold text-white">Daily Wine Vocab</h1>
-          <p className="mt-1 text-sm text-neutral-300">
-            One tidy word a day. Learn it, nail it, bank it.
-          </p>
+          <p className="mt-1 text-sm text-neutral-300">One tidy word a day. Learn it, nail it, bank it.</p>
         </div>
         <div className="flex items-center gap-3">
           {userId ? (
@@ -219,7 +218,8 @@ function LessonMeta({ lesson }: { lesson: Lesson | null }) {
   );
 }
 
-export default function VinoVocabPage() {
+// ---------- Inner page that uses the context ----------
+function VinoVocabInner() {
   const { totalPoints, currentStreak, refreshPoints } = usePoints();
 
   const [userId, setUserId] = useState<string | null>(null);
@@ -251,7 +251,11 @@ export default function VinoVocabPage() {
         setUserId(uid);
 
         if (uid) {
-          const { data: mp } = await supabase.from("member_profiles").select("subscription_tier").eq("user_id", uid).maybeSingle();
+          const { data: mp } = await supabase
+            .from("member_profiles")
+            .select("subscription_tier")
+            .eq("user_id", uid)
+            .maybeSingle();
           setProfileTier(mp?.subscription_tier ?? "free"); // count free as subscribed
         } else {
           setProfileTier(null);
@@ -265,7 +269,7 @@ export default function VinoVocabPage() {
           .eq("date", todayStr)
           .maybeSingle();
 
-        if (lcErr && lcErr.code !== "PGRST116") throw lcErr; // ignore "no rows" code if it appears
+        if (lcErr && lcErr.code !== "PGRST116") throw lcErr; // ignore "no rows" if that code appears
         setLesson((lc || null) as Lesson | null);
 
         // optional flair
@@ -273,13 +277,15 @@ export default function VinoVocabPage() {
           const { data: t } = await supabase
             .from("vocab_user_totals")
             .select("user_id, total_points, lessons_correct")
-            .eq("user_id", uid).maybeSingle();
+            .eq("user_id", uid)
+            .maybeSingle();
           if (t) setTotals(t as TotalsRow);
 
           const { data: l } = await supabase
             .from("vocab_user_latest_correct")
             .select("user_id, streak_after, lesson_date, completed_at")
-            .eq("user_id", uid).maybeSingle();
+            .eq("user_id", uid)
+            .maybeSingle();
           if (l) setLatest(l as LatestCorrectRow);
 
           const { data: lb } = await supabase
@@ -311,7 +317,7 @@ export default function VinoVocabPage() {
     setProfileTier("free");
   };
 
-  // Submit handler with **correct RPC usage** (no `.catch` after `await`)
+  // Answer submit with proper RPC usage (no `.catch` after await)
   const handleAnswer = async (idx: number) => {
     if (!lesson?.options) return;
 
@@ -328,15 +334,12 @@ export default function VinoVocabPage() {
     try {
       if (isSubscribed && userId) {
         // Try primary RPC (award by vocab id)
-        let rpcError: any = null;
-
         const tryPrimary = await supabase.rpc("award_vocab_points", {
           p_vocab: lesson.id,
           p_correct: isCorrect,
         });
 
         if (tryPrimary.error) {
-          rpcError = tryPrimary.error;
           // Fallback to vv_award_points (award by term)
           const fallback = await supabase.rpc("vv_award_points", {
             p_term: lesson.word ?? DEMO_TERM,
@@ -354,20 +357,22 @@ export default function VinoVocabPage() {
           streak = pr.streak_after ?? (isCorrect ? currentStreak + 1 : 0);
         }
 
-        // refresh points & optional widgets
+        // Refresh points & optional widgets
         await refreshPoints();
 
         if (userId) {
           const { data: t } = await supabase
             .from("vocab_user_totals")
             .select("user_id, total_points, lessons_correct")
-            .eq("user_id", userId).maybeSingle();
+            .eq("user_id", userId)
+            .maybeSingle();
           if (t) setTotals(t as TotalsRow);
 
           const { data: l } = await supabase
             .from("vocab_user_latest_correct")
             .select("user_id, streak_after, lesson_date, completed_at")
-            .eq("user_id", userId).maybeSingle();
+            .eq("user_id", userId)
+            .maybeSingle();
           if (l) setLatest(l as LatestCorrectRow);
         }
       }
@@ -376,12 +381,9 @@ export default function VinoVocabPage() {
         correct: isCorrect,
         points: awarded,
         streak,
-        // explanation line for the demo OR from lesson.explanation
         explain:
           lesson?.explanation ??
-          (isCorrect
-            ? "Nice – locked in."
-            : "Not quite. Read the why, then try tomorrow."),
+          (isCorrect ? "Nice – locked in." : "Not quite. Read the why, then try tomorrow."),
       });
     } catch (e: any) {
       setErr(e?.message ?? String(e));
@@ -395,11 +397,12 @@ export default function VinoVocabPage() {
     setResult(null);
   };
 
-  // chosen option (demo only)
   const selectedDemo = useMemo(() => {
     if (selected == null) return null;
     return DEMO_OPTIONS[selected] ?? null;
   }, [selected]);
+
+  const isSubscribed = !!profileTier;
 
   return (
     <div className="mx-auto max-w-6xl p-4 md:p-8">
@@ -489,9 +492,11 @@ export default function VinoVocabPage() {
 
               {/* options */}
               <div className="mt-6 grid grid-cols-1 sm:grid-cols-2 gap-3">
-                {(lesson?.options ?? DEMO_OPTIONS.map(o => o.text)).map((opt, i) => {
+                {(lesson?.options ?? DEMO_OPTIONS.map((o) => o.text)).map((opt, i) => {
                   const isChosen = selected === i;
-                  const isRight = result?.correct && (lesson?.correct ? lesson.correct === opt : DEMO_OPTIONS[i]?.correct);
+                  const isRight =
+                    result?.correct &&
+                    (lesson?.correct ? lesson.correct === opt : DEMO_OPTIONS[i]?.correct);
                   const isWrong = isChosen && result && !result.correct;
                   return (
                     <button
@@ -520,7 +525,10 @@ export default function VinoVocabPage() {
                         </span>
                         <span>{opt}</span>
                         <span className="ml-auto">
-                          {result && (lesson?.correct ? lesson.correct === opt : DEMO_OPTIONS[i]?.correct) && <Check className="h-4 w-4" />}
+                          {result &&
+                            (lesson?.correct ? lesson.correct === opt : DEMO_OPTIONS[i]?.correct) && (
+                              <Check className="h-4 w-4" />
+                            )}
                           {result && isWrong && <X className="h-4 w-4" />}
                         </span>
                       </div>
@@ -573,7 +581,6 @@ export default function VinoVocabPage() {
                       <p className="mt-3 text-sm leading-relaxed text-neutral-700">{lesson.explanation}</p>
                     )}
 
-                    {/* demo explanation fallback */}
                     {!lesson?.explanation && selectedDemo && (
                       <p className="mt-3 text-sm leading-relaxed text-neutral-700">{selectedDemo.explain}</p>
                     )}
@@ -586,18 +593,18 @@ export default function VinoVocabPage() {
                         Try again
                       </button>
 
-                      {!isSubscribed &&
-                        (userId ? (
-                          <button
-                            onClick={handleJoinFree}
-                            className="rounded-xl bg-neutral-900 px-3 py-2 text-sm text-white hover:bg-neutral-800"
-                          >
-                            Join free – save my streak
-                          </button>
-                        ) : (
-                          <div className="text-sm text-neutral-600">Sign in above to join free.</div>
-                        ))}
-                      {saving && <div className="text-sm text-neutral-500">Saving…</div>}
+                        {!isSubscribed &&
+                          (userId ? (
+                            <button
+                              onClick={handleJoinFree}
+                              className="rounded-xl bg-neutral-900 px-3 py-2 text-sm text-white hover:bg-neutral-800"
+                            >
+                              Join free – save my streak
+                            </button>
+                          ) : (
+                            <div className="text-sm text-neutral-600">Sign in above to join free.</div>
+                          ))}
+                        {saving && <div className="text-sm text-neutral-500">Saving…</div>}
                     </div>
                   </motion.div>
                 )}
@@ -666,11 +673,11 @@ export default function VinoVocabPage() {
   );
 }
 
-// Wrap the page with PointsProvider
-export function PageWithProviders() {
+// ---------- Default export wraps inner page in the provider ----------
+export default function VinoVocabPage() {
   return (
     <PointsProvider>
-      <VinoVocabPage />
+      <VinoVocabInner />
     </PointsProvider>
   );
 }
