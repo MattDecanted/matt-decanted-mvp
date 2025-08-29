@@ -2,9 +2,8 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 
 /**
- * Database types aligned to the SQL migration we ran:
- * - Only include columns that actually exist in the tables.
- * - Use correct nullability.
+ * Database types aligned to your SQL schema.
+ * (Unchanged from your version; only the client creation below is new.)
  */
 export type Database = {
   public: {
@@ -209,22 +208,40 @@ export type Database = {
   };
 };
 
+/** -------- Env handling (Vite + Netlify) --------
+ * Use VITE_*-prefixed vars so Vite exposes them to the browser bundle.
+ */
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL as string | undefined;
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined;
 
-if (!supabaseUrl || !supabaseAnonKey) {
-  // Soft warn so builds don’t crash if this file is imported in non-browser contexts.
+/**
+ * Throw a clear, actionable error only when someone actually tries
+ * to use the client without proper configuration.
+ */
+function notConfigured(): never {
+  throw new Error(
+    "Supabase is not configured. Set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY in your Netlify environment variables."
+  );
+}
+
+let client: SupabaseClient<Database>;
+
+if (supabaseUrl && supabaseAnonKey) {
+  client = createClient<Database>(supabaseUrl, supabaseAnonKey, {
+    auth: { persistSession: true, autoRefreshToken: true },
+  });
+} else {
   console.warn("Supabase env vars missing: VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY");
+  // Proxy prevents the app from crashing on import; it errors only when used.
+  client = new Proxy({} as SupabaseClient<Database>, {
+    get() {
+      return notConfigured;
+    },
+    apply() {
+      return notConfigured();
+    },
+  }) as SupabaseClient<Database>;
 }
 
 /** Typed Supabase client for the browser app. */
-export const supabase: SupabaseClient<Database> = createClient<Database>(
-  supabaseUrl ?? "",
-  supabaseAnonKey ?? "",
-  {
-    auth: {
-      persistSession: true,
-      autoRefreshToken: true
-    }
-  }
-);
+export const supabase = client;
