@@ -6,12 +6,12 @@ import { Trophy, Flame, Sparkles, Check, X, Lock, LogIn, LogOut, Info, CheckCirc
 
 /**
  * Matt Decanted — Vino Vocab (Daily)
- * Single-file page with a local PointsProvider. Default export wraps the page
- * in the provider to avoid “usePoints must be used within a PointsProvider”.
+ * Single-file page with a local PointsProvider. Default export wraps the page.
  *
- * RPCs supported:
- *   - award_vocab_points(p_vocab uuid, p_correct boolean)
- *   - vv_award_points(p_term text, p_was_correct boolean, p_points int)
+ * RPCs supported (we try them in this order):
+ *   1) award_vocab_points(p_vocab uuid, p_correct boolean)
+ *   2) vv_award_points(p_points int, p_term text, p_was_correct boolean)  <-- your logs indicate this order
+ *   3) vv_award_points(p_term text, p_was_correct boolean, p_points int)  <-- alternate order
  * Totals/Streak:
  *   - vv_get_user_stats() -> [{ total_points, current_streak }]
  */
@@ -237,7 +237,6 @@ function VinoVocabInner() {
   const [latest, setLatest] = useState<LatestCorrectRow | null>(null);
   const [leader, setLeader] = useState<LeaderRow[]>([]);
 
-  // ✅ Declare isSubscribed ONCE here:
   const isSubscribed = !!profileTier;
 
   // bootstrap
@@ -318,7 +317,7 @@ function VinoVocabInner() {
     setProfileTier("free");
   };
 
-  // Answer submit with proper RPC usage (no `.catch` after await)
+  // Answer submit with robust RPC fallback
   const handleAnswer = async (idx: number) => {
     if (!lesson?.options) return;
 
@@ -334,24 +333,39 @@ function VinoVocabInner() {
 
     try {
       if (isSubscribed && userId) {
-        // Try primary RPC (award by vocab id)
+        // Try #1: award by vocab id
         const tryPrimary = await supabase.rpc("award_vocab_points", {
           p_vocab: lesson.id,
           p_correct: isCorrect,
         });
 
         if (tryPrimary.error) {
-          // Fallback to vv_award_points (award by term)
-          const fallback = await supabase.rpc("vv_award_points", {
+          // Try #2: vv_award_points with order (p_points, p_term, p_was_correct) — matches your error log
+          const pointsToGive = isCorrect ? (lesson.points ?? 10) : 0;
+          const tryOrderA = await supabase.rpc("vv_award_points", {
+            p_points: pointsToGive,
             p_term: lesson.word ?? DEMO_TERM,
             p_was_correct: isCorrect,
-            p_points: isCorrect ? (lesson.points ?? 10) : 0,
           });
-          if (fallback.error) throw fallback.error;
 
-          const fr = (fallback.data?.[0] ?? {}) as { points_awarded?: number; streak_after?: number };
-          awarded = fr.points_awarded ?? (isCorrect ? (lesson.points ?? 10) : 0);
-          streak = fr.streak_after ?? (isCorrect ? currentStreak + 1 : 0);
+          if (tryOrderA.error) {
+            // Try #3: vv_award_points with alternate order (p_term, p_was_correct, p_points)
+            const tryOrderB = await supabase.rpc("vv_award_points", {
+              p_term: lesson.word ?? DEMO_TERM,
+              p_was_correct: isCorrect,
+              p_points: pointsToGive,
+            });
+
+            if (tryOrderB.error) throw tryOrderB.error;
+
+            const fr = (tryOrderB.data?.[0] ?? {}) as { points_awarded?: number; streak_after?: number };
+            awarded = fr.points_awarded ?? pointsToGive;
+            streak = fr.streak_after ?? (isCorrect ? currentStreak + 1 : 0);
+          } else {
+            const fr = (tryOrderA.data?.[0] ?? {}) as { points_awarded?: number; streak_after?: number };
+            awarded = fr.points_awarded ?? pointsToGive;
+            streak = fr.streak_after ?? (isCorrect ? currentStreak + 1 : 0);
+          }
         } else {
           const pr = (tryPrimary.data?.[0] ?? {}) as { points_awarded?: number; streak_after?: number };
           awarded = pr.points_awarded ?? (isCorrect ? (lesson.points ?? 10) : 0);
@@ -387,6 +401,15 @@ function VinoVocabInner() {
           (isCorrect ? "Nice – locked in." : "Not quite. Read the why, then try tomorrow."),
       });
     } catch (e: any) {
+      // If RPCs fail entirely, still show local result; surface error text
+      setResult({
+        correct: isCorrect,
+        points: awarded,
+        streak,
+        explain:
+          lesson?.explanation ??
+          (isCorrect ? "Nice – locked in." : "Not quite. Read the why, then try tomorrow."),
+      });
       setErr(e?.message ?? String(e));
     } finally {
       setSaving(false);
@@ -403,6 +426,8 @@ function VinoVocabInner() {
     return DEMO_OPTIONS[selected] ?? null;
   }, [selected]);
 
+  const termForPrompt = lesson?.word ?? DEMO_TERM;
+
   return (
     <div className="mx-auto max-w-6xl p-4 md:p-8">
       <Header
@@ -413,7 +438,7 @@ function VinoVocabInner() {
         }}
       />
 
-      {/* Matt intro */}
+      {/* Intro */}
       <div className="mt-4 md:mt-6 rounded-2xl bg-white p-4 md:p-5 shadow ring-1 ring-neutral-200">
         <p className="text-sm md:text-base leading-relaxed text-neutral-700">
           Confidence in wine tasting often comes down to having the right vocabulary at your
@@ -437,7 +462,7 @@ function VinoVocabInner() {
               <div className="h-5 w-28 animate-pulse rounded bg-neutral-200" />
               <div className="mt-3 h-7 w-64 animate-pulse rounded bg-neutral-200" />
               <div className="mt-4 space-y-2">
-                <div className="h-4 w/full animate-pulse rounded bg-neutral-100" />
+                <div className="h-4 w-full animate-pulse rounded bg-neutral-100" />
                 <div className="h-4 w-11/12 animate-pulse rounded bg-neutral-100" />
                 <div className="h-4 w-10/12 animate-pulse rounded bg-neutral-100" />
               </div>
@@ -489,8 +514,13 @@ function VinoVocabInner() {
                 </div>
               )}
 
+              {/* >>> NEW PROMPT LINE <<< */}
+              <div className="mt-6 text-base font-semibold text-neutral-900">
+                Which statement best represents <span className="italic">{termForPrompt}</span>?
+              </div>
+
               {/* options */}
-              <div className="mt-6 grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-3">
                 {(lesson?.options ?? DEMO_OPTIONS.map((o) => o.text)).map((opt, i) => {
                   const isChosen = selected === i;
                   const isRight =
