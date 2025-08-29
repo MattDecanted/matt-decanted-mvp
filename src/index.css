@@ -88,3 +88,30 @@
     @apply px-4 py-2 rounded-md border border-transparent font-medium bg-primary text-primary-foreground transition-colors hover:border-border focus:outline-none focus-visible:ring-2 focus-visible:ring-ring;
   }
 }
+
+/* ---- Utilities ---- */
+@layer utilities {
+  /* Subtle dotted overlay to match your Bolt hero look.
+     Place on a section that already has a gradient background. */
+  .bg-dotted-pattern {
+    position: relative;
+    overflow: hidden;
+  }
+  .bg-dotted-pattern > * {
+    position: relative;
+    z-index: 1; /* keep content above dots */
+  }
+  .bg-dotted-pattern::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    /* Two offset dot grids (purple & amber) with low alpha */
+    background-image:
+      radial-gradient(rgba(124, 58, 237, 0.12) 1px, transparent 1px),
+      radial-gradient(rgba(245, 158, 11, 0.12) 1px, transparent 1px);
+    background-size: 24px 24px;
+    background-position: 0 0, 12px 12px;
+    z-index: 0;
+  }
+}
