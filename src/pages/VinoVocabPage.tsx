@@ -1,3 +1,4 @@
+// src/pages/VinoVocabPage.tsx
 import React, { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { motion, AnimatePresence } from "framer-motion";
@@ -15,11 +16,6 @@ import { Trophy, Flame, Sparkles, Check, X, Lock, LogIn, LogOut, Info } from "lu
  * • Saves points/streaks ONLY for subscribers ("free" counts as subscribed).
  * • Timezone: Australia/Adelaide — determines today’s lesson by date.
  */
-
-// --- Supabase Setup ---------------------------------------------------------
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || "YOUR_SUPABASE_URL";
-const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "YOUR_SUPABASE_ANON_KEY";
-const supabase = createClient(supabaseUrl, supabaseAnonKey);
 
 // --- Utilities --------------------------------------------------------------
 function formatDateAdelaide(date = new Date()) {
@@ -56,9 +52,7 @@ type Lesson = {
 };
 
 type LeaderRow = { user_id: string; points_30d: number; correct_30d: number };
-
 type TotalsRow = { user_id: string; total_points: number; lessons_correct: number };
-
 type LatestCorrectRow = { user_id: string; streak_after: number; lesson_date: string; completed_at: string };
 
 // Difficulty → Badge style
@@ -91,12 +85,14 @@ function SignInGate({ onDone }: { onDone?: () => void }) {
     <div className="flex flex-col items-center gap-3">
       <button
         onClick={signInGoogle}
+        disabled={busy}
         className={classNames(
           "inline-flex items-center gap-2 rounded-2xl px-4 py-2 text-sm font-semibold shadow-sm",
-          "bg-neutral-900 text-white hover:bg-neutral-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-neutral-900"
+          busy ? "opacity-60 cursor-not-allowed" : "bg-neutral-900 text-white hover:bg-neutral-800",
+          "focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-neutral-900"
         )}
       >
-        <LogIn className="h-4 w-4" /> Sign in with Google
+        <LogIn className="h-4 w-4" /> {busy ? "Opening…" : "Sign in with Google"}
       </button>
       <p className="text-xs text-neutral-500">Sign in to save points & streaks. Free tier counts.</p>
     </div>
@@ -154,16 +150,29 @@ export default function DailyVocabPage() {
           .eq("date", todayStr)
           .maybeSingle();
         if (lcErr) throw lcErr;
-        setLesson(lc as Lesson);
+        setLesson((lc || null) as Lesson | null);
 
         // Optional flair: totals, streak, leaderboard (ignore errors silently)
         if (uid) {
-          const { data: t } = await supabase.from("vocab_user_totals").select("user_id, total_points, lessons_correct").eq("user_id", uid).maybeSingle();
+          const { data: t } = await supabase
+            .from("vocab_user_totals")
+            .select("user_id, total_points, lessons_correct")
+            .eq("user_id", uid)
+            .maybeSingle();
           if (t) setTotals(t as TotalsRow);
-          const { data: l } = await supabase.from("vocab_user_latest_correct").select("user_id, streak_after, lesson_date, completed_at").eq("user_id", uid).maybeSingle();
+
+          const { data: l } = await supabase
+            .from("vocab_user_latest_correct")
+            .select("user_id, streak_after, lesson_date, completed_at")
+            .eq("user_id", uid)
+            .maybeSingle();
           if (l) setLatest(l as LatestCorrectRow);
         }
-        const { data: lb } = await supabase.from("vocab_leaderboard_30d").select("user_id, points_30d, correct_30d").limit(5);
+
+        const { data: lb } = await supabase
+          .from("vocab_leaderboard_30d")
+          .select("user_id, points_30d, correct_30d")
+          .limit(5);
         if (lb) setLeader(lb as LeaderRow[]);
       } catch (e: any) {
         setErr(e.message || String(e));
@@ -178,7 +187,9 @@ export default function DailyVocabPage() {
       alert("Please sign in first.");
       return;
     }
-    const { error } = await supabase.from("member_profiles").upsert({ user_id: userId, subscription_tier: "free" }, { onConflict: "user_id" });
+    const { error } = await supabase
+      .from("member_profiles")
+      .upsert({ user_id: userId, subscription_tier: "free" }, { onConflict: "user_id" });
     if (error) {
       alert(error.message);
       return;
@@ -204,9 +215,10 @@ export default function DailyVocabPage() {
           p_correct: isCorrect,
         });
         if (error) throw error;
-        const row = (data && data[0]) || { points_awarded: 0, streak_after: 0 };
+        const row = (data && (data as any[])[0]) || { points_awarded: 0, streak_after: 0 };
         awarded = row.points_awarded ?? 0;
         streak = row.streak_after ?? 0;
+
         // refresh totals after awarding
         const { data: t } = await supabase
           .from("vocab_user_totals")
@@ -214,6 +226,7 @@ export default function DailyVocabPage() {
           .eq("user_id", userId)
           .maybeSingle();
         if (t) setTotals(t as TotalsRow);
+
         const { data: l } = await supabase
           .from("vocab_user_latest_correct")
           .select("user_id, streak_after, lesson_date, completed_at")
@@ -270,12 +283,22 @@ export default function DailyVocabPage() {
   const MetaBadges = () => (
     <div className="flex flex-wrap items-center gap-2">
       {lesson?.difficulty && (
-        <span className={classNames("inline-flex items-center rounded-full px-3 py-1 text-xs font-medium", diffStyle[lesson.difficulty] || "bg-neutral-100 text-neutral-700 ring-1 ring-neutral-200")}> 
+        <span
+          className={classNames(
+            "inline-flex items-center rounded-full px-3 py-1 text-xs font-medium",
+            diffStyle[lesson.difficulty] || "bg-neutral-100 text-neutral-700 ring-1 ring-neutral-200"
+          )}
+        >
           {lesson.difficulty}
         </span>
       )}
       {lesson?.category && (
-        <span className={classNames("inline-flex items-center rounded-full px-3 py-1 text-xs font-medium", catStyle[lesson.category] || "bg-neutral-100 text-neutral-700 ring-1 ring-neutral-200")}>
+        <span
+          className={classNames(
+            "inline-flex items-center rounded-full px-3 py-1 text-xs font-medium",
+            catStyle[lesson.category] || "bg-neutral-100 text-neutral-700 ring-1 ring-neutral-200"
+          )}
+        >
           {lesson.category}
         </span>
       )}
@@ -298,7 +321,9 @@ export default function DailyVocabPage() {
       <div className="flex items-start justify-between gap-4">
         <div>
           <div className="text-xs uppercase tracking-widest text-neutral-400">{today}</div>
-          <h2 className="mt-1 text-2xl font-semibold text-neutral-900">{lesson?.word ?? "No lesson scheduled"}</h2>
+          <h2 className="mt-1 text-2xl font-semibold text-neutral-900">
+            {lesson?.word ?? "No lesson scheduled"}
+          </h2>
           <div className="mt-2 text-neutral-600 leading-relaxed">
             {lesson?.description || "Check back tomorrow for the next word."}
           </div>
@@ -338,7 +363,8 @@ export default function DailyVocabPage() {
               )}
             >
               <div className="flex items-center gap-2">
-                <span className="flex h-6 w-6 items-center justify-center rounded-full border text-[11px] font-semibold"
+                <span
+                  className="flex h-6 w-6 items-center justify-center rounded-full border text-[11px] font-semibold"
                   style={{ borderColor: result ? "transparent" : "rgba(0,0,0,0.2)" }}
                 >
                   {String.fromCharCode(65 + i)}
@@ -397,18 +423,23 @@ export default function DailyVocabPage() {
             )}
 
             <div className="mt-4 flex items-center gap-3">
-              <button onClick={resetSelection} className="rounded-xl border border-neutral-300 bg-white px-3 py-2 text-sm hover:bg-neutral-50">
+              <button
+                onClick={resetSelection}
+                className="rounded-xl border border-neutral-300 bg-white px-3 py-2 text-sm hover:bg-neutral-50"
+              >
                 Try again
               </button>
-              {!isSubscribed && (
-                userId ? (
-                  <button onClick={handleJoinFree} className="rounded-xl bg-neutral-900 px-3 py-2 text-sm text-white hover:bg-neutral-800">
+              {!isSubscribed &&
+                (userId ? (
+                  <button
+                    onClick={handleJoinFree}
+                    className="rounded-xl bg-neutral-900 px-3 py-2 text-sm text-white hover:bg-neutral-800"
+                  >
                     Join free – save my streak
                   </button>
                 ) : (
                   <div className="text-sm text-neutral-600">Sign in above to join free.</div>
-                )
-              )}
+                ))}
               {saving && <div className="text-sm text-neutral-500">Saving…</div>}
             </div>
           </motion.div>
@@ -442,9 +473,14 @@ export default function DailyVocabPage() {
         <ol className="mt-3 space-y-2">
           {leader?.length ? (
             leader.map((row, idx) => (
-              <li key={idx} className="flex items-center justify-between rounded-xl border border-neutral-200 px-3 py-2 text-sm">
+              <li
+                key={idx}
+                className="flex items-center justify-between rounded-xl border border-neutral-200 px-3 py-2 text-sm"
+              >
                 <div className="flex items-center gap-2">
-                  <span className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-neutral-100 text-[11px] font-semibold">{idx + 1}</span>
+                  <span className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-neutral-100 text-[11px] font-semibold">
+                    {idx + 1}
+                  </span>
                   <span className="text-neutral-700">{row.user_id.slice(0, 6)}…</span>
                 </div>
                 <div className="flex items-center gap-3">
@@ -462,10 +498,15 @@ export default function DailyVocabPage() {
       {!isSubscribed && (
         <div className="mt-6 rounded-2xl bg-neutral-50 p-4 ring-1 ring-neutral-200">
           <div className="text-sm text-neutral-800 font-semibold">Save your progress</div>
-          <p className="mt-1 text-sm text-neutral-600">Join the free tier to bank points and keep your streak alive.</p>
+          <p className="mt-1 text-sm text-neutral-600">
+            Join the free tier to bank points and keep your streak alive.
+          </p>
           <div className="mt-3 flex items-center gap-2">
             {userId ? (
-              <button onClick={handleJoinFree} className="inline-flex items-center gap-2 rounded-xl bg-neutral-900 px-3 py-2 text-sm text-white hover:bg-neutral-800">
+              <button
+                onClick={handleJoinFree}
+                className="inline-flex items-center gap-2 rounded-xl bg-neutral-900 px-3 py-2 text-sm text-white hover:bg-neutral-800"
+              >
                 <Trophy className="h-4 w-4" /> Join free
               </button>
             ) : (
@@ -483,7 +524,10 @@ export default function DailyVocabPage() {
 
       <div className="mt-4 md:mt-6 rounded-2xl bg-white p-4 md:p-5 shadow ring-1 ring-neutral-200">
         <p className="text-sm md:text-base leading-relaxed text-neutral-700">
-          Confidence in wine tasting often comes down to having the right vocabulary at your fingertips—to describe what you’re seeing, smelling and tasting (texture and structure included). I’ve put this program together to share 600+ words I reach for when I taste, so you can bank them one tidy word a day.
+          Confidence in wine tasting often comes down to having the right vocabulary at your
+          fingertips—to describe what you’re seeing, smelling and tasting (texture and structure
+          included). I’ve put this program together to share 600+ words I reach for when I taste, so
+          you can bank them one tidy word a day.
         </p>
       </div>
 
@@ -506,7 +550,7 @@ export default function DailyVocabPage() {
                 <div className="h-4 w-10/12 animate-pulse rounded bg-neutral-100" />
               </div>
               <div className="mt-6 grid grid-cols-1 sm:grid-cols-2 gap-3">
-                {[0,1,2,3].map((i)=> (
+                {[0, 1, 2, 3].map((i) => (
                   <div key={i} className="h-12 rounded-2xl border border-neutral-200 bg-neutral-50" />
                 ))}
               </div>
@@ -522,7 +566,9 @@ export default function DailyVocabPage() {
       {/* Footer note */}
       <div className="mt-8 flex items-center justify-between text-xs text-neutral-500">
         <div>Built in the Matt Decanted vibe · Australia/Adelaide · {today}</div>
-        <div className="flex items-center gap-2"><Sparkles className="h-3.5 w-3.5"/> Keep it tidy. One word a day.</div>
+        <div className="flex items-center gap-2">
+          <Sparkles className="h-3.5 w-3.5" /> Keep it tidy. One word a day.
+        </div>
       </div>
     </div>
   );
