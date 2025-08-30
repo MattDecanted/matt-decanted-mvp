@@ -22,7 +22,7 @@ import ShortDetailPage from '@/pages/ShortDetailPage';
 import AccountPage from '@/pages/AccountPage';
 import PricingPage from '@/pages/PricingPage';
 
-// NOTE: Daily quiz (replaces TrialQuizPage)
+// NOTE: replaced TrialQuizPage import with DailyQuizPage
 import DailyQuizPage from '@/pages/DailyQuiz';
 
 import VinoVocabPage from '@/pages/VinoVocabPage';
@@ -38,7 +38,6 @@ import GamePage from '@/pages/GamePage';
 
 import Dashboard from '@/pages/Dashboard';
 
-// --- Blog pages ---
 import BlogIndex from '@/pages/blog/BlogIndex';
 import HowToBecomeWinemaker from '@/pages/blog/HowToBecomeWinemaker';
 import WSETLevel2Questions from '@/pages/blog/WSETLevel2Questions';
@@ -50,6 +49,39 @@ import { supabase } from '@/lib/supabase';
 const FN_SUBMIT = '/.netlify/functions/trial-quiz-attempt';
 const PENDING_KEY = 'md_trial_pending';
 
+/* ---------- HashSessionBridge: turn magic/recovery hash into a session ---------- */
+function hasAuthHash(hash: string) {
+  if (!hash) return false;
+  const qp = new URLSearchParams(hash.startsWith('#') ? hash.slice(1) : hash);
+  return !!(qp.get('access_token') && qp.get('refresh_token'));
+}
+
+function HashSessionBridge() {
+  const location = useLocation();
+
+  React.useEffect(() => {
+    (async () => {
+      const hash = location.hash || '';
+      if (!hasAuthHash(hash)) return;
+
+      const qp = new URLSearchParams(hash.slice(1));
+      const access_token = qp.get('access_token')!;
+      const refresh_token = qp.get('refresh_token')!;
+      try {
+        await supabase.auth.setSession({ access_token, refresh_token });
+      } finally {
+        // Clean up the URL (keep path + search, drop #…)
+        const clean = location.pathname + location.search;
+        window.history.replaceState(null, '', clean);
+      }
+    })();
+    // rerun when the location key changes (fresh navigation)
+  }, [location.key, location.hash, location.pathname, location.search]);
+
+  return null;
+}
+
+/* ---------- Auto resume pending trial-quiz posts on Account ---------- */
 function AutoResumeOnAccount() {
   React.useEffect(() => {
     (async () => {
@@ -76,107 +108,40 @@ function AutoResumeOnAccount() {
 
         localStorage.removeItem(PENDING_KEY);
       } catch {
-        // silent fail for MVP
+        // silent for MVP
       }
     })();
   }, []);
   return null;
 }
 
-/** Bridge hash tokens (#access_token / #refresh_token) into a Supabase session on ANY route */
-function HashSessionBridge() {
-  const location = useLocation();
-  const { user } = useAuth();
-  const [busy, setBusy] = React.useState(false);
-
-  React.useEffect(() => {
-    (async () => {
-      if (user || busy) return;
-
-      const hash = location.hash?.startsWith('#')
-        ? new URLSearchParams(location.hash.slice(1))
-        : null;
-
-      const at = hash?.get('access_token');
-      const rt = hash?.get('refresh_token');
-
-      if (at && rt) {
-        setBusy(true);
-        try {
-          const { error } = await supabase.auth.setSession({
-            access_token: at,
-            refresh_token: rt,
-          });
-          // strip the hash after processing (keeps route clean)
-          window.history.replaceState(null, '', location.pathname + location.search);
-          if (error) {
-            console.warn('setSession error:', error.message);
-          }
-        } finally {
-          setBusy(false);
-        }
-      }
-    })();
-  }, [location.key, location.hash, location.pathname, location.search, user, busy]);
-
-  return null;
-}
-
-/** RequireAuth wrapper */
+/* ---------- Route guards ---------- */
 function RequireAuth({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuth();
   const location = useLocation();
-  const [bridging, setBridging] = React.useState(false);
 
-  // Safety net: if they hit a protected route directly w/ hash tokens, process them here
-  React.useEffect(() => {
-    (async () => {
-      if (loading || user || bridging) return;
-      const hash = location.hash?.startsWith('#')
-        ? new URLSearchParams(location.hash.slice(1))
-        : null;
-      const at = hash?.get('access_token');
-      const rt = hash?.get('refresh_token');
-      if (at && rt) {
-        setBridging(true);
-        try {
-          const { error } = await supabase.auth.setSession({
-            access_token: at,
-            refresh_token: rt,
-          });
-          window.history.replaceState(null, '', location.pathname + location.search);
-          if (error) console.warn('setSession (guard) error:', error.message);
-        } finally {
-          setBridging(false);
-        }
-      }
-    })();
-  }, [loading, user, bridging, location]);
+  // If we have hash tokens, treat as "still logging in" to avoid redirect loops
+  const pendingHashLogin = hasAuthHash(location.hash);
 
-  if (loading || bridging) return <div className="p-8">Loading...</div>;
+  if (loading || pendingHashLogin) return <div className="p-8">Loading...</div>;
   if (!user) return <Navigate to="/signin" replace state={{ from: location }} />;
 
   return <>{children}</>;
 }
 
-/** ✅ RequireAdmin wrapper */
 function RequireAdmin({ children }: { children: React.ReactNode }) {
   const { user, profile, loading } = useAuth();
   const location = useLocation();
+  const pendingHashLogin = hasAuthHash(location.hash);
 
-  if (loading) return <div className="p-8">Loading...</div>;
+  if (loading || pendingHashLogin) return <div className="p-8">Loading...</div>;
   if (!user) return <Navigate to="/signin" replace state={{ from: location }} />;
-
-  // Only allow role "admin"
-  const role = (profile as any)?.role;
-  if (role !== 'admin') {
-    return <Navigate to="/dashboard" replace />;
-  }
+  if ((profile as any)?.role !== 'admin') return <Navigate to="/dashboard" replace />;
 
   return <>{children}</>;
 }
 
-/** Global error boundary */
+/* ---------- Error boundary ---------- */
 class AppErrorBoundary extends React.Component<{ children: React.ReactNode }, { error: any }> {
   constructor(props: any) {
     super(props);
@@ -204,7 +169,6 @@ class AppErrorBoundary extends React.Component<{ children: React.ReactNode }, { 
 }
 
 function App() {
-  // global listeners to catch runtime errors
   React.useEffect(() => {
     window.addEventListener('error', (e) =>
       console.error('[window.error]', (e as any).error || (e as any).message)
@@ -220,7 +184,7 @@ function App() {
         <PointsProvider>
           <Router>
             <AppErrorBoundary>
-              {/* Always-on bridge so magic links work anywhere (incl. /dashboard & /reset-password) */}
+              {/* 🔑 Run the bridge on *every* route */}
               <HashSessionBridge />
 
               <Layout>
@@ -252,15 +216,14 @@ function App() {
                   <Route path="/shorts" element={<ShortsPage />} />
                   <Route path="/shorts/:slug" element={<ShortDetailPage />} />
 
-                  {/* Daily Quiz (new) */}
+                  {/* Daily Quiz */}
                   <Route path="/daily-quiz" element={<DailyQuizPage />} />
-                  {/* Back-compat: old link redirects to new path */}
                   <Route path="/trial-quiz" element={<Navigate to="/daily-quiz" replace />} />
 
                   {/* Vocab */}
                   <Route path="/vocab" element={<VinoVocabPage />} />
 
-                  {/* ✅ Admin (guarded) */}
+                  {/* Admin (guarded) */}
                   <Route
                     path="/admin/vocab"
                     element={
@@ -324,7 +287,7 @@ function App() {
                   {/* Legacy demo */}
                   <Route path="/demo" element={<BrandedDemo />} />
 
-                  {/* 404 fallback */}
+                  {/* 404 */}
                   <Route path="*" element={<Navigate to="/" replace />} />
                 </Routes>
               </Layout>
