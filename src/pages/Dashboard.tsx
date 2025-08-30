@@ -1,9 +1,10 @@
 // src/pages/Dashboard.tsx
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 
 import { useAuth } from "@/context/AuthContext";
 import { supabase } from "@/lib/supabase";
+import { usePoints } from "@/context/PointsContext";
 
 import {
   Crown,
@@ -19,6 +20,7 @@ import {
   Brain,
   Target,
   CheckCircle,
+  Sparkles,
 } from "lucide-react";
 
 // ---- minimal t() stub; swap to your LanguageContext when ready
@@ -51,7 +53,7 @@ const LoadingSpinner = ({ size = "md" }: { size?: "md" | "lg" }) => (
   />
 );
 
-// ---- types
+// ---- types (UI-facing)
 interface LeaderboardMember {
   id: string;
   name: string;
@@ -65,8 +67,8 @@ interface UserStats {
   shortsWatched: number;
   modulesCompleted: number;
   badgesEarned: number;
-  quizScore: number;
-  streakDays: number;
+  quizScore: number; // %
+  streakDays: number; // overall streak proxy
   totalPoints: number;
   rank: number;
   swirdleStreak: number;
@@ -121,11 +123,12 @@ const getUserBadges = (
   return arr;
 };
 
+// ---------------------------
+// Dashboard
+// ---------------------------
 export default function Dashboard() {
-  const { user, profile } = useAuth() as {
-    user: any;
-    profile: any;
-  };
+  const { user, profile } = useAuth() as { user: any; profile: any };
+  const { totalPoints } = usePoints(); // live header points
   const { t } = useLanguage();
 
   const [loading, setLoading] = useState(true);
@@ -134,6 +137,21 @@ export default function Dashboard() {
   const [blindTastingVideo, setBlindTastingVideo] =
     useState<BlindTastingVideo | null>(null);
   const [masterclasses, setMasterclasses] = useState<Masterclass[]>([]);
+  const [trialBusy, setTrialBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  // --- derived trial state (from either member_profiles or user_profiles)
+  const trialExpiresAt = (profile?.trial_expires_at ??
+    profile?.trialEnds ??
+    null) as string | null;
+  const trialActive =
+    !!trialExpiresAt &&
+    new Date(trialExpiresAt).getTime() >= new Date().getTime();
+  const trialDaysLeft = useMemo(() => {
+    if (!trialExpiresAt) return 0;
+    const ms = new Date(trialExpiresAt).getTime() - Date.now();
+    return Math.max(0, Math.ceil(ms / (1000 * 60 * 60 * 24)));
+  }, [trialExpiresAt]);
 
   useEffect(() => {
     if (user) loadDashboardData();
@@ -141,6 +159,7 @@ export default function Dashboard() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.id]);
 
+  // robust fetch helper (never throws UI)
   const safeFetch = async <T,>(fn: () => Promise<T>, fallback: T) => {
     try {
       return await fn();
@@ -150,6 +169,9 @@ export default function Dashboard() {
   };
 
   const loadDashboardData = async () => {
+    setLoading(true);
+    setErr(null);
+
     // ---- mock fallbacks for fast dev
     const mockLeaderboard: LeaderboardMember[] = [
       {
@@ -184,17 +206,17 @@ export default function Dashboard() {
       },
     ];
     const mockUserStats: UserStats = {
-      shortsWatched: 23,
-      modulesCompleted: 8,
-      badgesEarned: 5,
-      quizScore: 87,
-      streakDays: 12,
-      totalPoints: 1456,
-      rank: 15,
-      swirdleStreak: 7,
-      swirdleGamesWon: 34,
-      blindTastingsCompleted: 6,
-      communityPosts: 3,
+      shortsWatched: 0,
+      modulesCompleted: 0,
+      badgesEarned: 0,
+      quizScore: 0,
+      streakDays: 0,
+      totalPoints: 0,
+      rank: 0,
+      swirdleStreak: 0,
+      swirdleGamesWon: 0,
+      blindTastingsCompleted: 0,
+      communityPosts: 0,
     };
     const mockBlindTasting: BlindTastingVideo = {
       id: "1",
@@ -207,93 +229,182 @@ export default function Dashboard() {
       difficulty: "intermediate",
       isNew: true,
     };
-    const mockMasterclasses: Masterclass[] = [
-      {
-        id: "1",
-        title: "Burgundy Deep Dive: Terroir & Tradition",
-        description: "Explore Burgundy from village to Grand Cru.",
-        instructor: "Matt Decanted",
-        date: "2025-09-25",
-        time: "19:00",
-        duration: "90 min",
-        maxParticipants: 50,
-        currentParticipants: 34,
-        tier: "premium",
-        isRegistered: false,
-      },
-      {
-        id: "2",
-        title: "Food Pairing Secrets with Matt",
-        description: "Techniques for perfect pairings.",
-        instructor: "Matt Decanted",
-        date: "2025-09-28",
-        time: "18:30",
-        duration: "60 min",
-        maxParticipants: 30,
-        currentParticipants: 18,
-        tier: "basic",
-        isRegistered: true,
-      },
-    ];
+    const mockMasterclasses: Masterclass[] = [];
 
-    const leaderboardData = await safeFetch(async () => {
-      const { data, error } = await supabase
-        .from("user_leaderboard")
-        .select("*")
-        .order("points", { ascending: false })
-        .limit(10);
-      if (error) throw error;
-      return data as unknown as LeaderboardMember[];
-    }, mockLeaderboard);
+    try {
+      // --- leaderboard
+      // Prefer user_points (total_points). Fallback to vocab_leaderboard_30d.
+      const leaderboardData = await safeFetch(async () => {
+        const lb: LeaderboardMember[] = [];
+        // first try user_points
+        const up = await supabase
+          .from("user_points")
+          .select("user_id,total_points")
+          .order("total_points", { ascending: false })
+          .limit(10);
 
-    const userStatsData = await safeFetch(async () => {
-      const { data, error } = await supabase
-        .from("user_stats")
-        .select("*")
-        .eq("user_id", user!.id)
-        .maybeSingle();
-      if (error) throw error;
-      return (data as unknown as UserStats) ?? mockUserStats;
-    }, mockUserStats);
+        if (!up.error && Array.isArray(up.data) && up.data.length) {
+          up.data.forEach((row: any, i: number) =>
+            lb.push({
+              id: row.user_id,
+              name: `User ${row.user_id.slice(0, 6)}…`,
+              avatar:
+                "https://images.pexels.com/photos/220453/pexels-photo-220453.jpeg?auto=compress&cs=tinysrgb&w=150",
+              points: Number(row.total_points ?? 0),
+              rank: i + 1,
+              tier: "free",
+              badges: [],
+            })
+          );
+          return lb;
+        }
 
-    const blindTastingData = await safeFetch(async () => {
-      const { data, error } = await supabase
-        .from("blind_tasting_videos")
-        .select("*")
-        .eq("is_featured", true)
-        .maybeSingle();
-      if (error) throw error;
-      const d = data as any;
-      return d
-        ? ({
-            id: d.id,
-            title: d.title,
-            description: d.description,
-            thumbnailUrl: d.thumbnail_url,
-            duration: d.duration,
-            difficulty: d.difficulty,
-            isNew: true,
-          } as BlindTastingVideo)
-        : mockBlindTasting;
-    }, mockBlindTasting);
+        // fallback: vocab_leaderboard_30d
+        const lb30 = await supabase
+          .from("vocab_leaderboard_30d")
+          .select("user_id,points_30d")
+          .order("points_30d", { ascending: false })
+          .limit(10);
 
-    const masterclassData = await safeFetch(async () => {
-      const { data, error } = await supabase
-        .from("masterclasses")
-        .select("*")
-        .gte("date", new Date().toISOString())
-        .order("date");
-      if (error) throw error;
-      return (data as unknown as Masterclass[]) ?? mockMasterclasses;
-    }, mockMasterclasses);
+        if (!lb30.error && Array.isArray(lb30.data) && lb30.data.length) {
+          lb30.data.forEach((row: any, i: number) =>
+            lb.push({
+              id: row.user_id,
+              name: `User ${row.user_id.slice(0, 6)}…`,
+              avatar:
+                "https://images.pexels.com/photos/220453/pexels-photo-220453.jpeg?auto=compress&cs=tinysrgb&w=150",
+              points: Number(row.points_30d ?? 0),
+              rank: i + 1,
+              tier: "free",
+              badges: [],
+            })
+          );
+          return lb;
+        }
 
-    setLeaderboard(leaderboardData);
-    setUserStats(userStatsData);
-    setBlindTastingVideo(blindTastingData);
-    setMasterclasses(masterclassData);
-    setLoading(false);
+        return mockLeaderboard;
+      }, mockLeaderboard);
+      setLeaderboard(leaderboardData);
+
+      // --- swirdle stats
+      const swirdle = await safeFetch(async () => {
+        const { data, error } = await supabase
+          .from("user_swirdle_stats")
+          .select("games_played,wins,current_streak,max_streak")
+          .eq("user_id", user!.id)
+          .maybeSingle();
+        if (error) throw error;
+        return {
+          games_played: Number(data?.games_played ?? 0),
+          wins: Number(data?.wins ?? 0),
+          current_streak: Number(data?.current_streak ?? 0),
+          max_streak: Number(data?.max_streak ?? 0),
+        };
+      }, null as any);
+
+      // --- quiz summary (daily_quiz_attempts preferred)
+      const quiz = await safeFetch(async () => {
+        const tryDaily = await supabase
+          .from("daily_quiz_attempts")
+          .select("correct_count,question_count")
+          .eq("user_id", user!.id);
+
+        let rows: any[] | null = null;
+        if (!tryDaily.error && Array.isArray(tryDaily.data)) {
+          rows = tryDaily.data;
+        } else {
+          const tryLegacy = await supabase
+            .from("trial_quiz_attempts")
+            .select("correct_count,question_count")
+            .eq("user_id", user!.id);
+          if (!tryLegacy.error && Array.isArray(tryLegacy.data)) {
+            rows = tryLegacy.data;
+          }
+        }
+
+        if (!rows) return { attempts: 0, correct: 0, totalQs: 0, avg: 0 };
+
+        const attempts = rows.length;
+        const correct = rows.reduce(
+          (s, r: any) => s + Number(r.correct_count ?? 0),
+          0
+        );
+        const totalQs = rows.reduce(
+          (s, r: any) => s + Number(r.question_count ?? 0),
+          0
+        );
+        const avg = totalQs > 0 ? Math.round((correct / totalQs) * 100) : 0;
+        return { attempts, correct, totalQs, avg };
+      }, { attempts: 0, correct: 0, totalQs: 0, avg: 0 });
+
+      // --- points (via PointsProvider already live)
+      const pointsTotal = Number(totalPoints ?? 0);
+
+      // --- position in leaderboard (if present)
+      const myRank =
+        leaderboardData.find((m) => m.id === user!.id)?.rank ?? 0;
+
+      // --- compile UserStats for the cards
+      const compiled: UserStats = {
+        shortsWatched: 0,
+        modulesCompleted: 0,
+        badgesEarned: 0,
+        quizScore: quiz.avg,
+        streakDays: Number(swirdle?.current_streak ?? 0),
+        totalPoints: pointsTotal,
+        rank: myRank,
+        swirdleStreak: Number(swirdle?.current_streak ?? 0),
+        swirdleGamesWon: Number(swirdle?.wins ?? 0),
+        blindTastingsCompleted: 0,
+        communityPosts: 0,
+      };
+      setUserStats(compiled);
+
+      // --- featured blind tasting (optional)
+      const blindTastingData = await safeFetch(async () => {
+        const { data, error } = await supabase
+          .from("blind_tasting_videos")
+          .select("*")
+          .eq("is_featured", true)
+          .maybeSingle();
+        if (error) throw error;
+        const d = data as any;
+        return d
+          ? ({
+              id: d.id,
+              title: d.title,
+              description: d.description,
+              thumbnailUrl: d.thumbnail_url,
+              duration: d.duration,
+              difficulty: d.difficulty ?? "intermediate",
+              isNew: true,
+            } as BlindTastingVideo)
+          : mockBlindTasting;
+      }, mockBlindTasting);
+      setBlindTastingVideo(blindTastingData);
+
+      // --- masterclasses (optional)
+      const masterclassData = await safeFetch(async () => {
+        const { data, error } = await supabase
+          .from("masterclasses")
+          .select("*")
+          .gte("date", new Date().toISOString())
+          .order("date");
+        if (error) throw error;
+        return ((data as unknown as Masterclass[]) ?? []).map((m) => ({
+          ...m,
+          isRegistered: (m as any)?.isRegistered ?? false,
+        }));
+      }, mockMasterclasses);
+      setMasterclasses(masterclassData);
+    } catch (e: any) {
+      setErr(e?.message ?? String(e));
+    } finally {
+      setLoading(false);
+    }
   };
 
+  // badges derived from stats (same logic as your template)
   const getAchievementBadges = () => {
     if (!userStats) return [];
     return getUserBadges(
@@ -303,7 +414,6 @@ export default function Dashboard() {
       userStats.streakDays
     );
   };
-
   const getNextBadge = () =>
     ACHIEVEMENT_BADGES.find(
       (b) => !getAchievementBadges().some((e) => e.id === b.id)
@@ -325,10 +435,55 @@ export default function Dashboard() {
     if (m.tier === "basic")
       return ["basic", "premium", "subscriber", "admin"].includes(role);
     if (m.tier === "premium")
-      return ["premium", "admin"].includes(role) ||
-        (role === "subscriber" && subStatus === "active");
+      return (
+        ["premium", "admin"].includes(role) ||
+        (role === "subscriber" && subStatus === "active")
+      );
     return false;
   };
+
+  async function startTrial() {
+    if (!user?.id || trialBusy) return;
+    setTrialBusy(true);
+    setErr(null);
+    try {
+      await supabase.rpc("vv_start_trial", { p_days: 7 });
+
+      // refresh the profile from either table
+      const { data: mp } = await supabase
+        .from("member_profiles")
+        .select("trial_expires_at,trial_started_at,subscription_tier,role,subscription_status")
+        .eq("user_id", user.id)
+        .maybeSingle();
+      if (mp) {
+        (profile as any).trial_expires_at = mp.trial_expires_at;
+        (profile as any).trial_started_at = mp.trial_started_at;
+        (profile as any).subscription_tier = mp.subscription_tier;
+        (profile as any).role = mp.role ?? (profile as any).role;
+        (profile as any).subscription_status =
+          mp.subscription_status ?? (profile as any).subscription_status;
+      } else {
+        const { data: up } = await supabase
+          .from("user_profiles")
+          .select("trial_expires_at,trial_started_at,subscription_tier,role,subscription_status")
+          .eq("user_id", user.id)
+          .maybeSingle();
+        if (up) {
+          (profile as any).trial_expires_at = (up as any).trial_expires_at;
+          (profile as any).trial_started_at = (up as any).trial_started_at;
+          (profile as any).subscription_tier = (up as any).subscription_tier;
+          (profile as any).role = (up as any).role ?? (profile as any).role;
+          (profile as any).subscription_status =
+            (up as any).subscription_status ??
+            (profile as any).subscription_status;
+        }
+      }
+    } catch (e: any) {
+      setErr(e?.message ?? String(e));
+    } finally {
+      setTrialBusy(false);
+    }
+  }
 
   if (loading) {
     return (
@@ -367,12 +522,28 @@ export default function Dashboard() {
             <div>
               <h1 className="text-3xl font-bold">
                 Welcome back,{" "}
-                {profile?.full_name?.split(" ")[0] ||
-                  user?.email?.split("@")[0] ||
+                {profile?.full_name?.split?.(" ")[0] ||
+                  user?.email?.split?.("@")[0] ||
                   "Wine Enthusiast"}
                 !
               </h1>
               <p className="text-gray-600 mt-1">{t("dashboard.continueJourney")}</p>
+              {!trialActive && (
+                <button
+                  onClick={startTrial}
+                  disabled={trialBusy}
+                  className="mt-3 inline-flex items-center gap-2 rounded-full bg-black text-white px-3 py-1.5 text-xs disabled:opacity-50"
+                >
+                  <Sparkles className="w-3.5 h-3.5" />
+                  {trialBusy ? "Starting trial…" : "Start 7-day trial"}
+                </button>
+              )}
+              {trialActive && (
+                <span className="mt-3 inline-flex items-center gap-2 rounded-full bg-emerald-50 text-emerald-800 px-3 py-1.5 text-xs border border-emerald-200">
+                  <Sparkles className="w-3.5 h-3.5" />
+                  Trial active — {trialDaysLeft} day{trialDaysLeft === 1 ? "" : "s"} left
+                </span>
+              )}
             </div>
             <div className="text-right">
               <div
@@ -398,6 +569,12 @@ export default function Dashboard() {
           </div>
         </div>
 
+        {err && (
+          <div className="mb-6 rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm text-rose-700">
+            {err}
+          </div>
+        )}
+
         {/* Stats cards */}
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4 mb-8">
           <div className="p-4 rounded-lg bg-white border">
@@ -406,14 +583,18 @@ export default function Dashboard() {
               <Trophy className="w-5 h-5 text-amber-600" />
             </div>
             <div className="text-2xl font-bold mt-2">{userStats.totalPoints}</div>
-            <div className="text-xs text-gray-500">Rank: #{userStats.rank}</div>
+            <div className="text-xs text-gray-500">
+              {userStats.rank ? `Rank: #${userStats.rank}` : "Keep playing to rank up"}
+            </div>
           </div>
           <div className="p-4 rounded-lg bg-white border">
             <div className="flex items-center justify-between">
               <span className="text-sm text-gray-500">Streak</span>
               <TrendingUp className="w-5 h-5" />
             </div>
-            <div className="text-2xl font-bold mt-2">{userStats.streakDays} days</div>
+            <div className="text-2xl font-bold mt-2">
+              {userStats.streakDays} {userStats.streakDays === 1 ? "day" : "days"}
+            </div>
             <div className="text-xs text-gray-500">
               Swirdle: {userStats.swirdleStreak}-day streak
             </div>
@@ -424,9 +605,7 @@ export default function Dashboard() {
               <BookOpen className="w-5 h-5" />
             </div>
             <div className="text-2xl font-bold mt-2">{userStats.modulesCompleted}</div>
-            <div className="text-xs text-gray-500">
-              Badges: {userStats.badgesEarned}
-            </div>
+            <div className="text-xs text-gray-500">Badges: {userStats.badgesEarned}</div>
           </div>
           <div className="p-4 rounded-lg bg-white border">
             <div className="flex items-center justify-between">
@@ -434,7 +613,7 @@ export default function Dashboard() {
               <Brain className="w-5 h-5" />
             </div>
             <div className="text-2xl font-bold mt-2">{userStats.quizScore}%</div>
-            <div className="text-xs text-gray-500">Latest score</div>
+            <div className="text-xs text-gray-500">Latest average</div>
           </div>
         </div>
 
@@ -549,8 +728,7 @@ export default function Dashboard() {
                         </span>
                         <span className="inline-flex items-center">
                           <Users className="w-3 h-3 mr-1" />
-                          {m.currentParticipants}/{m.maxParticipants}{" "}
-                          {t("dashboard.member")}
+                          {m.currentParticipants}/{m.maxParticipants} {t("dashboard.member")}
                           {m.maxParticipants !== 1 ? "s" : ""}
                         </span>
                       </div>
@@ -629,10 +807,10 @@ export default function Dashboard() {
             </h3>
             <div className="space-y-2">
               <Link
-                to="/trial-quiz"
+                to="/daily-quiz"
                 className="w-full inline-flex items-center justify-between px-3 py-2 rounded border hover:bg-gray-50"
               >
-                <span>Try the Trial Quiz</span>
+                <span>Take the Daily Quiz</span>
                 <Play className="w-4 h-4" />
               </Link>
               <Link
