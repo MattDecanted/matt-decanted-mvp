@@ -1,166 +1,89 @@
 // src/pages/SignIn.tsx
-import React from "react";
-import { useNavigate, useLocation } from "react-router-dom";
+import * as React from "react";
+import { useNavigate, useLocation, Link } from "react-router-dom";
 import { supabase } from "@/lib/supabase";
-import { Loader2, Mail, Lock, User, ShieldCheck, ArrowRight } from "lucide-react";
+import {
+  ShieldCheck, Mail, Lock, Eye, EyeOff, ArrowLeft, Loader2, LogIn, UserPlus, Sparkles
+} from "lucide-react";
 
-type Tab = "signin" | "signup" | "magic" | "reset";
-
-const Field = ({
-  label,
-  type = "text",
-  value,
-  onChange,
-  placeholder,
-  icon,
-  autoComplete,
-}: {
-  label: string;
-  type?: string;
-  value: string;
-  onChange: (v: string) => void;
-  placeholder?: string;
-  icon?: React.ReactNode;
-  autoComplete?: string;
-}) => (
-  <label className="block">
-    <span className="block text-sm font-medium text-gray-700 mb-1">{label}</span>
-    <div className="relative">
-      {icon && <span className="absolute left-3 top-2.5 text-gray-400">{icon}</span>}
-      <input
-        type={type}
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        placeholder={placeholder}
-        autoComplete={autoComplete}
-        className="w-full rounded-lg border-gray-300 pl-10 pr-3 py-2 focus:ring-2 focus:ring-brand-blue/50 focus:border-brand-blue"
-      />
-    </div>
-  </label>
-);
+type Mode = "signin" | "signup" | "magic" | "reset";
 
 export default function SignIn() {
-  const [tab, setTab] = React.useState<Tab>("signin");
-  const [busy, setBusy] = React.useState(false);
-  const [msg, setMsg] = React.useState<string | null>(null);
-
-  // shared fields
+  const [mode, setMode] = React.useState<Mode>("signin");
   const [email, setEmail] = React.useState("");
   const [password, setPassword] = React.useState("");
-  const [fullName, setFullName] = React.useState("");
   const [confirm, setConfirm] = React.useState("");
+  const [fullName, setFullName] = React.useState("");
+  const [showPw, setShowPw] = React.useState(false);
+  const [busy, setBusy] = React.useState(false);
+  const [msg, setMsg] = React.useState<string | null>(null);
+  const [err, setErr] = React.useState<string | null>(null);
 
   const navigate = useNavigate();
   const location = useLocation() as any;
-  const redirectTo = location?.state?.from?.pathname || "/dashboard";
-  const activateUrl = `${window.location.origin}/activate`;
+  const redirectTo: string =
+    location?.state?.from?.pathname ? location.state.from.pathname : "/dashboard";
 
-  // If the user hit /signin#type=recovery (Supabase recovery redirect)
-  React.useEffect(() => {
-    if (window.location.hash.includes("type=recovery")) {
-      setTab("reset");
-      setMsg("Enter a new password to complete your reset.");
-    }
-  }, []);
-
-  const clearMsg = () => setMsg(null);
-
-  async function doGoogle() {
-    clearMsg();
-    setBusy(true);
-    try {
-      await supabase.auth.signInWithOAuth({
-        provider: "google",
-        options: { redirectTo: activateUrl },
-      });
-      // OAuth will redirect away; no navigate here
-    } catch (e: any) {
-      setMsg(e?.message || "Google sign-in failed.");
-    } finally {
-      setBusy(false);
-    }
+  function resetAlerts() {
+    setErr(null);
+    setMsg(null);
   }
 
-  async function handleSignIn(e: React.FormEvent) {
+  async function handleSignin(e: React.FormEvent) {
     e.preventDefault();
-    clearMsg();
+    resetAlerts();
     setBusy(true);
     try {
       const { error } = await supabase.auth.signInWithPassword({ email, password });
       if (error) throw error;
       navigate(redirectTo, { replace: true });
     } catch (e: any) {
-      setMsg(e?.message || "Sign in failed.");
+      setErr(e?.message ?? "Sign in failed");
     } finally {
       setBusy(false);
     }
   }
 
-  async function handleSignUp(e: React.FormEvent) {
+  async function handleSignup(e: React.FormEvent) {
     e.preventDefault();
-    clearMsg();
-    if (!email || !password || !fullName) {
-      setMsg("Please fill in all fields.");
-      return;
-    }
+    resetAlerts();
     if (password !== confirm) {
-      setMsg("Passwords do not match.");
+      setErr("Passwords do not match.");
       return;
     }
     setBusy(true);
     try {
-      const { data, error } = await supabase.auth.signUp({
+      const { error } = await supabase.auth.signUp({
         email,
         password,
         options: {
-          data: { full_name: fullName },
-          emailRedirectTo: activateUrl,
+          data: { full_name: fullName || null },
+          emailRedirectTo: `${window.location.origin}/activate`,
         },
       });
       if (error) throw error;
-
-      // Create/update a profile row (idempotent)
-      const uid = data.user?.id;
-      if (uid) {
-        await supabase
-          .from("profiles")
-          .upsert(
-            {
-              id: uid,
-              full_name: fullName,
-              role: "learner", // default
-              subscription_status: null,
-            },
-            { onConflict: "id" }
-          );
-      }
-
-      setMsg("Check your inbox to confirm your email. Then sign in.");
-      setTab("signin");
+      setMsg("Check your email to confirm your account.");
+      setMode("signin");
     } catch (e: any) {
-      setMsg(e?.message || "Sign up failed.");
+      setErr(e?.message ?? "Sign up failed");
     } finally {
       setBusy(false);
     }
   }
 
-  async function handleMagicLink(e: React.FormEvent) {
+  async function handleMagic(e: React.FormEvent) {
     e.preventDefault();
-    clearMsg();
-    if (!email) {
-      setMsg("Enter your email.");
-      return;
-    }
+    resetAlerts();
     setBusy(true);
     try {
       const { error } = await supabase.auth.signInWithOtp({
         email,
-        options: { emailRedirectTo: activateUrl },
+        options: { emailRedirectTo: `${window.location.origin}/activate` },
       });
       if (error) throw error;
-      setMsg("Magic link sent. Check your inbox.");
+      setMsg("Magic link sent — check your email.");
     } catch (e: any) {
-      setMsg(e?.message || "Could not send magic link.");
+      setErr(e?.message ?? "Could not send magic link");
     } finally {
       setBusy(false);
     }
@@ -168,136 +91,140 @@ export default function SignIn() {
 
   async function handleReset(e: React.FormEvent) {
     e.preventDefault();
-    clearMsg();
-    if (window.location.hash.includes("type=recovery")) {
-      // We're on the recovery link—just update the password.
-      if (!password || password !== confirm) {
-        setMsg("Enter and confirm your new password.");
-        return;
-      }
-      setBusy(true);
-      try {
-        const { error } = await supabase.auth.updateUser({ password });
-        if (error) throw error;
-        setMsg("Password updated. You can now sign in.");
-        setTab("signin");
-        window.history.replaceState({}, "", "/signin");
-      } catch (e: any) {
-        setMsg(e?.message || "Password update failed.");
-      } finally {
-        setBusy(false);
-      }
-      return;
-    }
-
-    // Request a reset link via email
-    if (!email) {
-      setMsg("Enter your email.");
-      return;
-    }
+    resetAlerts();
     setBusy(true);
     try {
       const { error } = await supabase.auth.resetPasswordForEmail(email, {
-        redirectTo: activateUrl + "#type=recovery",
+        redirectTo: `${window.location.origin}/activate`,
       });
       if (error) throw error;
-      setMsg("Reset email sent. Check your inbox.");
+      setMsg("Reset email sent — check your inbox.");
     } catch (e: any) {
-      setMsg(e?.message || "Could not send reset email.");
+      setErr(e?.message ?? "Could not send reset email");
     } finally {
       setBusy(false);
     }
   }
 
-  const TabButton = ({ value, children }: { value: Tab; children: React.ReactNode }) => (
-    <button
-      type="button"
-      onClick={() => {
-        clearMsg();
-        setTab(value);
-      }}
-      className={`px-3 py-1.5 text-sm rounded-md border ${
-        tab === value
-          ? "bg-brand-blue text-white border-brand-blue"
-          : "bg-white text-gray-700 border-gray-200 hover:bg-gray-50"
-      }`}
-    >
-      {children}
-    </button>
-  );
+  async function google() {
+    resetAlerts();
+    setBusy(true);
+    try {
+      const { data, error } = await supabase.auth.signInWithOAuth({
+        provider: "google",
+        options: {
+          redirectTo: `${window.location.origin}/dashboard`,
+          queryParams: { prompt: "select_account" },
+        },
+      });
+      if (error) throw error;
+      // Redirect happens via OAuth; `data.url` is handled by Supabase.
+    } catch (e: any) {
+      setErr(e?.message ?? "Google sign-in failed");
+      setBusy(false);
+    }
+  }
 
   return (
-    <div className="min-h-[70vh] flex items-start sm:items-center justify-center px-4 pt-8 sm:pt-0">
+    <main className="min-h-[80vh] flex items-start justify-center px-4 py-10 bg-white">
       <div className="w-full max-w-md">
-        {/* Brand header */}
+        {/* Page title */}
         <div className="text-center mb-6">
-          <div className="inline-flex items-center justify-center w-12 h-12 rounded-full bg-brand-blue/10 text-brand-blue mb-2">
-            <ShieldCheck className="w-6 h-6" />
+          <div className="inline-flex h-12 w-12 items-center justify-center rounded-full bg-brand-blue/10 text-brand-blue">
+            <ShieldCheck className="h-6 w-6" />
           </div>
-          <h1 className="text-2xl font-bold">Welcome back</h1>
+          <h1 className="mt-3 text-2xl font-bold">Welcome back</h1>
           <p className="text-sm text-gray-500">Sign in to continue.</p>
         </div>
 
-        {/* Tabs */}
-        <div className="flex gap-2 mb-4">
-          <TabButton value="signin">Sign in</TabButton>
-          <TabButton value="signup">Sign up</TabButton>
-          <TabButton value="magic">Magic link</TabButton>
-          <TabButton value="reset">Reset</TabButton>
+        {/* Mode switcher */}
+        <div className="flex gap-2 justify-center mb-4">
+          <Seg value={mode} tag="signin" onClick={() => setMode("signin")}>
+            Sign in
+          </Seg>
+          <Seg value={mode} tag="signup" onClick={() => setMode("signup")}>
+            Sign up
+          </Seg>
+          <Seg value={mode} tag="magic" onClick={() => setMode("magic")}>
+            Magic link
+          </Seg>
+          <Seg value={mode} tag="reset" onClick={() => setMode("reset")}>
+            Reset
+          </Seg>
         </div>
 
         {/* Card */}
         <div className="card p-5">
+          {err && (
+            <div className="mb-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+              {err}
+            </div>
+          )}
           {msg && (
-            <div
-              className={`mb-4 text-sm rounded-md px-3 py-2 border ${
-                msg.toLowerCase().includes("fail") || msg.toLowerCase().includes("error")
-                  ? "bg-red-50 text-red-700 border-red-200"
-                  : "bg-emerald-50 text-emerald-700 border-emerald-200"
-              }`}
-            >
+            <div className="mb-4 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
               {msg}
             </div>
           )}
 
-          {tab === "signin" && (
-            <form onSubmit={handleSignIn} className="space-y-4">
-              <Field
+          {mode === "signin" && (
+            <form onSubmit={handleSignin} className="space-y-4">
+              <LabeledInput
                 label="Email"
+                type="email"
+                icon={<Mail className="w-4 h-4 text-gray-400" />}
                 value={email}
-                onChange={setEmail}
-                placeholder="you@example.com"
-                icon={<Mail className="w-4 h-4" />}
+                onChange={(e) => setEmail(e.target.value)}
                 autoComplete="email"
+                required
               />
-              <Field
+              <LabeledInput
                 label="Password"
-                type="password"
+                type={showPw ? "text" : "password"}
+                icon={<Lock className="w-4 h-4 text-gray-400" />}
                 value={password}
-                onChange={setPassword}
-                placeholder="••••••••"
-                icon={<Lock className="w-4 h-4" />}
+                onChange={(e) => setPassword(e.target.value)}
                 autoComplete="current-password"
+                required
+                rightIcon={
+                  <button
+                    type="button"
+                    onClick={() => setShowPw((s) => !s)}
+                    className="text-gray-400 hover:text-gray-600"
+                    aria-label={showPw ? "Hide password" : "Show password"}
+                  >
+                    {showPw ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                }
               />
+
               <button
-                type="submit"
+                className="btn-primary w-full justify-center"
                 disabled={busy}
-                className="w-full btn-primary justify-center"
               >
-                {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : "Sign in"}
+                {busy ? (
+                  <span className="inline-flex items-center gap-2">
+                    <Loader2 className="w-4 h-4 animate-spin" /> Signing in…
+                  </span>
+                ) : (
+                  <span className="inline-flex items-center gap-2">
+                    <LogIn className="w-4 h-4" /> Sign in
+                  </span>
+                )}
               </button>
+
               <button
                 type="button"
-                onClick={doGoogle}
+                onClick={google}
                 disabled={busy}
-                className="w-full btn-ghost justify-center"
+                className="btn-ghost w-full justify-center"
               >
                 Continue with Google
               </button>
+
               <div className="text-right">
                 <button
                   type="button"
-                  onClick={() => setTab("reset")}
+                  onClick={() => setMode("reset")}
                   className="text-sm text-brand-blue hover:underline"
                 >
                   Forgot password?
@@ -306,127 +233,181 @@ export default function SignIn() {
             </form>
           )}
 
-          {tab === "signup" && (
-            <form onSubmit={handleSignUp} className="space-y-4">
-              <Field
+          {mode === "signup" && (
+            <form onSubmit={handleSignup} className="space-y-4">
+              <LabeledInput
                 label="Full name"
+                type="text"
                 value={fullName}
-                onChange={setFullName}
-                placeholder="Matt Decanted"
-                icon={<User className="w-4 h-4" />}
+                onChange={(e) => setFullName(e.target.value)}
                 autoComplete="name"
               />
-              <Field
+              <LabeledInput
                 label="Email"
+                type="email"
+                icon={<Mail className="w-4 h-4 text-gray-400" />}
                 value={email}
-                onChange={setEmail}
-                placeholder="you@example.com"
-                icon={<Mail className="w-4 h-4" />}
+                onChange={(e) => setEmail(e.target.value)}
                 autoComplete="email"
+                required
               />
-              <Field
+              <LabeledInput
                 label="Password"
-                type="password"
+                type={showPw ? "text" : "password"}
+                icon={<Lock className="w-4 h-4 text-gray-400" />}
                 value={password}
-                onChange={setPassword}
-                placeholder="Create a password"
-                icon={<Lock className="w-4 h-4" />}
+                onChange={(e) => setPassword(e.target.value)}
                 autoComplete="new-password"
+                required
+                rightIcon={
+                  <button
+                    type="button"
+                    onClick={() => setShowPw((s) => !s)}
+                    className="text-gray-400 hover:text-gray-600"
+                  >
+                    {showPw ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                }
               />
-              <Field
+              <LabeledInput
                 label="Confirm password"
                 type="password"
+                icon={<Lock className="w-4 h-4 text-gray-400" />}
                 value={confirm}
-                onChange={setConfirm}
-                placeholder="Repeat your password"
-                icon={<Lock className="w-4 h-4" />}
+                onChange={(e) => setConfirm(e.target.value)}
                 autoComplete="new-password"
+                required
               />
-              <button type="submit" disabled={busy} className="w-full btn-primary justify-center">
-                {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : "Create account"}
+
+              <button className="btn-primary w-full justify-center" disabled={busy}>
+                {busy ? (
+                  <span className="inline-flex items-center gap-2">
+                    <Loader2 className="w-4 h-4 animate-spin" /> Creating…
+                  </span>
+                ) : (
+                  <span className="inline-flex items-center gap-2">
+                    <UserPlus className="w-4 h-4" /> Create account
+                  </span>
+                )}
               </button>
-              <p className="text-xs text-gray-500 text-center">
-                By signing up you agree to our terms and privacy policy.
-              </p>
             </form>
           )}
 
-          {tab === "magic" && (
-            <form onSubmit={handleMagicLink} className="space-y-4">
-              <Field
+          {mode === "magic" && (
+            <form onSubmit={handleMagic} className="space-y-4">
+              <LabeledInput
                 label="Email"
+                type="email"
+                icon={<Mail className="w-4 h-4 text-gray-400" />}
                 value={email}
-                onChange={setEmail}
-                placeholder="you@example.com"
-                icon={<Mail className="w-4 h-4" />}
+                onChange={(e) => setEmail(e.target.value)}
                 autoComplete="email"
+                required
               />
-              <button type="submit" disabled={busy} className="w-full btn-primary justify-center">
-                {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : "Send magic link"}
+              <button className="btn-primary w-full justify-center" disabled={busy}>
+                {busy ? (
+                  <span className="inline-flex items-center gap-2">
+                    <Loader2 className="w-4 h-4 animate-spin" /> Sending…
+                  </span>
+                ) : (
+                  <span className="inline-flex items-center gap-2">
+                    <Sparkles className="w-4 h-4" /> Send magic link
+                  </span>
+                )}
               </button>
-              <p className="text-xs text-gray-500 text-center">
-                We’ll email you a one-time link to sign in instantly.
-              </p>
             </form>
           )}
 
-          {tab === "reset" && (
+          {mode === "reset" && (
             <form onSubmit={handleReset} className="space-y-4">
-              {window.location.hash.includes("type=recovery") ? (
-                <>
-                  <Field
-                    label="New password"
-                    type="password"
-                    value={password}
-                    onChange={setPassword}
-                    placeholder="Enter new password"
-                    icon={<Lock className="w-4 h-4" />}
-                    autoComplete="new-password"
-                  />
-                  <Field
-                    label="Confirm password"
-                    type="password"
-                    value={confirm}
-                    onChange={setConfirm}
-                    placeholder="Confirm new password"
-                    icon={<Lock className="w-4 h-4" />}
-                    autoComplete="new-password"
-                  />
-                  <button type="submit" disabled={busy} className="w-full btn-primary justify-center">
-                    {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : "Update password"}
-                  </button>
-                </>
-              ) : (
-                <>
-                  <Field
-                    label="Email"
-                    value={email}
-                    onChange={setEmail}
-                    placeholder="you@example.com"
-                    icon={<Mail className="w-4 h-4" />}
-                    autoComplete="email"
-                  />
-                  <button type="submit" disabled={busy} className="w-full btn-primary justify-center">
-                    {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : "Send reset email"}
-                  </button>
-                  <p className="text-xs text-gray-500 text-center">
-                    You’ll receive a link to set a new password.
-                  </p>
-                </>
-              )}
+              <LabeledInput
+                label="Email"
+                type="email"
+                icon={<Mail className="w-4 h-4 text-gray-400" />}
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                autoComplete="email"
+                required
+              />
+              <button className="btn-primary w-full justify-center" disabled={busy}>
+                {busy ? (
+                  <span className="inline-flex items-center gap-2">
+                    <Loader2 className="w-4 h-4 animate-spin" /> Sending…
+                  </span>
+                ) : (
+                  "Send reset email"
+                )}
+              </button>
+              <p className="text-xs text-gray-500">
+                You’ll receive a link to set a new password.
+              </p>
             </form>
           )}
         </div>
 
-        <div className="mt-6 text-center text-sm">
-          <button
-            className="inline-flex items-center text-gray-600 hover:text-gray-800"
-            onClick={() => navigate("/")}
-          >
-            Back to home <ArrowRight className="w-4 h-4 ml-1" />
-          </button>
+        <div className="mt-6 text-center">
+          <Link to="/" className="btn-ghost inline-flex items-center gap-2">
+            <ArrowLeft className="w-4 h-4" /> Back to home
+          </Link>
         </div>
       </div>
-    </div>
+    </main>
+  );
+}
+
+/* ---------- small helpers ---------- */
+function Seg({
+  value,
+  tag,
+  onClick,
+  children,
+}: {
+  value: string;
+  tag: string;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  const active = value === tag;
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={
+        active
+          ? "inline-flex items-center rounded-lg bg-brand-blue text-white px-3 py-1.5 text-sm font-semibold shadow"
+          : "inline-flex items-center rounded-lg border border-gray-200 px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50"
+      }
+    >
+      {children}
+    </button>
+  );
+}
+
+function LabeledInput({
+  label,
+  icon,
+  rightIcon,
+  ...props
+}: {
+  label: string;
+  icon?: React.ReactNode;
+  rightIcon?: React.ReactNode;
+} & React.InputHTMLAttributes<HTMLInputElement>) {
+  return (
+    <label className="block">
+      <div className="text-xs font-medium text-gray-600 mb-1">{label}</div>
+      <div className="relative">
+        {icon && <span className="absolute left-3 top-1/2 -translate-y-1/2">{icon}</span>}
+        <input
+          {...props}
+          className={`w-full rounded-lg border border-gray-300 bg-white px-3 py-2 pl-${icon ? "9" : "3"} pr-${
+            rightIcon ? "9" : "3"
+          } outline-none focus:ring-2 focus:ring-brand-blue/30 focus:border-brand-blue`}
+        />
+        {rightIcon && (
+          <span className="absolute right-3 top-1/2 -translate-y-1/2">{rightIcon}</span>
+        )}
+      </div>
+    </label>
   );
 }
