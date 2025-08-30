@@ -20,7 +20,10 @@ import ShortsPage from '@/pages/ShortsPage';
 import ShortDetailPage from '@/pages/ShortDetailPage';
 import AccountPage from '@/pages/AccountPage';
 import PricingPage from '@/pages/PricingPage';
-import TrialQuizPage from '@/pages/TrialQuizPage';
+
+// NOTE: replaced TrialQuizPage import with DailyQuizPage
+import DailyQuizPage from '@/pages/DailyQuiz';
+
 import VinoVocabPage from '@/pages/VinoVocabPage';
 import BrandedDemo from '@/pages/BrandedDemo';
 import VocabChallengeManager from '@/pages/admin/VocabChallengeManager';
@@ -162,8 +165,12 @@ function App() {
                   <Route path="/shorts" element={<ShortsPage />} />
                   <Route path="/shorts/:slug" element={<ShortDetailPage />} />
 
-                  {/* Trial & Vocab */}
-                  <Route path="/trial-quiz" element={<TrialQuizPage />} />
+                  {/* Daily Quiz (new) */}
+                  <Route path="/daily-quiz" element={<DailyQuizPage />} />
+                  {/* Back-compat: old link redirects to new path */}
+                  <Route path="/trial-quiz" element={<Navigate to="/daily-quiz" replace />} />
+
+                  {/* Vocab */}
                   <Route path="/vocab" element={<VinoVocabPage />} />
 
                   {/* Admin */}
