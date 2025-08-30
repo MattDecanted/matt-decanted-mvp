@@ -19,6 +19,7 @@ export default {
         sm: 'calc(var(--radius) - 4px)',
       },
       colors: {
+        /* shadcn-style tokens wired to CSS vars (keep as-is if you use them) */
         background: 'hsl(var(--background))',
         foreground: 'hsl(var(--foreground))',
         card: { DEFAULT: 'hsl(var(--card-hsl))', foreground: 'hsl(var(--card-foreground))' },
@@ -38,9 +39,20 @@ export default {
           4: 'hsl(var(--chart-4))',
           5: 'hsl(var(--chart-5))',
         },
+
+        /* === Matt Decanted brand palette === */
         brand: {
-          blue: '#3B82F6', purple: '#8B5CF6', orange: '#F97316',
-          green: '#10B981', navy: '#1E293B', soft: '#F3F4F6',
+          /* semantic aliases */
+          primary: '#1F40C6',      // main brand blue (links/CTA variants)
+          orange:  '#FF9500',      // highlight / Sign Up / top accent
+          blue:    '#3B82F6',      // secondary CTA / info
+          purple:  '#8B5CF6',      // member-only / premium
+          green:   '#10B981',      // success
+          navy:    '#1E293B',      // dark/footer
+          soft:    '#F3F4F6',      // light cards / backgrounds
+          wine:    '#7F1D1D',      // wine accent (optional)
+          ink:     '#111827',      // primary text
+          paper:   '#FAFAFA',      // page background
         },
       },
       keyframes: {
