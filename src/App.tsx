@@ -23,9 +23,7 @@ import ShortDetailPage from '@/pages/ShortDetailPage';
 import AccountPage from '@/pages/AccountPage';
 import PricingPage from '@/pages/PricingPage';
 
-// NOTE: replaced TrialQuizPage import with DailyQuizPage
 import DailyQuizPage from '@/pages/DailyQuiz';
-
 import VinoVocabPage from '@/pages/VinoVocabPage';
 import BrandedDemo from '@/pages/BrandedDemo';
 import VocabChallengeManager from '@/pages/admin/VocabChallengeManager';
@@ -50,36 +48,11 @@ import { supabase } from '@/lib/supabase';
 const FN_SUBMIT = '/.netlify/functions/trial-quiz-attempt';
 const PENDING_KEY = 'md_trial_pending';
 
-/* ---------- HashSessionBridge: turn magic/recovery hash into a session ---------- */
+/* ---------- small helper so guards don't redirect during hash login ---------- */
 function hasAuthHash(hash: string) {
   if (!hash) return false;
   const qp = new URLSearchParams(hash.startsWith('#') ? hash.slice(1) : hash);
   return !!(qp.get('access_token') && qp.get('refresh_token'));
-}
-
-function HashSessionBridge() {
-  const location = useLocation();
-
-  React.useEffect(() => {
-    (async () => {
-      const hash = location.hash || '';
-      if (!hasAuthHash(hash)) return;
-
-      const qp = new URLSearchParams(hash.slice(1));
-      const access_token = qp.get('access_token')!;
-      const refresh_token = qp.get('refresh_token')!;
-      try {
-        await supabase.auth.setSession({ access_token, refresh_token });
-      } finally {
-        // Clean up the URL (keep path + search, drop #…)
-        const clean = location.pathname + location.search;
-        window.history.replaceState(null, '', clean);
-      }
-    })();
-    // rerun when the location key changes (fresh navigation)
-  }, [location.key, location.hash, location.pathname, location.search]);
-
-  return null;
 }
 
 /* ---------- Auto resume pending trial-quiz posts on Account ---------- */
@@ -120,13 +93,10 @@ function AutoResumeOnAccount() {
 function RequireAuth({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuth();
   const location = useLocation();
-
-  // If we have hash tokens, treat as "still logging in" to avoid redirect loops
   const pendingHashLogin = hasAuthHash(location.hash);
 
   if (loading || pendingHashLogin) return <div className="p-8">Loading...</div>;
   if (!user) return <Navigate to="/signin" replace state={{ from: location }} />;
-
   return <>{children}</>;
 }
 
@@ -138,7 +108,6 @@ function RequireAdmin({ children }: { children: React.ReactNode }) {
   if (loading || pendingHashLogin) return <div className="p-8">Loading...</div>;
   if (!user) return <Navigate to="/signin" replace state={{ from: location }} />;
   if ((profile as any)?.role !== 'admin') return <Navigate to="/dashboard" replace />;
-
   return <>{children}</>;
 }
 
@@ -184,26 +153,15 @@ function App() {
       <AuthProvider>
         <PointsProvider>
           <Router>
-            <AppErrorBoundary>
-              {/* 🔑 Run the bridge on *every* route */}
-              <HashSessionBridge />
+            {/* Turn #access_token/#refresh_token into a Supabase session */}
+            <HashAuthBridge />
 
+            <AppErrorBoundary>
               <Layout>
                 <Routes>
                   {/* Home */}
                   <Route path="/" element={<Home />} />
 
-// inside return(...)
-<AnalyticsProvider>
-  <AuthProvider>
-    <PointsProvider>
-      <Router>
-        <HashAuthBridge /> {/* <- consumes #access_token/#refresh_token */}
-        <AppErrorBoundary>
-          <Layout>
-            {/* ...your <Routes> unchanged... */}
-
-                  
                   {/* Core info & auth */}
                   <Route path="/about" element={<About />} />
                   <Route path="/signin" element={<SignIn />} />
@@ -299,10 +257,11 @@ function App() {
                   {/* Legacy demo */}
                   <Route path="/demo" element={<BrandedDemo />} />
 
-                  {/* 404 */}
+                  {/* 404 fallback */}
                   <Route path="*" element={<Navigate to="/" replace />} />
                 </Routes>
               </Layout>
+
               <Toaster />
             </AppErrorBoundary>
           </Router>
