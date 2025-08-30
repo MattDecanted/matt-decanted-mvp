@@ -94,6 +94,24 @@ function RequireAuth({ children }: { children: React.ReactNode }) {
   return <>{children}</>;
 }
 
+/** ✅ RequireAdmin wrapper */
+function RequireAdmin({ children }: { children: React.ReactNode }) {
+  const { user, profile, loading } = useAuth();
+  const location = useLocation();
+
+  if (loading) return <div className="p-8">Loading...</div>;
+  if (!user) return <Navigate to="/signin" replace state={{ from: location }} />;
+
+  // Only allow role "admin"
+  const role = (profile as any)?.role;
+  if (role !== 'admin') {
+    // Not authorized → send them somewhere safe
+    return <Navigate to="/dashboard" replace />;
+  }
+
+  return <>{children}</>;
+}
+
 /** Global error boundary */
 class AppErrorBoundary extends React.Component<{ children: React.ReactNode }, { error: any }> {
   constructor(props: any) {
@@ -150,7 +168,6 @@ function App() {
                   <Route path="/activate" element={<Activate />} />
                   <Route path="/reset-password" element={<ResetPassword />} />
 
-                  
                   {/* Blog */}
                   <Route path="/blog" element={<BlogIndex />} />
                   <Route path="/blog/how-to-become-winemaker" element={<HowToBecomeWinemaker />} />
@@ -176,11 +193,39 @@ function App() {
                   {/* Vocab */}
                   <Route path="/vocab" element={<VinoVocabPage />} />
 
-                  {/* Admin */}
-                  <Route path="/admin/vocab" element={<VocabChallengeManager />} />
-                  <Route path="/admin/quizzes" element={<QuizManager />} />
-                  <Route path="/admin/trial-quizzes" element={<TrialQuizManager />} />
-                  <Route path="/admin/swirdle" element={<SwirdleAdmin />} />
+                  {/* ✅ Admin (guarded) */}
+                  <Route
+                    path="/admin/vocab"
+                    element={
+                      <RequireAdmin>
+                        <VocabChallengeManager />
+                      </RequireAdmin>
+                    }
+                  />
+                  <Route
+                    path="/admin/quizzes"
+                    element={
+                      <RequireAdmin>
+                        <QuizManager />
+                      </RequireAdmin>
+                    }
+                  />
+                  <Route
+                    path="/admin/trial-quizzes"
+                    element={
+                      <RequireAdmin>
+                        <TrialQuizManager />
+                      </RequireAdmin>
+                    }
+                  />
+                  <Route
+                    path="/admin/swirdle"
+                    element={
+                      <RequireAdmin>
+                        <SwirdleAdmin />
+                      </RequireAdmin>
+                    }
+                  />
 
                   {/* Options */}
                   <Route path="/wine-options/solo" element={<SoloWineOptions />} />
