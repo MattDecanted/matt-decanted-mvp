@@ -2,7 +2,7 @@
 import React, { useEffect, useState } from 'react';
 import {
   Wine, Trophy, Target, Share2, Brain, Calendar,
-  TrendingUp, Lightbulb, X, CheckCircle, Shield
+  TrendingUp, Lightbulb, X, CheckCircle
 } from 'lucide-react';
 
 import { useAuth } from '@/context/AuthContext';
@@ -12,7 +12,8 @@ import { supabase } from '@/lib/supabase';
 // =================== Config ===================
 const HINT_COST = 5;        // points to buy a hint
 const WIN_POINTS = 15;      // points awarded on a win
-const maxGuesses = 6;
+const MAX_GUESSES = 6;
+const TZ = 'Australia/Adelaide';
 
 // =================== Helpers ===================
 const Spinner = () => (
@@ -20,6 +21,27 @@ const Spinner = () => (
     <div className="h-8 w-8 animate-spin rounded-full border-2 border-gray-300 border-t-transparent" />
   </div>
 );
+
+// Adelaide YYYY-MM-DD
+function formatDateAdelaide(d = new Date()) {
+  const parts = new Intl.DateTimeFormat('en-CA', { timeZone: TZ, year: 'numeric', month: '2-digit', day: '2-digit' })
+    .formatToParts(d)
+    .reduce((a: any, p: any) => (a[p.type] = p.value, a), {});
+  return `${parts.year}-${parts.month}-${parts.day}`;
+}
+function addDays(dateStr: string, delta: number) {
+  const d = new Date(`${dateStr}T00:00:00`);
+  d.setDate(d.getDate() + delta);
+  return formatDateAdelaide(d);
+}
+function cyrb53(str: string, seed = 0) {
+  let h1 = 0xdeadbeef ^ seed, h2 = 0x41c6ce57 ^ seed;
+  for (let i = 0; i < str.length; i++) { const ch = str.charCodeAt(i);
+    h1 = Math.imul(h1 ^ ch, 2654435761); h2 = Math.imul(h2 ^ ch, 1597334677); }
+  h1 = (Math.imul(h1 ^ (h1>>>16),2246822507)^Math.imul(h2 ^ (h2>>>13),3266489909))>>>0;
+  h2 = (Math.imul(h2 ^ (h2>>>16),2246822507)^Math.imul(h1 ^ (h1>>>13),3266489909))>>>0;
+  return (h2 & 2097151) * 4294967296 + h1;
+}
 
 // Minimal Wordle-like status calc (avoid external import)
 function computeStatuses(answer: string, guess: string): Array<'correct' | 'present' | 'absent'> {
@@ -35,9 +57,16 @@ function computeStatuses(answer: string, guess: string): Array<'correct' | 'pres
   for (let i = 0; i < A.length; i++) {
     if (out[i] === 'correct') continue;
     const ch = G[i];
-    if (remaining[ch] > 0) { out[i] = 'present'; remaining[ch] -= 1; }
+    if ((remaining[ch] ?? 0) > 0) { out[i] = 'present'; remaining[ch] -= 1; }
   }
   return out;
+}
+
+function emojiGrid(answer: string, guesses: string[]) {
+  return guesses
+    .map((g) => computeStatuses(answer, g)
+      .map(s => s === 'correct' ? '🟩' : s === 'present' ? '🟨' : '⬛').join(''))
+    .join('\n');
 }
 
 // =================== Inline service (DB I/O) ===================
@@ -72,7 +101,7 @@ export type UserStats = {
   wins: number;
   current_streak: number;
   max_streak: number;
-  last_played: string | null;
+  last_played: string | null; // YYYY-MM-DD
   updated_at: string | null;
 };
 
@@ -84,6 +113,23 @@ async function getWordForDate(date: string): Promise<{ data: SwirdleWord | null;
     .eq('is_published', true)
     .maybeSingle();
   return { data: (data as SwirdleWord) ?? null, error };
+}
+
+// fallback: deterministically pick any published word by date
+async function getDeterministicWordForDate(date: string): Promise<SwirdleWord | null> {
+  const { data, error } = await supabase
+    .from('swirdle_words')
+    .select('id, word, definition, difficulty, category, hints, is_published')
+    .eq('is_published', true);
+  if (error || !data?.length) return null;
+  const list = data as any[];
+  const idx = cyrb53(date) % list.length;
+  const w = list[idx];
+  return {
+    id: w.id, word: w.word, definition: w.definition,
+    difficulty: w.difficulty, category: w.category,
+    hints: w.hints ?? [], date_scheduled: date, is_published: true
+  };
 }
 
 async function getAttempt(userId: string, wordId: string): Promise<{ data: SwirdleAttempt | null; error: any | null }> {
@@ -127,13 +173,22 @@ async function fetchUserStats(userId: string): Promise<{ data: UserStats | null;
   return { data: (data as UserStats) ?? null, error };
 }
 
+// ✅ streak is now truly consecutive by Adelaide date
 async function upsertUserStatsRow(userId: string, didWin: boolean, attempts: number): Promise<{ data: UserStats | null; error: any | null }> {
+  const today = formatDateAdelaide();
+  const yesterday = addDays(today, -1);
   const { data: existing } = await fetchUserStats(userId);
 
   let games_played = (existing?.games_played ?? 0) + 1;
   let wins = (existing?.wins ?? 0) + (didWin ? 1 : 0);
-  let current_streak = didWin ? (existing?.current_streak ?? 0) + 1 : 0;
-  let max_streak = didWin ? Math.max(existing?.max_streak ?? 0, current_streak) : (existing?.max_streak ?? 0);
+
+  let current_streak = existing?.current_streak ?? 0;
+  if (didWin) {
+    current_streak = existing?.last_played === yesterday ? current_streak + 1 : 1;
+  } else {
+    current_streak = 0;
+  }
+  const max_streak = didWin ? Math.max(existing?.max_streak ?? 0, current_streak) : (existing?.max_streak ?? 0);
 
   const row: UserStats = {
     user_id: userId,
@@ -141,7 +196,7 @@ async function upsertUserStatsRow(userId: string, didWin: boolean, attempts: num
     wins,
     current_streak,
     max_streak,
-    last_played: new Date().toISOString().split('T')[0],
+    last_played: today,
     updated_at: new Date().toISOString(),
   };
 
@@ -156,7 +211,6 @@ async function upsertUserStatsRow(userId: string, didWin: boolean, attempts: num
 
 // =================== Component ===================
 const Swirdle: React.FC = () => {
-  // Simple i18n shim so we don't depend on a LanguageProvider
   const t = (_key: string, fallback?: string) => fallback ?? '';
 
   const { user } = useAuth();
@@ -169,7 +223,7 @@ const Swirdle: React.FC = () => {
 
   const [loading, setLoading] = useState(true);
   const [currentGuess, setCurrentGuess] = useState('');
-  const [guesses, setGuesses] = useState<string[]>(Array(maxGuesses).fill(''));
+  const [guesses, setGuesses] = useState<string[]>(Array(MAX_GUESSES).fill(''));
   const [gameComplete, setGameComplete] = useState(false);
   const [gameWon, setGameWon] = useState(false);
 
@@ -183,21 +237,26 @@ const Swirdle: React.FC = () => {
   const [shareText, setShareText] = useState('');
   const [showShareModal, setShowShareModal] = useState(false);
 
-  // Admin helpers
-  const [isAdmin, setIsAdmin] = useState(false);
-  const [adminBusy, setAdminBusy] = useState(false);
-  const dashboardUrl = import.meta.env.VITE_SUPABASE_DASHBOARD_URL as string | undefined;
-
-  // Guards
   const [awardBusy, setAwardBusy] = useState(false);
   const [purchaseBusy, setPurchaseBusy] = useState(false);
+
+  // ---- Trial trigger (idempotent, ignore if RPC missing) ----
+  useEffect(() => {
+    if (!user?.id) return;
+    (async () => {
+      try {
+        // Will silently no-op if you haven't created vv_start_trial yet
+        await supabase.rpc('vv_start_trial', { p_days: 7 });
+      } catch { /* ignore */ }
+    })();
+  }, [user?.id]);
 
   // -------- Load game + stats --------
   useEffect(() => {
     (async () => {
-      const today = new Date().toISOString().split('T')[0];
+      const today = formatDateAdelaide();
 
-      // safe mock if no DB word
+      // safe mock if absolutely nothing in DB
       const mockWord: SwirdleWord = {
         id: 'mock-1',
         word: 'TERROIR',
@@ -215,30 +274,22 @@ const Swirdle: React.FC = () => {
 
       try {
         setLoading(true);
+        setError('');
 
-        // Today’s word
-        const { data: wordData } = await getWordForDate(today);
+        // Today’s word (scheduled) or deterministic fallback
+        let wordData: SwirdleWord | null = null;
+        const scheduled = await getWordForDate(today);
+        wordData = scheduled.data;
+        if (!wordData) wordData = await getDeterministicWordForDate(today);
         setDbWordAvailable(!!wordData);
         setTodaysWord(wordData ?? mockWord);
-
-        // Admin check
-        if (user?.id) {
-          const { data: adminRow } = await supabase
-            .from('admins')
-            .select('user_id')
-            .eq('user_id', user.id)
-            .maybeSingle();
-          setIsAdmin(!!adminRow);
-        } else {
-          setIsAdmin(false);
-        }
 
         // Attempts + stats when signed in
         if (user?.id && wordData) {
           const { data: attempt } = await getAttempt(user.id, wordData.id);
           if (attempt) {
             setUserAttempt(attempt);
-            setGuesses(attempt.guesses || Array(maxGuesses).fill(''));
+            setGuesses([...Array(MAX_GUESSES)].map((_, i) => attempt.guesses?.[i] ?? ''));
             setCurrentAttempt(attempt.attempts || 0);
             setGameComplete(!!attempt.completed);
             setGameWon(!!attempt.completed && !!attempt.won);
@@ -377,7 +428,7 @@ const Swirdle: React.FC = () => {
         saveAttempt({ completed: true, won: true, attempts: newAttemptCount });
         void handleWinAward(newAttemptCount);
       }
-    } else if (newAttemptCount === maxGuesses) {
+    } else if (newAttemptCount === MAX_GUESSES) {
       setGameComplete(true);
       generateShareText(newAttemptCount, false);
       if (user?.id) saveAttempt({ completed: true, won: false, attempts: newAttemptCount });
@@ -400,7 +451,6 @@ const Swirdle: React.FC = () => {
   function useHint(hintIndex: number) {
     if (!hintsUsed.includes(hintIndex)) {
       setHintsUsed((prev) => [...prev, hintIndex]);
-      // keep modal as-is; availableHint will be set after purchase
       if (user?.id) saveAttempt(); // persist
     }
   }
@@ -409,42 +459,9 @@ const Swirdle: React.FC = () => {
   function generateShareText(attempts: number, won: boolean) {
     if (!todaysWord) return;
     const result = won ? `${attempts}/6` : 'X/6';
-    const squares = guesses
-      .slice(0, attempts)
-      .map((guess) => {
-        if (!guess) return '';
-        return guess
-          .split('')
-          .map((letter, index) => {
-            const status = getLetterStatus(letter, index, guess);
-            if (status === 'correct' || status === 'correct-word') return '🟩';
-            if (status === 'present') return '🟨';
-            return '⬛';
-          })
-          .join('');
-      })
-      .join('\n');
+    const squares = emojiGrid(todaysWord.word, guesses.slice(0, attempts).filter(Boolean));
     const hintsText = hintsUsed.length > 0 ? ` (${hintsUsed.length} hint${hintsUsed.length > 1 ? 's' : ''} used)` : '';
-    setShareText(`Swirdle ${result}${hintsText}\n\n${squares}\n\nPlay at ${window.location.origin}/swirdle`);
-  }
-
-  async function shareResults() {
-    if (navigator.share) {
-      try {
-        await navigator.share({
-          title: 'Swirdle Results',
-          text: shareText,
-          url: `${window.location.origin}/swirdle`,
-        });
-      } catch {
-        await navigator.clipboard.writeText(shareText);
-        alert('Results copied to clipboard!');
-      }
-    } else {
-      await navigator.clipboard.writeText(shareText);
-      alert('Results copied to clipboard!');
-    }
-    setShowShareModal(false);
+    setShareText(`Swirdle ${formatDateAdelaide()} ${result}${hintsText}\n\n${squares}\n\n${window.location.origin}/swirdle`);
   }
 
   function getLetterStatus(letter: string, position: number, word: string): string {
@@ -453,7 +470,7 @@ const Swirdle: React.FC = () => {
     const answer = todaysWord.word.toUpperCase();
     if (guess === answer) return 'correct-word';
     const statuses = computeStatuses(answer, guess);
-    return statuses[position]; // 'correct' | 'present' | 'absent'
+    return statuses[position];
   }
 
   function getDifficultyColor(difficulty: string) {
@@ -519,7 +536,7 @@ const Swirdle: React.FC = () => {
           </div>
           <p className="text-lg text-gray-600 mb-2">{t('swirdle.dailyChallenge', 'Daily Wine Word Challenge')}</p>
           <p className="text-sm text-gray-500">
-            Guess the {todaysWord.word.length}-letter wine term in {maxGuesses} tries
+            Guess the {todaysWord.word.length}-letter wine term in {MAX_GUESSES} tries
           </p>
 
           {/* Word Info */}
@@ -542,12 +559,10 @@ const Swirdle: React.FC = () => {
           )}
         </div>
 
-        {/* Admin tools */}
-
         {/* Game Board */}
         <div className="max-w-lg mx-auto mb-8">
           <div className="grid gap-2 mb-6">
-            {Array.from({ length: maxGuesses }, (_, i) => (
+            {Array.from({ length: MAX_GUESSES }, (_, i) => (
               <div key={i} className="grid gap-2" style={{ gridTemplateColumns: `repeat(${todaysWord.word.length}, minmax(0, 1fr))` }}>
                 {Array.from({ length: todaysWord.word.length }, (_, j) => {
                   const guess = guesses[i];
@@ -604,7 +619,7 @@ const Swirdle: React.FC = () => {
                 </button>
               </div>
 
-              <div className="text-center text-sm text-gray-500">{maxGuesses - currentAttempt} attempts remaining</div>
+              <div className="text-center text-sm text-gray-500">{MAX_GUESSES - currentAttempt} attempts remaining</div>
             </div>
           )}
 
@@ -638,7 +653,15 @@ const Swirdle: React.FC = () => {
               )}
 
               <button
-                onClick={() => setShowShareModal(true)}
+                onClick={() => {
+                  const attempts = currentAttempt;
+                  const won = gameWon;
+                  const squares = emojiGrid(todaysWord.word, guesses.slice(0, attempts).filter(Boolean));
+                  const hintsText = hintsUsed.length ? ` (${hintsUsed.length} hint${hintsUsed.length > 1 ? 's' : ''} used)` : '';
+                  const text = `Swirdle ${formatDateAdelaide()} ${won ? `${attempts}/6` : 'X/6'}${hintsText}\n\n${squares}\n\n${window.location.origin}/swirdle`;
+                  setShareText(text);
+                  setShowShareModal(true);
+                }}
                 className="mt-6 flex items-center justify-center mx-auto px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-semibold transition-colors"
               >
                 <Share2 className="w-4 h-4 mr-2" />
@@ -678,7 +701,11 @@ const Swirdle: React.FC = () => {
                       <CheckCircle className="w-4 h-4 text-blue-600" />
                     ) : user ? (
                       <button
-                        onClick={() => buyHint(index)}
+                        onClick={() => {
+                          setPendingHintIndex(index);
+                          setAvailableHint('');
+                          setShowHintModal(true);
+                        }}
                         disabled={purchaseBusy}
                         className="text-xs px-2 py-1 rounded border bg-white hover:bg-gray-50"
                       >
@@ -727,7 +754,6 @@ const Swirdle: React.FC = () => {
                 <div className="mt-4 text-center">
                   <div className="bg-amber-50 border border-amber-200 rounded-lg p-3">
                     <div className="flex items-center justify-center">
-                      <TrendingUp className="w-4 h-4 text-amber-600 mr-2" />
                       <span className="text-amber-800 font-medium">{userStats.current_streak} day streak! Keep it up!</span>
                     </div>
                   </div>
@@ -844,7 +870,16 @@ const Swirdle: React.FC = () => {
 
               <div className="flex space-x-3">
                 <button
-                  onClick={shareResults}
+                  onClick={async () => {
+                    if (navigator.share) {
+                      try { await navigator.share({ text: shareText }); }
+                      catch { await navigator.clipboard.writeText(shareText); alert('Results copied to clipboard!'); }
+                    } else {
+                      await navigator.clipboard.writeText(shareText);
+                      alert('Results copied to clipboard!');
+                    }
+                    setShowShareModal(false);
+                  }}
                   className="flex-1 bg-blue-600 hover:bg-blue-700 text-white py-2 px-4 rounded-lg font-medium transition-colors flex items-center justify-center"
                 >
                   <Share2 className="w-4 h-4 mr-2" />
