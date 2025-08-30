@@ -1,206 +1,383 @@
-// src/components/Layout.tsx
-import React from 'react';
-import { Link, useLocation } from 'react-router-dom';
-import {
-  Trophy,
-  Play,
-  User,
-  CreditCard,
-  BookOpen,
-  Brain,
-  Joystick,
-  Newspaper,
-  Menu,
-  X,
-} from 'lucide-react';
-import { useAuth } from '@/context/AuthContext';
-import { usePoints } from '@/context/PointsContext';
-import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
+import React from "react";
+import { Link, NavLink, useNavigate } from "react-router-dom";
+import { Trophy, Flame, Globe, Menu, X, ChevronDown, User, LogOut, LayoutDashboard, BookOpen, Brain } from "lucide-react";
 
-interface LayoutProps {
-  children: React.ReactNode;
+import { useAuth } from "@/context/AuthContext";
+import { usePoints } from "@/context/PointsContext";
+
+/** Simple active link styling */
+function NavItem({ to, children }: { to: string; children: React.ReactNode }) {
+  return (
+    <NavLink
+      to={to}
+      className={({ isActive }) =>
+        `px-3 py-2 text-sm font-medium rounded-md transition ${
+          isActive ? "bg-gray-900 text-white" : "text-gray-700 hover:bg-gray-100"
+        }`
+      }
+    >
+      {children}
+    </NavLink>
+  );
 }
 
-export default function Layout({ children }: LayoutProps) {
-  const location = useLocation();
-  const { user } = useAuth();
-  const { totalPoints, trialDaysLeft, isTrialUser } = usePoints();
+export default function Layout({ children }: { children: React.ReactNode }) {
+  const { user, profile, signOut, startTrial } = useAuth();
+  const { totalPoints = 0, currentStreak = 0 } = usePoints?.() ?? ({} as any);
+  const navigate = useNavigate();
+
   const [mobileOpen, setMobileOpen] = React.useState(false);
+  const [langOpen, setLangOpen] = React.useState(false);
+  const [acctOpen, setAcctOpen] = React.useState(false);
+  const [challOpen, setChallOpen] = React.useState(false);
 
-  // Exact or subpath match (e.g., /blog/* keeps Blog active)
-  const isActive = (path: string) => {
-    const p = location.pathname;
-    return p === path || (path !== '/' && p.startsWith(path + '/'));
-  };
+  const lang = React.useMemo(
+    () => (localStorage.getItem("md_lang") || "en").toUpperCase(),
+    []
+  );
 
-  // Bolt-like nav styling: soft text, subtle hover, clear active pill + underline
-  const linkClass = (path: string) =>
-    [
-      'group relative flex items-center space-x-1 px-3 py-2 rounded-md text-sm font-medium transition-colors',
-      isActive(path)
-        ? [
-            'text-gray-900 bg-white shadow-sm',
-            // underline now renders because we set content
-            "after:content-[''] after:absolute after:left-2 after:right-2 after:-bottom-1 after:h-0.5 after:rounded-full after:bg-amber-500",
-          ].join(' ')
-        : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100',
-    ].join(' ');
+  function setLang(next: string) {
+    localStorage.setItem("md_lang", next);
+    setLangOpen(false);
+    // optional: broadcast to your i18n context if you add one later
+    window.dispatchEvent(new CustomEvent("md:lang", { detail: next }));
+  }
 
-  const closeMobile = () => setMobileOpen(false);
+  const isTrial = profile?.subscription_status === "trial";
+  const trialEnds = profile?.trial_expires_at
+    ? new Date(profile.trial_expires_at).toLocaleDateString()
+    : null;
 
   return (
-    <div className="min-h-screen bg-background">
-      {/* Top nav — sticky, airy, Bolt-ish */}
-      <header className="sticky top-0 z-50 border-b bg-white/90 backdrop-blur supports-[backdrop-filter]:bg-white/70">
-        <div className="container mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex justify-between items-center h-16">
-            <div className="flex items-center gap-3 md:gap-8">
-              {/* Brand */}
-              <Link to="/" className="flex items-center gap-3" onClick={closeMobile}>
-                <img
-                  src="/Matt_decantednk.png"
-                  alt="Matt Decanted Logo"
-                  className="h-10 w-auto"
-                />
-                <div className="leading-tight">
-                  <h1 className="text-xl font-bold text-gray-900">Matt Decanted</h1>
-                  <span className="text-sm text-gray-500 -mt-1 block">Wine Education</span>
-                </div>
-              </Link>
+    <div className="min-h-screen bg-white">
+      {/* Top bar */}
+      <header className="sticky top-0 z-40 bg-white/90 backdrop-blur border-b">
+        <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 h-14 flex items-center justify-between">
+          {/* Left: brand + primary nav */}
+          <div className="flex items-center gap-3">
+            <button
+              className="lg:hidden inline-flex h-9 w-9 items-center justify-center rounded-md border hover:bg-gray-50"
+              aria-label="Open menu"
+              onClick={() => setMobileOpen(true)}
+            >
+              <Menu className="h-5 w-5" />
+            </button>
 
-              {/* Desktop nav */}
-              <nav className="hidden md:flex items-center space-x-2">
-                <Link to="/games/guess-what" className={linkClass('/games/guess-what')}>
-                  <Trophy className="h-4 w-4" />
-                  <span>Guess What</span>
-                </Link>
-                <Link to="/shorts" className={linkClass('/shorts')}>
-                  <Play className="h-4 w-4" />
-                  <span>Shorts</span>
-                </Link>
-                <Link to="/vocab" className={linkClass('/vocab')}>
-                  <BookOpen className="h-4 w-4" />
-                  <span>Vino Vocab</span>
-                </Link>
-                <Link to="/swirdle" className={linkClass('/swirdle')}>
-                  <Brain className="h-4 w-4" />
-                  <span>Swirdle</span>
-                </Link>
-                <Link
-                  to="/wine-options/multiplayer"
-                  className={linkClass('/wine-options/multiplayer')}
+            <Link to="/" className="font-semibold text-gray-900">
+              Matt Decanted
+            </Link>
+
+            <nav className="hidden lg:flex items-center gap-1 ml-2">
+              <NavItem to="/blog">Blog</NavItem>
+
+              {/* Challenges dropdown */}
+              <div className="relative">
+                <button
+                  onClick={() => setChallOpen((v) => !v)}
+                  onBlur={(e) => {
+                    // close when focus leaves
+                    if (!e.currentTarget.parentElement?.contains(e.relatedTarget as Node)) {
+                      setChallOpen(false);
+                    }
+                  }}
+                  className="px-3 py-2 text-sm font-medium rounded-md text-gray-700 hover:bg-gray-100 inline-flex items-center gap-1"
                 >
-                  <Joystick className="h-4 w-4" />
-                  <span>Wine Options</span>
-                </Link>
-                <Link to="/blog" className={linkClass('/blog')}>
-                  <Newspaper className="h-4 w-4" />
-                  <span>Blog</span>
-                </Link>
-                <Link to="/pricing" className={linkClass('/pricing')}>
-                  <CreditCard className="h-4 w-4" />
-                  <span>Pricing</span>
-                </Link>
-              </nav>
-            </div>
+                  Challenges <ChevronDown className="h-4 w-4" />
+                </button>
+                {challOpen && (
+                  <div className="absolute mt-1 w-48 rounded-md border bg-white shadow-lg p-1">
+                    <Link
+                      to="/swirdle"
+                      className="flex items-center gap-2 px-3 py-2 text-sm rounded hover:bg-gray-50"
+                      onClick={() => setChallOpen(false)}
+                    >
+                      <Brain className="h-4 w-4" /> Swirdle
+                    </Link>
+                    <Link
+                      to="/trial-quiz"
+                      className="flex items-center gap-2 px-3 py-2 text-sm rounded hover:bg-gray-50"
+                      onClick={() => setChallOpen(false)}
+                    >
+                      <BookOpen className="h-4 w-4" /> Daily Quiz
+                    </Link>
+                    <Link
+                      to="/vocab"
+                      className="flex items-center gap-2 px-3 py-2 text-sm rounded hover:bg-gray-50"
+                      onClick={() => setChallOpen(false)}
+                    >
+                      <BookOpen className="h-4 w-4" /> Vino Vocab
+                    </Link>
+                  </div>
+                )}
+              </div>
 
-            {/* Right-side: points/trial + account button */}
-            <div className="flex items-center gap-2">
-              {/* Mobile hamburger */}
+              <NavItem to="/shorts">Courses</NavItem>
+              {/* If you add a /community route later, change this link */}
+              <NavItem to="/shorts">Community</NavItem>
+              <NavItem to="/about">About</NavItem>
+              <NavItem to="/dashboard">Dashboard</NavItem>
+            </nav>
+          </div>
+
+          {/* Right: language + points + account */}
+          <div className="flex items-center gap-2">
+            {/* Trial badge */}
+            {isTrial && (
               <button
-                className="md:hidden inline-flex items-center justify-center p-2 rounded hover:bg-gray-100"
-                aria-label="Toggle menu"
-                onClick={() => setMobileOpen((v) => !v)}
+                onClick={() => startTrial(7)}
+                className="hidden md:inline-flex items-center text-xs font-semibold px-2 py-1 rounded-full bg-amber-100 text-amber-800"
+                title={trialEnds ? `Trial ends ${trialEnds}` : "7-day trial"}
               >
-                {mobileOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
+                Trial
               </button>
+            )}
 
-              {/* Points + Trial badges (keep!) */}
-              {user && (
-                <div className="hidden sm:flex items-center gap-2">
-                  <Badge variant="secondary" className="flex items-center gap-1">
-                    <Trophy className="h-3 w-3" />
-                    <span>{totalPoints} pts</span>
-                  </Badge>
-                  {isTrialUser && trialDaysLeft !== null && (
-                    <Badge variant="outline" className="text-xs">
-                      Trial: {trialDaysLeft}d left
-                    </Badge>
-                  )}
+            {/* Language */}
+            <div className="relative">
+              <button
+                onClick={() => setLangOpen((v) => !v)}
+                className="inline-flex items-center gap-1 px-2 py-1 text-sm rounded-md border hover:bg-gray-50"
+              >
+                <Globe className="h-4 w-4" />
+                {lang}
+                <ChevronDown className="h-4 w-4" />
+              </button>
+              {langOpen && (
+                <div
+                  className="absolute right-0 mt-1 w-28 rounded-md border bg-white shadow-lg p-1"
+                  onMouseLeave={() => setLangOpen(false)}
+                >
+                  {["EN", "FR", "DE", "ES"].map((code) => (
+                    <button
+                      key={code}
+                      onClick={() => setLang(code.toLowerCase())}
+                      className={`w-full text-left px-3 py-2 text-sm rounded hover:bg-gray-50 ${
+                        code === lang ? "font-semibold" : ""
+                      }`}
+                    >
+                      {code}
+                    </button>
+                  ))}
                 </div>
               )}
-
-              <Link to="/account" onClick={closeMobile}>
-                <Button
-                  variant={isActive('/account') ? 'default' : 'ghost'}
-                  size="sm"
-                  className="flex items-center gap-1"
-                >
-                  <User className="h-4 w-4" />
-                  <span className="hidden sm:inline">{user ? 'Account' : 'Sign In'}</span>
-                </Button>
-              </Link>
             </div>
+
+            {/* Points/streak */}
+            <div className="hidden sm:flex items-center gap-2 px-2 py-1 rounded-md bg-gray-100">
+              <span className="inline-flex items-center gap-1 text-sm">
+                <Trophy className="h-4 w-4 text-amber-600" />
+                {totalPoints ?? 0}
+              </span>
+              <span className="text-gray-300">|</span>
+              <span className="inline-flex items-center gap-1 text-sm">
+                <Flame className="h-4 w-4 text-orange-600" />
+                {currentStreak ?? 0}
+              </span>
+            </div>
+
+            {/* Account */}
+            {user ? (
+              <div className="relative">
+                <button
+                  onClick={() => setAcctOpen((v) => !v)}
+                  className="inline-flex items-center gap-2 px-2 py-1 rounded-md border hover:bg-gray-50"
+                >
+                  <div className="h-6 w-6 rounded-full bg-gray-200 flex items-center justify-center text-xs font-semibold">
+                    {profile?.full_name?.[0]?.toUpperCase() ??
+                      user.email?.[0]?.toUpperCase() ??
+                      "U"}
+                  </div>
+                  <ChevronDown className="h-4 w-4" />
+                </button>
+                {acctOpen && (
+                  <div
+                    className="absolute right-0 mt-1 w-52 rounded-md border bg-white shadow-lg p-1"
+                    onMouseLeave={() => setAcctOpen(false)}
+                  >
+                    <div className="px-3 py-2 text-xs text-gray-500">
+                      {profile?.full_name || user.email}
+                      {isTrial && trialEnds && (
+                        <div className="mt-1">
+                          <span className="inline-flex items-center text-amber-700 bg-amber-100 px-1.5 py-0.5 rounded">
+                            Trial until {trialEnds}
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                    <Link
+                      to="/dashboard"
+                      className="flex items-center gap-2 px-3 py-2 text-sm rounded hover:bg-gray-50"
+                      onClick={() => setAcctOpen(false)}
+                    >
+                      <LayoutDashboard className="h-4 w-4" /> Dashboard
+                    </Link>
+                    <Link
+                      to="/account"
+                      className="flex items-center gap-2 px-3 py-2 text-sm rounded hover:bg-gray-50"
+                      onClick={() => setAcctOpen(false)}
+                    >
+                      <User className="h-4 w-4" /> Account
+                    </Link>
+                    <button
+                      onClick={async () => {
+                        setAcctOpen(false);
+                        await signOut();
+                        navigate("/signin");
+                      }}
+                      className="w-full text-left flex items-center gap-2 px-3 py-2 text-sm rounded hover:bg-gray-50"
+                    >
+                      <LogOut className="h-4 w-4" /> Sign out
+                    </button>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <Link
+                to="/signin"
+                className="inline-flex items-center px-3 py-1.5 rounded-md bg-gray-900 text-white text-sm hover:bg-black"
+              >
+                Sign in
+              </Link>
+            )}
           </div>
         </div>
 
-        {/* Mobile dropdown */}
+        {/* Mobile drawer */}
         {mobileOpen && (
-          <div className="md:hidden border-t bg-white/95 backdrop-blur">
-            <nav className="container mx-auto px-4 sm:px-6 lg:px-8 py-3 flex flex-col gap-2">
-              {user && (
-                <div className="flex items-center gap-2 pb-2">
-                  <Badge variant="secondary" className="flex items-center gap-1">
-                    <Trophy className="h-3 w-3" />
-                    <span>{totalPoints} pts</span>
-                  </Badge>
-                  {isTrialUser && trialDaysLeft !== null && (
-                    <Badge variant="outline" className="text-xs">
-                      Trial: {trialDaysLeft}d left
-                    </Badge>
-                  )}
-                </div>
-              )}
+          <div className="lg:hidden border-t">
+            <div className="px-4 py-3 flex items-center justify-between">
+              <span className="font-semibold">Menu</span>
+              <button
+                onClick={() => setMobileOpen(false)}
+                className="inline-flex h-9 w-9 items-center justify-center rounded-md border hover:bg-gray-50"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            <div className="px-2 pb-3 space-y-1">
+              <NavLink
+                to="/blog"
+                onClick={() => setMobileOpen(false)}
+                className="block px-3 py-2 rounded-md text-gray-700 hover:bg-gray-100"
+              >
+                Blog
+              </NavLink>
 
-              <Link to="/games/guess-what" className={linkClass('/games/guess-what')} onClick={closeMobile}>
-                <Trophy className="h-4 w-4" />
-                <span>Guess What</span>
-              </Link>
-              <Link to="/shorts" className={linkClass('/shorts')} onClick={closeMobile}>
-                <Play className="h-4 w-4" />
-                <span>Shorts</span>
-              </Link>
-              <Link to="/vocab" className={linkClass('/vocab')} onClick={closeMobile}>
-                <BookOpen className="h-4 w-4" />
-                <span>Vino Vocab</span>
-              </Link>
-              <Link to="/swirdle" className={linkClass('/swirdle')} onClick={closeMobile}>
-                <Brain className="h-4 w-4" />
-                <span>Swirdle</span>
+              <div className="px-3 py-2 text-xs uppercase tracking-wide text-gray-400">
+                Challenges
+              </div>
+              <Link
+                to="/swirdle"
+                onClick={() => setMobileOpen(false)}
+                className="block px-3 py-2 rounded-md hover:bg-gray-100"
+              >
+                Swirdle
               </Link>
               <Link
-                to="/wine-options/multiplayer"
-                className={linkClass('/wine-options/multiplayer')}
-                onClick={closeMobile}
+                to="/trial-quiz"
+                onClick={() => setMobileOpen(false)}
+                className="block px-3 py-2 rounded-md hover:bg-gray-100"
               >
-                <Joystick className="h-4 w-4" />
-                <span>Wine Options</span>
+                Daily Quiz
               </Link>
-              <Link to="/blog" className={linkClass('/blog')} onClick={closeMobile}>
-                <Newspaper className="h-4 w-4" />
-                <span>Blog</span>
+              <Link
+                to="/vocab"
+                onClick={() => setMobileOpen(false)}
+                className="block px-3 py-2 rounded-md hover:bg-gray-100"
+              >
+                Vino Vocab
               </Link>
-              <Link to="/pricing" className={linkClass('/pricing')} onClick={closeMobile}>
-                <CreditCard className="h-4 w-4" />
-                <span>Pricing</span>
+
+              <Link
+                to="/shorts"
+                onClick={() => setMobileOpen(false)}
+                className="block px-3 py-2 rounded-md hover:bg-gray-100"
+              >
+                Courses
               </Link>
-            </nav>
+              <Link
+                to="/shorts"
+                onClick={() => setMobileOpen(false)}
+                className="block px-3 py-2 rounded-md hover:bg-gray-100"
+              >
+                Community
+              </Link>
+              <Link
+                to="/about"
+                onClick={() => setMobileOpen(false)}
+                className="block px-3 py-2 rounded-md hover:bg-gray-100"
+              >
+                About
+              </Link>
+              <Link
+                to="/dashboard"
+                onClick={() => setMobileOpen(false)}
+                className="block px-3 py-2 rounded-md hover:bg-gray-100"
+              >
+                Dashboard
+              </Link>
+
+              {/* Points & streak */}
+              <div className="mt-3 px-3 py-2 rounded-md bg-gray-50 flex items-center justify-between">
+                <span className="inline-flex items-center gap-1 text-sm">
+                  <Trophy className="h-4 w-4 text-amber-600" /> {totalPoints ?? 0}
+                </span>
+                <span className="inline-flex items-center gap-1 text-sm">
+                  <Flame className="h-4 w-4 text-orange-600" /> {currentStreak ?? 0}
+                </span>
+              </div>
+
+              {/* Auth shortcuts */}
+              <div className="px-3 py-2">
+                {user ? (
+                  <div className="flex gap-2">
+                    <Link
+                      to="/account"
+                      onClick={() => setMobileOpen(false)}
+                      className="flex-1 text-center px-3 py-2 rounded border hover:bg-gray-50"
+                    >
+                      Account
+                    </Link>
+                    <button
+                      onClick={async () => {
+                        setMobileOpen(false);
+                        await signOut();
+                        navigate("/signin");
+                      }}
+                      className="flex-1 text-center px-3 py-2 rounded bg-gray-900 text-white"
+                    >
+                      Sign out
+                    </button>
+                  </div>
+                ) : (
+                  <Link
+                    to="/signin"
+                    onClick={() => setMobileOpen(false)}
+                    className="block text-center px-3 py-2 rounded bg-gray-900 text-white"
+                  >
+                    Sign in
+                  </Link>
+                )}
+              </div>
+            </div>
           </div>
         )}
       </header>
 
-      <main className="container mx-auto px-4 sm:px-6 lg:px-8 py-8">{children}</main>
+      {/* Page content */}
+      <main>{children}</main>
+
+      {/* Footer (simple) */}
+      <footer className="border-t mt-12">
+        <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-8 text-sm text-gray-500 flex items-center justify-between">
+          <div>© {new Date().getFullYear()} Matt Decanted</div>
+          <div className="flex items-center gap-3">
+            <Link to="/about" className="hover:underline">About</Link>
+            <Link to="/pricing" className="hover:underline">Pricing</Link>
+            <a href="mailto:hello@matdecanted.example" className="hover:underline">Contact</a>
+          </div>
+        </div>
+      </footer>
     </div>
   );
 }
