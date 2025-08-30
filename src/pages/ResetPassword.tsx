@@ -1,210 +1,191 @@
+// src/pages/ResetPassword.tsx
 import * as React from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/lib/supabase";
-import { Lock, Mail, ShieldCheck } from "lucide-react";
 
-function parseHash(hash: string) {
-  const h = new URLSearchParams(hash.startsWith("#") ? hash.slice(1) : hash);
-  return {
-    access_token: h.get("access_token"),
-    refresh_token: h.get("refresh_token"),
-    type: h.get("type"), // recovery | magiclink | signup
-    error: h.get("error"),
-    error_description: h.get("error_description"),
-  };
-}
+type Stage = "checking" | "ready" | "saving" | "done" | "error";
 
 export default function ResetPassword() {
-  const navigate = useNavigate();
-  const [phase, setPhase] = React.useState<"checking" | "ready" | "error" | "saving" | "done">("checking");
-  const [note, setNote] = React.useState<string>("Checking link…");
-  const [error, setError] = React.useState<string | null>(null);
+  const nav = useNavigate();
+  const [stage, setStage] = React.useState<Stage>("checking");
+  const [err, setErr] = React.useState<string>("");
+  const [pw1, setPw1] = React.useState("");
+  const [pw2, setPw2] = React.useState("");
 
-  const [password, setPassword] = React.useState("");
-  const [confirm, setConfirm] = React.useState("");
-
-  const [resendEmail, setResendEmail] = React.useState("");
-  const [resendMsg, setResendMsg] = React.useState<string | null>(null);
-  const [resendBusy, setResendBusy] = React.useState(false);
-
+  // Parse both hash fragment and query params robustly
   React.useEffect(() => {
     (async () => {
       try {
-        // 1) Hash tokens (most common for Supabase emails)
-        const { access_token, refresh_token, error, error_description } = parseHash(window.location.hash);
-        if (error) throw new Error(error_description || error);
+        // 1) Try access_token / refresh_token in the hash
+        const hash = window.location.hash.startsWith("#")
+          ? new URLSearchParams(window.location.hash.slice(1))
+          : new URLSearchParams();
+
+        const access_token = hash.get("access_token");
+        const refresh_token = hash.get("refresh_token");
+        const type = (hash.get("type") || "").toLowerCase(); // "recovery" | "magiclink" | ...
 
         if (access_token && refresh_token) {
-          const { error: sessErr } = await supabase.auth.setSession({ access_token, refresh_token });
-          if (sessErr) throw sessErr;
-          setPhase("ready");
-          setNote("Link verified. Set a new password.");
-          return;
+          // Tell supabase to use this session
+          const { error } = await supabase.auth.setSession({ access_token, refresh_token });
+          if (error) throw error;
+
+          // If this is a recovery link => show password form.
+          // If it's a magic link, you could just route to /dashboard instead.
+          if (type === "recovery") {
+            setStage("ready");
+            return;
+          } else {
+            // magic link: you're signed in already
+            nav("/dashboard", { replace: true });
+            return;
+          }
         }
 
-        // 2) PKCE style `?code=...`
-        const url = new URL(window.location.href);
-        const code = url.searchParams.get("code");
+        // 2) Try `?code=` (OTP/verify-style links)
+        const query = new URLSearchParams(window.location.search);
+        const code = query.get("code");
         if (code) {
-          const { error: exchErr } = await supabase.auth.exchangeCodeForSession(code);
-          if (exchErr) throw exchErr;
-          setPhase("ready");
-          setNote("Link verified. Set a new password.");
+          const { error } = await supabase.auth.exchangeCodeForSession(code);
+          if (error) throw error;
+          // For password recovery links using ?code=, show the form too
+          setStage("ready");
           return;
         }
 
-        // If already signed in, still allow reset
-        const { data } = await supabase.auth.getUser();
-        if (data?.user) {
-          setPhase("ready");
-          setNote("Signed in. Set a new password.");
-          return;
-        }
-
-        // No tokens & not signed in -> show resend UI
-        setPhase("error");
-        setError("This link is missing or expired.");
+        // Nothing usable found
+        setErr("Invalid or missing token in the URL. Please request a new reset link.");
+        setStage("error");
       } catch (e: any) {
-        setPhase("error");
-        setError(e?.message ?? "Link invalid or expired.");
+        setErr(e?.message || "Could not validate link.");
+        setStage("error");
       }
     })();
-  }, []);
+  }, [nav]);
 
-  async function saveNewPassword(e: React.FormEvent) {
+  async function submitNewPassword(e: React.FormEvent) {
     e.preventDefault();
-    if (password.length < 8) return setError("Password must be at least 8 characters.");
-    if (password !== confirm) return setError("Passwords do not match.");
-
-    setError(null);
-    setPhase("saving");
-    const { error: upErr } = await supabase.auth.updateUser({ password });
-    if (upErr) {
-      setPhase("ready");
-      setError(upErr.message);
+    if (pw1.length < 8) {
+      setErr("Password must be at least 8 characters.");
       return;
     }
-    setPhase("done");
-    setNote("Password updated. Redirecting…");
-    setTimeout(() => navigate("/dashboard"), 900);
-  }
-
-  async function resend(e: React.FormEvent) {
-    e.preventDefault();
-    setResendMsg(null);
-    setResendBusy(true);
+    if (pw1 !== pw2) {
+      setErr("Passwords do not match.");
+      return;
+    }
+    setErr("");
+    setStage("saving");
     try {
-      const { error: rerr } = await supabase.auth.resetPasswordForEmail(resendEmail.trim(), {
-        redirectTo: `${window.location.origin}/reset-password`,
-      });
-      if (rerr) throw rerr;
-      setResendMsg("Email sent. Check your inbox for a fresh reset link.");
+      const { error } = await supabase.auth.updateUser({ password: pw1 });
+      if (error) throw error;
+      setStage("done");
     } catch (e: any) {
-      setResendMsg(e?.message ?? "Could not send reset email.");
-    } finally {
-      setResendBusy(false);
+      setErr(e?.message || "Failed to update password.");
+      setStage("ready");
     }
   }
 
-  // ---- UI ----
-  if (phase === "checking") {
+  if (stage === "checking") {
     return (
-      <div className="min-h-[60vh] grid place-items-center p-6 text-center">
-        <div>
-          <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-blue-50 text-brand-blue">
-            <ShieldCheck className="h-6 w-6" />
-          </div>
-          <h1 className="text-2xl font-bold">Reset Password</h1>
-          <p className="text-gray-600">{note}</p>
+      <main className="min-h-[60vh] flex items-center justify-center p-6">
+        <div className="w-full max-w-md bg-white rounded-xl border p-6 text-center shadow-sm">
+          <h1 className="text-xl font-semibold mb-2">Reset Password</h1>
+          <p className="text-gray-600">Checking link…</p>
         </div>
-      </div>
+      </main>
     );
   }
 
-  if (phase === "error") {
+  if (stage === "error") {
     return (
-      <div className="min-h-[60vh] grid place-items-center p-6">
-        <div className="w-full max-w-sm border rounded-2xl bg-white shadow p-6 space-y-4">
-          <h1 className="text-xl font-semibold">Reset Password</h1>
-          <p className="text-red-600 text-sm">{error}</p>
-          <form onSubmit={resend} className="space-y-3">
-            <label className="block">
-              <span className="text-sm text-gray-700">Email</span>
-              <div className="mt-1 flex items-center gap-2 rounded-lg border px-3">
-                <Mail className="h-4 w-4 text-gray-400" />
-                <input
-                  type="email"
-                  className="w-full py-2 outline-none"
-                  placeholder="you@example.com"
-                  value={resendEmail}
-                  onChange={(e) => setResendEmail(e.target.value)}
-                  required
-                />
-              </div>
-            </label>
+      <main className="min-h-[60vh] flex items-center justify-center p-6">
+        <div className="w-full max-w-md bg-white rounded-xl border p-6 shadow-sm">
+          <h1 className="text-xl font-semibold mb-3">Reset Password</h1>
+          <div className="text-sm text-red-600 mb-4">{err}</div>
+          <div className="flex gap-2">
             <button
-              className="w-full rounded-lg bg-brand-blue text-white py-2 font-semibold disabled:opacity-60"
-              disabled={resendBusy}
+              onClick={() => nav("/signin")}
+              className="px-4 py-2 rounded-md bg-blue-600 text-white"
             >
-              {resendBusy ? "Sending…" : "Send new reset link"}
+              Go to Sign in
             </button>
-            {resendMsg && <p className="text-sm text-gray-600">{resendMsg}</p>}
-          </form>
+            <button
+              onClick={() => nav("/activate")}
+              className="px-4 py-2 rounded-md border"
+            >
+              Send a new magic link
+            </button>
+          </div>
         </div>
-      </div>
+      </main>
     );
   }
 
-  // ready / saving / done
+  if (stage === "done") {
+    return (
+      <main className="min-h-[60vh] flex items-center justify-center p-6">
+        <div className="w-full max-w-md bg-white rounded-xl border p-6 text-center shadow-sm">
+          <h1 className="text-xl font-semibold mb-2">Password updated</h1>
+          <p className="text-gray-600 mb-4">You’re all set — sign in with your new password.</p>
+          <button onClick={() => nav("/signin")} className="px-4 py-2 rounded-md bg-blue-600 text-white">
+            Continue to Sign in
+          </button>
+        </div>
+      </main>
+    );
+  }
+
+  // stage === "ready" or "saving"
   return (
-    <div className="min-h-[60vh] grid place-items-center p-6">
-      <form
-        onSubmit={saveNewPassword}
-        className="w-full max-w-sm border rounded-2xl bg-white shadow p-6 space-y-4"
-      >
-        <h1 className="text-xl font-semibold">Reset Password</h1>
-        <p className="text-sm text-gray-600">{note}</p>
+    <main className="min-h-[60vh] flex items-center justify-center p-6">
+      <form onSubmit={submitNewPassword} className="w-full max-w-md bg-white rounded-xl border p-6 shadow-sm">
+        <h1 className="text-xl font-semibold mb-2">Choose a new password</h1>
+        <p className="text-sm text-gray-600 mb-4">
+          Your reset link has been verified. Enter your new password below.
+        </p>
 
-        {error && <div className="text-sm p-3 rounded-lg bg-red-50 text-red-700 border border-red-200">{error}</div>}
+        {err && <div className="text-sm text-red-600 mb-3">{err}</div>}
 
-        <label className="block">
+        <label className="block mb-3">
           <span className="text-sm text-gray-700">New password</span>
-          <div className="mt-1 flex items-center gap-2 rounded-lg border px-3">
-            <Lock className="h-4 w-4 text-gray-400" />
-            <input
-              type="password"
-              className="w-full py-2 outline-none"
-              minLength={8}
-              required
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-            />
-          </div>
+          <input
+            type="password"
+            className="mt-1 w-full border rounded px-3 py-2"
+            value={pw1}
+            onChange={(e) => setPw1(e.target.value)}
+            autoComplete="new-password"
+            required
+          />
         </label>
 
-        <label className="block">
+        <label className="block mb-4">
           <span className="text-sm text-gray-700">Confirm password</span>
-          <div className="mt-1 flex items-center gap-2 rounded-lg border px-3">
-            <Lock className="h-4 w-4 text-gray-400" />
-            <input
-              type="password"
-              className="w-full py-2 outline-none"
-              minLength={8}
-              required
-              value={confirm}
-              onChange={(e) => setConfirm(e.target.value)}
-            />
-          </div>
+          <input
+            type="password"
+            className="mt-1 w-full border rounded px-3 py-2"
+            value={pw2}
+            onChange={(e) => setPw2(e.target.value)}
+            autoComplete="new-password"
+            required
+          />
         </label>
 
         <button
           type="submit"
-          className="w-full rounded-lg bg-brand-blue text-white py-2 font-semibold disabled:opacity-60"
-          disabled={phase === "saving"}
+          disabled={stage === "saving"}
+          className="w-full bg-blue-600 hover:bg-blue-700 text-white py-2 rounded disabled:opacity-60"
         >
-          {phase === "saving" ? "Saving…" : "Update password"}
+          {stage === "saving" ? "Saving…" : "Update password"}
+        </button>
+
+        <button
+          type="button"
+          onClick={() => nav("/signin")}
+          className="w-full mt-3 text-sm text-gray-700 underline"
+        >
+          Back to sign in
         </button>
       </form>
-    </div>
+    </main>
   );
 }
