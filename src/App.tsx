@@ -45,6 +45,9 @@ import WineVocabularyQuiz from '@/pages/blog/WineVocabularyQuiz';
 
 import { supabase } from '@/lib/supabase';
 
+// ✅ NEW: debug page
+import DebugAuth from '@/pages/DebugAuth';
+
 const FN_SUBMIT = '/.netlify/functions/trial-quiz-attempt';
 const PENDING_KEY = 'md_trial_pending';
 
@@ -168,6 +171,9 @@ function App() {
                   <Route path="/sign-in" element={<Navigate to="/signin" replace />} />
                   <Route path="/activate" element={<Activate />} />
                   <Route path="/reset-password" element={<ResetPassword />} />
+
+                  {/* ✅ Debug (public) */}
+                  <Route path="/debug/auth" element={<DebugAuth />} />
 
                   {/* Blog */}
                   <Route path="/blog" element={<BlogIndex />} />
