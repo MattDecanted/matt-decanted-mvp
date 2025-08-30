@@ -1,0 +1,39 @@
+/* Tailwind layers */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* === Design tokens & base === */
+@layer base {
+  :root{
+    /* swap these to match your brand */
+    --font-sans: "Inter", system-ui, -apple-system, Segoe UI, Roboto, "Helvetica Neue", Arial, "Noto Sans", "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol";
+    --brand: 31 64 198;      /* #1F40C6 */
+    --accent: 255 149 0;     /* #FF9500 (thin top bar) */
+    --card: 255 255 255;     /* #FFFFFF */
+    --line: 229 231 235;     /* #E5E7EB */
+  }
+
+  html, body {
+    @apply bg-white text-gray-900 font-sans;
+  }
+}
+
+/* === Reusable helpers (use these in Layout/pages) === */
+.top-accent { height: 3px; background: rgb(var(--accent)); }
+
+.site-header { @apply sticky top-0 z-40 bg-white/95 backdrop-blur border-b border-[color:var(--line)]; }
+.site-nav a { @apply text-sm text-gray-700 hover:text-brand font-medium; }
+.site-nav a.active { @apply text-brand; }
+
+.btn-primary { @apply inline-flex items-center rounded-lg bg-brand text-white px-4 py-2 font-semibold shadow-[0_4px_14px_rgba(0,0,0,.06)] hover:opacity-95; }
+.btn-ghost   { @apply inline-flex items-center rounded-lg border border-gray-200 px-4 py-2 text-gray-700 hover:bg-gray-50; }
+
+.card { @apply rounded-2xl bg-[rgb(var(--card))] shadow-[0_10px_24px_rgba(0,0,0,.08)] border border-[color:var(--line)]; }
+.section { @apply py-12 sm:py-16; }
+
+/* Map brand color token for Tailwind classnames like text-brand/bg-brand */
+@layer utilities {
+  .text-brand { color: rgb(var(--brand)); }
+  .bg-brand { background-color: rgb(var(--brand)); }
+}
