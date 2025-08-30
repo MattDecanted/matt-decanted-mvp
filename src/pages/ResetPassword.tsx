@@ -1,166 +1,107 @@
-// src/pages/ResetPassword.tsx
-import React from 'react';
-import { useNavigate, useLocation } from 'react-router-dom';
-import { supabase } from '@/lib/supabase';
+import React, { useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { supabase, setSessionFromHash } from '@/lib/supabase';
 
 export default function ResetPassword() {
-  const nav = useNavigate();
-  const location = useLocation();
+  const [ready, setReady] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [password, setPassword] = useState('');
+  const [confirm, setConfirm] = useState('');
+  const [saving, setSaving] = useState(false);
+  const navigate = useNavigate();
 
-  const [phase, setPhase] =
-    React.useState<'checking' | 'ready' | 'error'>('checking');
-  const [error, setError] = React.useState<string | null>(null);
-  const [pw1, setPw1] = React.useState('');
-  const [pw2, setPw2] = React.useState('');
-  const [busy, setBusy] = React.useState(false);
-
-  // Bridge hash -> session here too (in case the app-level bridge hasn’t run yet)
-  React.useEffect(() => {
+  useEffect(() => {
     (async () => {
       try {
-        setPhase('checking');
-
-        // 1) If hash has tokens, use them
-        const hash = location.hash?.startsWith('#')
-          ? new URLSearchParams(location.hash.slice(1))
-          : null;
-        const at = hash?.get('access_token');
-        const rt = hash?.get('refresh_token');
-
-        if (at && rt) {
-          const { error } = await supabase.auth.setSession({
-            access_token: at,
-            refresh_token: rt,
-          });
-          // Clean the URL (keep path+query; drop hash)
-          window.history.replaceState(null, '', location.pathname + location.search);
-          if (error) throw error;
+        // If the user landed here directly with a hash, handle it
+        if (window.location.hash.includes('access_token')) {
+          await setSessionFromHash();
+          history.replaceState(null, '', window.location.pathname);
         }
 
-        // 2) Confirm we have a session user (recovery links create a temp session)
-        const { data, error: getErr } = await supabase.auth.getSession();
-        if (getErr) throw getErr;
-        if (!data.session?.user) {
+        const { data, error } = await supabase.auth.getSession();
+        if (error) throw error;
+        if (!data?.session) {
           setError('This reset link is invalid or has expired. Please request a new one.');
-          setPhase('error');
-          return;
         }
-
-        setPhase('ready');
       } catch (e: any) {
-        console.warn('Reset bridge failed:', e?.message || e);
-        setError('This reset link is invalid or has expired. Please request a new one.');
-        setPhase('error');
+        setError(e?.message || 'Unable to validate the reset link.');
+      } finally {
+        setReady(true);
       }
     })();
-  }, [location.pathname, location.search, location.hash]);
+  }, []);
 
-  async function submit(e: React.FormEvent) {
+  async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (pw1.length < 8) {
-      setError('Password must be at least 8 characters.');
-      return;
-    }
-    if (pw1 !== pw2) {
-      setError('Passwords do not match.');
-      return;
-    }
-    setBusy(true);
     setError(null);
-    try {
-      const { error } = await supabase.auth.updateUser({ password: pw1 });
-      if (error) throw error;
-
-      // Optional: sign them out and force a fresh login (or send to dashboard)
-      // await supabase.auth.signOut();
-      nav('/dashboard', { replace: true });
-    } catch (e: any) {
-      setError(e?.message || 'Failed to set new password.');
-    } finally {
-      setBusy(false);
-    }
+    if (password.length < 8) return setError('Password must be at least 8 characters.');
+    if (password !== confirm) return setError('Passwords do not match.');
+    setSaving(true);
+    const { error } = await supabase.auth.updateUser({ password });
+    setSaving(false);
+    if (error) return setError(error.message);
+    navigate('/signin?reset=success', { replace: true });
   }
 
-  if (phase === 'checking') {
+  if (!ready) {
     return (
-      <div className="min-h-[50vh] flex items-center justify-center">
-        <div className="rounded-xl border p-6 text-center max-w-md w-full">
-          <h1 className="text-lg font-semibold mb-2">Reset Password</h1>
-          <p className="text-sm text-gray-600">Checking link…</p>
+      <div className="min-h-[60vh] flex items-center justify-center p-6">
+        <div className="rounded-xl border bg-white shadow p-6 text-center">
+          <div className="font-semibold mb-1">Reset Password</div>
+          <div className="text-sm text-gray-500">Checking link…</div>
         </div>
       </div>
     );
   }
 
-  if (phase === 'error') {
+  if (error) {
     return (
-      <div className="min-h-[50vh] flex items-center justify-center">
-        <div className="rounded-xl border p-6 text-center max-w-md w-full">
-          <h1 className="text-lg font-semibold mb-2">Reset Password</h1>
-          <p className="text-sm text-red-600 mb-4">{error}</p>
-          <button
-            onClick={() => nav('/signin')}
-            className="px-4 py-2 rounded bg-blue-600 text-white"
-          >
-            Back to sign in
-          </button>
+      <div className="min-h-[60vh] flex items-center justify-center p-6">
+        <div className="rounded-xl border bg-white shadow p-6 text-center max-w-md">
+          <div className="font-semibold mb-2">Reset link problem</div>
+          <div className="text-sm text-red-600 mb-4">{error}</div>
+          <a className="inline-flex items-center rounded-lg bg-brand-orange text-white px-4 py-2"
+             href="/activate">
+            Send me a fresh link
+          </a>
         </div>
       </div>
     );
   }
 
-  // phase === 'ready'
   return (
-    <div className="min-h-[60vh] flex items-center justify-center px-4">
-      <form
-        onSubmit={submit}
-        className="w-full max-w-md rounded-xl border p-6 bg-white space-y-4"
-      >
-        <h1 className="text-xl font-bold">Set a new password</h1>
-        {error && (
-          <div className="text-sm p-3 rounded bg-red-50 text-red-700 border border-red-200">
-            {error}
-          </div>
-        )}
-
+    <div className="min-h-[60vh] flex items-center justify-center p-6">
+      <form onSubmit={onSubmit} className="w-full max-w-sm rounded-xl border bg-white shadow p-6 space-y-4">
+        <h1 className="text-xl font-bold">Choose a new password</h1>
         <label className="block">
           <span className="text-sm text-gray-700">New password</span>
           <input
             type="password"
-            className="mt-1 w-full border rounded px-3 py-2"
-            value={pw1}
-            onChange={(e) => setPw1(e.target.value)}
+            className="mt-1 w-full rounded border px-3 py-2"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
             autoComplete="new-password"
             required
           />
         </label>
-
         <label className="block">
-          <span className="text-sm text-gray-700">Confirm new password</span>
+          <span className="text-sm text-gray-700">Confirm password</span>
           <input
             type="password"
-            className="mt-1 w-full border rounded px-3 py-2"
-            value={pw2}
-            onChange={(e) => setPw2(e.target.value)}
+            className="mt-1 w-full rounded border px-3 py-2"
+            value={confirm}
+            onChange={(e) => setConfirm(e.target.value)}
             autoComplete="new-password"
             required
           />
         </label>
-
+        {error && <div className="text-sm text-red-600">{error}</div>}
         <button
-          type="submit"
-          disabled={busy}
-          className="w-full bg-blue-600 hover:bg-blue-700 text-white py-2 rounded disabled:opacity-60"
+          className="w-full rounded bg-brand-blue text-white py-2 disabled:opacity-60"
+          disabled={saving}
         >
-          {busy ? 'Saving…' : 'Save password'}
-        </button>
-
-        <button
-          type="button"
-          onClick={() => nav('/signin')}
-          className="w-full text-sm text-gray-700 underline"
-        >
-          Back to sign in
+          {saving ? 'Saving…' : 'Update password'}
         </button>
       </form>
     </div>
