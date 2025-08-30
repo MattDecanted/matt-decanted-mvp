@@ -3,13 +3,13 @@ import { supabase } from "@/lib/supabase";
 
 /** Unified Profile we return to the app */
 type Profile = {
-  id: string; // always the auth user id
+  id: string;
   full_name?: string | null;
   avatar_url?: string | null;
   role?: "admin" | "premium" | "basic" | "subscriber" | "learner" | string | null;
   subscription_tier?: "free" | "basic" | "premium" | null;
   subscription_status?: "trial" | "active" | "paused" | "canceled" | "inactive" | null;
-  trial_expires_at?: string | null; // ISO date if present
+  trial_expires_at?: string | null;
 };
 
 type AuthContextType = {
@@ -17,10 +17,10 @@ type AuthContextType = {
   profile: Profile | null;
   loading: boolean;
 
-  // OLD API (kept for compatibility)
+  // OLD alias (kept)
   signIn: (email: string, password: string) => Promise<{ error?: string }>;
 
-  // NEW helpers
+  // New helpers
   signInWithPassword: (email: string, password: string) => Promise<{ error?: string }>;
   signUpWithPassword: (email: string, password: string, name?: string) => Promise<{ error?: string }>;
   signInWithMagic: (email: string) => Promise<{ error?: string }>;
@@ -35,18 +35,30 @@ type AuthContextType = {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
+// -------- Redirects / URLs --------
 const SITE_URL = (import.meta as any).env?.VITE_SITE_URL || window.location.origin;
-const MAGIC_REDIRECT = `${SITE_URL}/dashboard`;      // after magic-link login / oauth
-const RESET_REDIRECT = `${SITE_URL}/reset-password`; // password recovery flow
+const MAGIC_REDIRECT = `${SITE_URL}/dashboard`;      // where magic-link / oauth lands
+const RESET_REDIRECT = `${SITE_URL}/reset-password`; // where password-recovery lands
+
+// Parse tokens from hash (magic link style)
+function parseHash(hash: string) {
+  const qs = new URLSearchParams(hash.startsWith("#") ? hash.slice(1) : hash);
+  return {
+    access_token: qs.get("access_token"),
+    refresh_token: qs.get("refresh_token"),
+    error: qs.get("error"),
+    error_description: qs.get("error_description"),
+    type: qs.get("type"),
+  };
+}
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<any | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
   const [loading, setLoading] = useState(true);
 
-  /** Ensure member_profiles row exists; safe to call multiple times */
+  /** Ensure member_profiles row exists (idempotent) */
   const ensureProfileRow = useCallback(async (userId: string) => {
-    // Try to find a member_profiles row first
     const { data: mp, error } = await supabase
       .from("member_profiles")
       .select("user_id")
@@ -63,18 +75,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         },
         { onConflict: "user_id" }
       );
-      // Best-effort trial start (idempotent server function)
-      try {
-        await supabase.rpc("vv_start_trial", { p_days: 7 });
-      } catch {
-        /* non-fatal */
-      }
+      // best-effort start trial
+      try { await supabase.rpc("vv_start_trial", { p_days: 7 }); } catch {}
     }
   }, []);
 
-  /** Build our unified Profile from DB */
+  /** Build unified Profile */
   const hydrateProfile = useCallback(async (userId: string) => {
-    // Load member_profiles first (preferred)
     const [{ data: mp }, { data: adminRow }] = await Promise.all([
       supabase
         .from("member_profiles")
@@ -97,7 +104,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         trial_expires_at: (mp as any)?.trial_expires_at ?? null,
       };
     } else {
-      // Fallback to old `profiles` table shape if present
       const { data: p } = await supabase
         .from("profiles")
         .select("id, full_name, avatar_url, role, subscription_status")
@@ -117,7 +123,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
     }
 
-    // Admin override
     if (adminRow?.user_id) {
       next = next ?? { id: userId };
       next.role = "admin";
@@ -126,13 +131,42 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setProfile(next);
   }, []);
 
+  /** Claim session from URL (magic-link or PKCE code) */
+  const claimSessionFromUrl = useCallback(async () => {
+    // 1) Fragment tokens (#access_token=…&refresh_token=…)
+    const { access_token, refresh_token, error, error_description } = parseHash(window.location.hash);
+    if (error) throw new Error(error_description || error);
+    if (access_token && refresh_token) {
+      const { error: setErr } = await supabase.auth.setSession({ access_token, refresh_token });
+      if (setErr) throw setErr;
+      // clean hash
+      window.history.replaceState({}, "", window.location.pathname + window.location.search);
+      return true;
+    }
+    // 2) Code param (?code=…) for PKCE flows
+    const url = new URL(window.location.href);
+    const code = url.searchParams.get("code");
+    if (code) {
+      const { error: exErr } = await supabase.auth.exchangeCodeForSession(code);
+      if (exErr) throw exErr;
+      url.searchParams.delete("code");
+      window.history.replaceState({}, "", url.pathname + (url.search ? `?${url.searchParams}` : ""));
+      return true;
+    }
+    return false;
+  }, []);
+
   /** Load session + profile on boot */
   const loadSession = useCallback(async () => {
     setLoading(true);
     try {
+      // IMPORTANT: try to claim a session first (handles magic link & reset)
+      try { await claimSessionFromUrl(); } catch { /* non-fatal */ }
+
       const { data } = await supabase.auth.getSession();
       const sessUser = data?.session?.user ?? null;
       setUser(sessUser);
+
       if (sessUser?.id) {
         await ensureProfileRow(sessUser.id);
         await hydrateProfile(sessUser.id);
@@ -142,11 +176,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     } finally {
       setLoading(false);
     }
-  }, [ensureProfileRow, hydrateProfile]);
+  }, [claimSessionFromUrl, ensureProfileRow, hydrateProfile]);
 
   useEffect(() => {
-    loadSession();
-    // subscribe to auth state (handles magic-link + password recovery completion)
+    void loadSession();
+
     const { data: sub } = supabase.auth.onAuthStateChange(async (_event, session) => {
       const nextUser = session?.user ?? null;
       setUser(nextUser);
@@ -158,6 +192,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
       setLoading(false);
     });
+
     return () => sub?.subscription?.unsubscribe();
   }, [loadSession, ensureProfileRow, hydrateProfile]);
 
@@ -173,7 +208,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return {};
   };
 
-  // Backwards compat alias
+  // Back-compat alias
   const signIn = signInWithPassword;
 
   const signUpWithPassword = async (email: string, password: string, name?: string) => {
