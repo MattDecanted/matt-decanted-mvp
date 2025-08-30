@@ -1,5 +1,5 @@
 // src/lib/supabase.ts
-import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 
 /**
  * Database types aligned to your SQL schema.
@@ -179,7 +179,7 @@ export type Database = {
       quiz_bank: {
         Row: {
           id: string;
-          kind: "short" | "guess_what";
+          kind: 'short' | 'guess_what';
           ref_id: string;
           question: string;
           options: string[];
@@ -187,7 +187,7 @@ export type Database = {
           points_award: number;
         };
         Insert: {
-          kind: "short" | "guess_what";
+          kind: 'short' | 'guess_what';
           ref_id: string;
           question: string;
           options: string[];
@@ -208,31 +208,35 @@ export type Database = {
   };
 };
 
-/** -------- Env handling (Vite + Netlify) --------
- * Use VITE_*-prefixed vars so Vite exposes them to the browser bundle.
- */
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL as string | undefined;
-const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined;
+/* ---------- Environment (Vite) ---------- */
+const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL as string | undefined;
+const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined;
 
-/**
- * Throw a clear, actionable error only when someone actually tries
- * to use the client without proper configuration.
- */
 function notConfigured(): never {
   throw new Error(
-    "Supabase is not configured. Set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY in your Netlify environment variables."
+    'Supabase is not configured. Set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY in your Netlify environment variables.'
   );
 }
 
 let client: SupabaseClient<Database>;
 
-if (supabaseUrl && supabaseAnonKey) {
-  client = createClient<Database>(supabaseUrl, supabaseAnonKey, {
-    auth: { persistSession: true, autoRefreshToken: true },
+if (SUPABASE_URL && SUPABASE_ANON_KEY) {
+  client = createClient<Database>(SUPABASE_URL, SUPABASE_ANON_KEY, {
+    auth: {
+      persistSession: true,
+      autoRefreshToken: true,
+      // We handle hash tokens ourselves (HashAuthBridge)
+      detectSessionInUrl: false,
+    },
   });
+
+  // Expose for DevTools debugging:
+  if (typeof window !== 'undefined') {
+    (window as any).supabase = client;
+    (window as any).__SB_URL__ = SUPABASE_URL;
+  }
 } else {
-  console.warn("Supabase env vars missing: VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY");
-  // Proxy prevents the app from crashing on import; it errors only when used.
+  console.warn('Supabase env vars missing: VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY');
   client = new Proxy({} as SupabaseClient<Database>, {
     get() {
       return notConfigured;
@@ -245,3 +249,19 @@ if (supabaseUrl && supabaseAnonKey) {
 
 /** Typed Supabase client for the browser app. */
 export const supabase = client;
+
+/**
+ * Optional helper: set a session from a URL hash (used by magic link / recovery).
+ * Returns { handled: boolean, error?: AuthError }.
+ */
+export async function setSessionFromHash(hash?: string) {
+  const h = hash ?? (typeof window !== 'undefined' ? window.location.hash : '');
+  if (!h) return { handled: false as const };
+  const p = new URLSearchParams(h.startsWith('#') ? h.slice(1) : h);
+  const access_token = p.get('access_token');
+  const refresh_token = p.get('refresh_token');
+  if (!access_token || !refresh_token) return { handled: false as const };
+
+  const { error } = await supabase.auth.setSession({ access_token, refresh_token });
+  return { handled: true as const, error };
+}
