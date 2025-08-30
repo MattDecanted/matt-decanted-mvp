@@ -22,7 +22,7 @@ import ShortDetailPage from '@/pages/ShortDetailPage';
 import AccountPage from '@/pages/AccountPage';
 import PricingPage from '@/pages/PricingPage';
 
-// NOTE: replaced TrialQuizPage import with DailyQuizPage
+// NOTE: Daily quiz (replaces TrialQuizPage)
 import DailyQuizPage from '@/pages/DailyQuiz';
 
 import VinoVocabPage from '@/pages/VinoVocabPage';
@@ -83,12 +83,77 @@ function AutoResumeOnAccount() {
   return null;
 }
 
+/** Bridge hash tokens (#access_token / #refresh_token) into a Supabase session on ANY route */
+function HashSessionBridge() {
+  const location = useLocation();
+  const { user } = useAuth();
+  const [busy, setBusy] = React.useState(false);
+
+  React.useEffect(() => {
+    (async () => {
+      if (user || busy) return;
+
+      const hash = location.hash?.startsWith('#')
+        ? new URLSearchParams(location.hash.slice(1))
+        : null;
+
+      const at = hash?.get('access_token');
+      const rt = hash?.get('refresh_token');
+
+      if (at && rt) {
+        setBusy(true);
+        try {
+          const { error } = await supabase.auth.setSession({
+            access_token: at,
+            refresh_token: rt,
+          });
+          // strip the hash after processing (keeps route clean)
+          window.history.replaceState(null, '', location.pathname + location.search);
+          if (error) {
+            console.warn('setSession error:', error.message);
+          }
+        } finally {
+          setBusy(false);
+        }
+      }
+    })();
+  }, [location.key, location.hash, location.pathname, location.search, user, busy]);
+
+  return null;
+}
+
 /** RequireAuth wrapper */
 function RequireAuth({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuth();
   const location = useLocation();
+  const [bridging, setBridging] = React.useState(false);
 
-  if (loading) return <div className="p-8">Loading...</div>;
+  // Safety net: if they hit a protected route directly w/ hash tokens, process them here
+  React.useEffect(() => {
+    (async () => {
+      if (loading || user || bridging) return;
+      const hash = location.hash?.startsWith('#')
+        ? new URLSearchParams(location.hash.slice(1))
+        : null;
+      const at = hash?.get('access_token');
+      const rt = hash?.get('refresh_token');
+      if (at && rt) {
+        setBridging(true);
+        try {
+          const { error } = await supabase.auth.setSession({
+            access_token: at,
+            refresh_token: rt,
+          });
+          window.history.replaceState(null, '', location.pathname + location.search);
+          if (error) console.warn('setSession (guard) error:', error.message);
+        } finally {
+          setBridging(false);
+        }
+      }
+    })();
+  }, [loading, user, bridging, location]);
+
+  if (loading || bridging) return <div className="p-8">Loading...</div>;
   if (!user) return <Navigate to="/signin" replace state={{ from: location }} />;
 
   return <>{children}</>;
@@ -105,7 +170,6 @@ function RequireAdmin({ children }: { children: React.ReactNode }) {
   // Only allow role "admin"
   const role = (profile as any)?.role;
   if (role !== 'admin') {
-    // Not authorized → send them somewhere safe
     return <Navigate to="/dashboard" replace />;
   }
 
@@ -143,7 +207,7 @@ function App() {
   // global listeners to catch runtime errors
   React.useEffect(() => {
     window.addEventListener('error', (e) =>
-      console.error('[window.error]', e.error || e.message)
+      console.error('[window.error]', (e as any).error || (e as any).message)
     );
     window.addEventListener('unhandledrejection', (e: any) =>
       console.error('[unhandledrejection]', e?.reason || e)
@@ -156,6 +220,9 @@ function App() {
         <PointsProvider>
           <Router>
             <AppErrorBoundary>
+              {/* Always-on bridge so magic links work anywhere (incl. /dashboard & /reset-password) */}
+              <HashSessionBridge />
+
               <Layout>
                 <Routes>
                   {/* Home */}
