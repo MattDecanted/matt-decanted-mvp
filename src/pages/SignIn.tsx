@@ -1,83 +1,119 @@
-// src/pages/SignIn.tsx
-import React, { useState } from 'react';
-import { useNavigate, useLocation, Link } from 'react-router-dom';
-import { useAuth } from '@/context/AuthContext';
+import React, { useState } from "react";
+import { useNavigate, useLocation, Link } from "react-router-dom";
+import { useAuth } from "@/context/AuthContext";
 
 export default function SignIn() {
-  const { signIn } = useAuth();
-  const navigate = useNavigate();
-  const location = useLocation();
-  const from = (location.state as any)?.from?.pathname || '/dashboard';
+  const nav = useNavigate();
+  const loc = useLocation();
+  const { signInWithPassword, signUpWithPassword, signInWithMagic, signInWithGoogle, requestPasswordReset, startTrial, loading } = useAuth();
 
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [tab, setTab] = useState<"signin"|"signup"|"magic"|"reset">("signin");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [name, setName] = useState("");
+  const [msg, setMsg] = useState("");
+  const [busy, setBusy] = useState(false);
 
-  const onSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setSubmitting(true);
-    setError(null);
-    const res = await signIn(email.trim(), password);
-    setSubmitting(false);
+  async function afterAuth() {
+    // Start/refresh trial (safe if already started)
+    try { await startTrial(7); } catch {}
+    const dest = (loc.state as any)?.from?.pathname || "/dashboard";
+    nav(dest, { replace: true });
+  }
 
-    if (res.error) {
-      setError(res.error);
-      return;
-    }
-    navigate(from, { replace: true });
-  };
+  async function doSignIn() {
+    setBusy(true); setMsg("");
+    const { error } = await signInWithPassword(email, password);
+    setBusy(false);
+    if (error) return setMsg(error.message || "Sign-in failed");
+    afterAuth();
+  }
+
+  async function doSignUp() {
+    setBusy(true); setMsg("");
+    const { error } = await signUpWithPassword(email, password, name);
+    setBusy(false);
+    if (error) return setMsg(error.message || "Sign-up failed");
+    afterAuth();
+  }
+
+  async function doMagic() {
+    setBusy(true); setMsg("");
+    const { error } = await signInWithMagic(email);
+    setBusy(false);
+    if (error) return setMsg(error.message || "Could not send magic link");
+    setMsg("Magic link sent. Check your email.");
+  }
+
+  async function doReset() {
+    setBusy(true); setMsg("");
+    const { error } = await requestPasswordReset(email);
+    setBusy(false);
+    if (error) return setMsg(error.message || "Could not send reset email");
+    setMsg("Password reset email sent. Check your inbox.");
+  }
 
   return (
-    <div className="min-h-[60vh] flex items-center justify-center p-6">
-      <form onSubmit={onSubmit} className="w-full max-w-sm bg-white shadow rounded-lg p-6 space-y-4">
-        <h1 className="text-xl font-bold">Sign in</h1>
+    <main className="mx-auto max-w-md p-6">
+      <h1 className="text-2xl font-bold mb-2">Welcome back</h1>
+      <p className="text-sm text-gray-600 mb-6">Sign in to continue.</p>
 
-        {error && (
-          <div className="text-sm p-3 rounded bg-red-50 text-red-700 border border-red-200">
-            {error}
+      <div className="flex gap-2 mb-4 text-sm">
+        <button className={`px-3 py-1 rounded border ${tab==="signin"?"bg-black text-white":"bg-white"}`} onClick={()=>setTab("signin")}>Sign in</button>
+        <button className={`px-3 py-1 rounded border ${tab==="signup"?"bg-black text-white":"bg-white"}`} onClick={()=>setTab("signup")}>Sign up</button>
+        <button className={`px-3 py-1 rounded border ${tab==="magic"?"bg-black text-white":"bg-white"}`} onClick={()=>setTab("magic")}>Magic link</button>
+        <button className={`px-3 py-1 rounded border ${tab==="reset"?"bg-black text-white":"bg-white"}`} onClick={()=>setTab("reset")}>Reset</button>
+      </div>
+
+      {tab === "signin" && (
+        <div className="space-y-3">
+          <input className="w-full border rounded px-3 py-2" placeholder="Email" value={email} onChange={e=>setEmail(e.target.value)} />
+          <input className="w-full border rounded px-3 py-2" placeholder="Password" type="password" value={password} onChange={e=>setPassword(e.target.value)} />
+          <button disabled={busy||loading} onClick={doSignIn} className="w-full rounded bg-black text-white py-2 disabled:opacity-50">
+            {busy ? "Signing in…" : "Sign in"}
+          </button>
+          <button disabled={busy||loading} onClick={async ()=>{ setMsg(""); const { error } = await signInWithGoogle(); if (error) setMsg(error.message); }} className="w-full rounded border py-2">
+            Continue with Google
+          </button>
+          <div className="text-right text-sm">
+            <button className="underline" onClick={()=>setTab("reset")}>Forgot password?</button>
           </div>
-        )}
-
-        <label className="block">
-          <span className="text-sm text-gray-700">Email</span>
-          <input
-            type="email"
-            className="mt-1 w-full border rounded px-3 py-2"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            autoComplete="email"
-            required
-          />
-        </label>
-
-        <label className="block">
-          <span className="text-sm text-gray-700">Password</span>
-          <input
-            type="password"
-            className="mt-1 w-full border rounded px-3 py-2"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            autoComplete="current-password"
-            required
-          />
-        </label>
-
-        <button
-          type="submit"
-          className="w-full bg-blue-600 hover:bg-blue-700 text-white py-2 rounded disabled:opacity-60"
-          disabled={submitting}
-        >
-          {submitting ? 'Signing in…' : 'Sign in'}
-        </button>
-
-        <div className="text-sm text-center text-gray-600">
-          Don’t have an account?{' '}
-          <Link to="/activate" className="text-blue-600 hover:text-blue-800">
-            Activate / Create
-          </Link>
         </div>
-      </form>
-    </div>
+      )}
+
+      {tab === "signup" && (
+        <div className="space-y-3">
+          <input className="w-full border rounded px-3 py-2" placeholder="Full name (optional)" value={name} onChange={e=>setName(e.target.value)} />
+          <input className="w-full border rounded px-3 py-2" placeholder="Email" value={email} onChange={e=>setEmail(e.target.value)} />
+          <input className="w-full border rounded px-3 py-2" placeholder="Password" type="password" value={password} onChange={e=>setPassword(e.target.value)} />
+          <button disabled={busy||loading} onClick={doSignUp} className="w-full rounded bg-black text-white py-2 disabled:opacity-50">
+            {busy ? "Creating…" : "Create account"}
+          </button>
+        </div>
+      )}
+
+      {tab === "magic" && (
+        <div className="space-y-3">
+          <input className="w-full border rounded px-3 py-2" placeholder="Email" value={email} onChange={e=>setEmail(e.target.value)} />
+          <button disabled={busy||loading} onClick={doMagic} className="w-full rounded bg-black text-white py-2 disabled:opacity-50">
+            {busy ? "Sending…" : "Send magic link"}
+          </button>
+        </div>
+      )}
+
+      {tab === "reset" && (
+        <div className="space-y-3">
+          <input className="w-full border rounded px-3 py-2" placeholder="Email" value={email} onChange={e=>setEmail(e.target.value)} />
+          <button disabled={busy||loading} onClick={doReset} className="w-full rounded bg-black text-white py-2 disabled:opacity-50">
+            {busy ? "Sending…" : "Send reset email"}
+          </button>
+          <div className="text-xs text-gray-500">
+            You’ll receive a link to set a new password. If you already have a link, go to <Link to="/reset-password" className="underline">Reset Password</Link>.
+          </div>
+        </div>
+      )}
+
+      {msg && <div className="mt-4 text-sm">{msg}</div>}
+    </main>
   );
 }
