@@ -13,6 +13,7 @@ import Layout from '@/components/Layout';
 import Home from '@/pages/Home';
 import About from '@/pages/About';
 import SignIn from '@/pages/SignIn';
+import ResetPassword from '@/pages/ResetPassword';
 import Activate from '@/pages/Activate';
 
 import GuessWhatPage from '@/pages/GuessWhatPage';
@@ -147,7 +148,9 @@ function App() {
                   <Route path="/signin" element={<SignIn />} />
                   <Route path="/sign-in" element={<Navigate to="/signin" replace />} />
                   <Route path="/activate" element={<Activate />} />
+                  <Route path="/reset-password" element={<ResetPassword />} />
 
+                  
                   {/* Blog */}
                   <Route path="/blog" element={<BlogIndex />} />
                   <Route path="/blog/how-to-become-winemaker" element={<HowToBecomeWinemaker />} />
