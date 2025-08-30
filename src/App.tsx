@@ -7,6 +7,7 @@ import { Toaster } from '@/components/ui/sonner';
 import { AuthProvider, useAuth } from '@/context/AuthContext';
 import { PointsProvider } from '@/context/PointsContext';
 import { AnalyticsProvider } from '@/context/AnalyticsContext';
+import HashAuthBridge from '@/components/HashAuthBridge';
 
 // Layout & Pages
 import Layout from '@/components/Layout';
@@ -192,6 +193,17 @@ function App() {
                   {/* Home */}
                   <Route path="/" element={<Home />} />
 
+// inside return(...)
+<AnalyticsProvider>
+  <AuthProvider>
+    <PointsProvider>
+      <Router>
+        <HashAuthBridge /> {/* <- consumes #access_token/#refresh_token */}
+        <AppErrorBoundary>
+          <Layout>
+            {/* ...your <Routes> unchanged... */}
+
+                  
                   {/* Core info & auth */}
                   <Route path="/about" element={<About />} />
                   <Route path="/signin" element={<SignIn />} />
