@@ -1,101 +1,111 @@
 // src/pages/AuthCallbackPage.tsx
 import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
 import { supabase } from '@/lib/supabase';
 
+type State =
+  | { status: 'processing'; details?: string }
+  | { status: 'ok'; email?: string; userId?: string }
+  | { status: 'error'; message: string };
+
 export default function AuthCallbackPage() {
-  const navigate = useNavigate();
-  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [state, setState] = useState<State>({ status: 'processing' });
 
   useEffect(() => {
     (async () => {
       try {
         const url = new URL(window.location.href);
-        const type = url.searchParams.get('type');        // e.g., type=recovery
-        const code = url.searchParams.get('code');        // PKCE flow
+        const code = url.searchParams.get('code');
+        const type = url.searchParams.get('type');
         const hashParams = new URLSearchParams(url.hash.replace(/^#/, ''));
-        const accessToken = hashParams.get('access_token'); // legacy implicit flow
-        const hashError =
-          hashParams.get('error') || hashParams.get('error_description');
+        const accessToken = hashParams.get('access_token');
+        const hashErr = hashParams.get('error') || hashParams.get('error_description');
 
-        console.log('[AuthCallback] init', {
-          pathname: url.pathname,
-          search: url.search,
-          hash: url.hash ? '(present)' : '(none)',
-          type,
-          hasCode: !!code,
-          hasAccessToken: !!accessToken,
-          hashError,
-        });
-
-        // 0) Hash-style error from provider
-        if (hashError) {
-          console.error('[AuthCallback] Hash auth error:', Object.fromEntries(hashParams.entries()));
-          setErrorMsg('Login was cancelled or failed with your provider.');
-          // Clean the URL
+        // 0) Provider error in hash
+        if (hashErr) {
           window.history.replaceState({}, document.title, '/auth/callback');
-          return navigate('/login?auth=error', { replace: true });
+          return setState({ status: 'error', message: `Provider error: ${hashErr}` });
         }
 
-        // 1) Password recovery flow → send user to reset page
-        if (type === 'recovery') {
-          // Clean the URL before leaving
-          window.history.replaceState({}, document.title, '/auth/callback');
-          return navigate('/reset-password', { replace: true });
-        }
-
-        // 2) PKCE flow: exchange ?code= for a session
-        if (code) {
+        // 1) Recovery links should land here too; both PKCE and hash are possible
+        if (type === 'recovery' && code) {
           const { error } = await supabase.auth.exchangeCodeForSession(url.href);
-          // Clean the URL regardless of result
           window.history.replaceState({}, document.title, '/auth/callback');
-
-          if (error) {
-            console.error('[AuthCallback] exchangeCodeForSession error:', error);
-            setErrorMsg('Login link expired or invalid.');
-            return navigate('/login?auth=error', { replace: true });
-          }
-
-          // Success: session is stored
-          return navigate('/account', { replace: true });
-        }
-
-        // 3) Legacy implicit flow: token in hash (#access_token=…)
-        if (accessToken) {
-          // getSessionFromUrl parses the hash and stores the session
+          if (error) throw error;
+        } else if (code) {
+          // 2) PKCE
+          const { error } = await supabase.auth.exchangeCodeForSession(url.href);
+          window.history.replaceState({}, document.title, '/auth/callback');
+          if (error) throw error;
+        } else if (accessToken) {
+          // 3) Legacy implicit hash
           const { error } = await supabase.auth.getSessionFromUrl({ storeSession: true });
           window.history.replaceState({}, document.title, '/auth/callback');
-
-          if (error) {
-            console.error('[AuthCallback] getSessionFromUrl error:', error);
-            setErrorMsg('Login link expired or invalid.');
-            return navigate('/login?auth=error', { replace: true });
-          }
-
-          return navigate('/account', { replace: true });
+          if (error) throw error;
+        } else {
+          window.history.replaceState({}, document.title, '/auth/callback');
+          return setState({
+            status: 'error',
+            message: 'No code or token found in URL. Please request a fresh link.',
+          });
         }
 
-        // 4) Nothing usable in URL → back to login
-        console.warn('[AuthCallback] No code or token in URL');
-        setErrorMsg('Missing code. Please try logging in again.');
-        window.history.replaceState({}, document.title, '/auth/callback');
-        return navigate('/login?auth=failed', { replace: true });
-      } catch (e) {
-        console.error('[AuthCallback] Unexpected error:', e);
-        setErrorMsg('Something went wrong. Please try again.');
-        window.history.replaceState({}, document.title, '/auth/callback');
-        return navigate('/login?auth=error', { replace: true });
+        // Confirm session
+        const { data, error: sErr } = await supabase.auth.getSession();
+        if (sErr) throw sErr;
+        const email = data.session?.user?.email;
+        const userId = data.session?.user?.id;
+        if (!data.session) {
+          return setState({
+            status: 'error',
+            message: 'Session not created. Link may have expired; request a new one.',
+          });
+        }
+        setState({ status: 'ok', email, userId });
+      } catch (e: any) {
+        setState({ status: 'error', message: e?.message || String(e) });
       }
     })();
-  }, [navigate]);
+  }, []);
 
+  if (state.status === 'processing') {
+    return (
+      <div className="min-h-[60vh] grid place-items-center p-6">
+        <div className="rounded-xl border bg-white shadow p-6 text-center">
+          <div className="font-semibold mb-1">Signing you in…</div>
+          <div className="text-sm text-gray-500">Processing your link.</div>
+        </div>
+      </div>
+    );
+  }
+
+  if (state.status === 'error') {
+    return (
+      <div className="min-h-[60vh] grid place-items-center p-6">
+        <div className="rounded-xl border bg-white shadow p-6 text-center max-w-md">
+          <div className="font-semibold mb-2">Login problem</div>
+          <div className="text-sm text-red-600 mb-4">{state.message}</div>
+          <a className="inline-flex items-center rounded-lg bg-black text-white px-4 py-2" href="/signin">
+            Back to sign in
+          </a>
+        </div>
+      </div>
+    );
+  }
+
+  // state.status === 'ok'
   return (
-    <div className="p-6 text-center text-base">
-      {errorMsg ? (
-        <div className="text-red-500">{errorMsg}</div>
-      ) : (
-        <div>Signing you in…</div>
-      )}
+    <div className="min-h-[60vh] grid place-items-center p-6">
+      <div className="rounded-xl border bg-white shadow p-6 text-center max-w-md space-y-3">
+        <div className="text-lg font-semibold">You’re signed in ✅</div>
+        <div className="text-sm text-gray-600">
+          {state.email ? <>Email: <b>{state.email}</b></> : null}
+          {state.userId ? <><br/>User ID: <code className="text-xs">{state.userId}</code></> : null}
+        </div>
+        <div className="pt-2 flex gap-2 justify-center">
+          <a className="rounded bg-black text-white px-4 py-2" href="/account">Go to Account</a>
+          <a className="rounded border px-4 py-2" href="/dashboard">Go to Dashboard</a>
+        </div>
+      </div>
     </div>
   );
 }
