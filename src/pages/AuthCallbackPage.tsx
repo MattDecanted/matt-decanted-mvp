@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
-import { handleAuthRedirect, supabase } from "@/lib/supabase";
+import { completeAuthFromUrl, supabase } from "@/lib/supabase";
 
 export default function AuthCallback() {
   const navigate = useNavigate();
@@ -11,16 +11,13 @@ export default function AuthCallback() {
   useEffect(() => {
     (async () => {
       try {
-        // 1) Parse & store session from URL (works for #access_token and ?code)
-        await handleAuthRedirect();
+        await completeAuthFromUrl();
 
-        // 2) Verify we actually have a session
         const { data, error } = await supabase.auth.getSession();
         if (error) throw error;
         if (!data?.session) throw new Error("No session found after auth redirect");
 
         setMsg("Signed in. Redirecting…");
-
         const redirectTo = localStorage.getItem("redirectTo") || "/";
         localStorage.removeItem("redirectTo");
         navigate(redirectTo, { replace: true });
