@@ -9,34 +9,82 @@ export default function AuthCallbackPage() {
 
   useEffect(() => {
     (async () => {
-      console.log('[AuthCallbackPage] attempting to process auth callback');
-
-      // Only process if URL contains access_token
-      if (!window.location.hash.includes('access_token')) {
-        console.warn('[AuthCallbackPage] No token found in URL hash');
-        setErrorMsg('Missing token. Please try logging in again.');
-        navigate('/account?auth=failed', { replace: true });
-        return;
-      }
-
       try {
-        const { error } = await supabase.auth.getSessionFromUrl({ storeSession: true });
+        const url = new URL(window.location.href);
+        const type = url.searchParams.get('type');        // e.g., type=recovery
+        const code = url.searchParams.get('code');        // PKCE flow
+        const hashParams = new URLSearchParams(url.hash.replace(/^#/, ''));
+        const accessToken = hashParams.get('access_token'); // legacy implicit flow
+        const hashError =
+          hashParams.get('error') || hashParams.get('error_description');
 
-        // Always clean the URL
-        window.history.replaceState({}, document.title, '/auth/callback');
+        console.log('[AuthCallback] init', {
+          pathname: url.pathname,
+          search: url.search,
+          hash: url.hash ? '(present)' : '(none)',
+          type,
+          hasCode: !!code,
+          hasAccessToken: !!accessToken,
+          hashError,
+        });
 
-        if (error) {
-          console.error('[AuthCallbackPage] Supabase error:', error);
-          setErrorMsg('Login link expired or invalid.');
-          navigate('/account?auth=failed', { replace: true });
-          return;
+        // 0) Hash-style error from provider
+        if (hashError) {
+          console.error('[AuthCallback] Hash auth error:', Object.fromEntries(hashParams.entries()));
+          setErrorMsg('Login was cancelled or failed with your provider.');
+          // Clean the URL
+          window.history.replaceState({}, document.title, '/auth/callback');
+          return navigate('/login?auth=error', { replace: true });
         }
 
-        navigate('/account', { replace: true });
+        // 1) Password recovery flow → send user to reset page
+        if (type === 'recovery') {
+          // Clean the URL before leaving
+          window.history.replaceState({}, document.title, '/auth/callback');
+          return navigate('/reset-password', { replace: true });
+        }
+
+        // 2) PKCE flow: exchange ?code= for a session
+        if (code) {
+          const { error } = await supabase.auth.exchangeCodeForSession(url.href);
+          // Clean the URL regardless of result
+          window.history.replaceState({}, document.title, '/auth/callback');
+
+          if (error) {
+            console.error('[AuthCallback] exchangeCodeForSession error:', error);
+            setErrorMsg('Login link expired or invalid.');
+            return navigate('/login?auth=error', { replace: true });
+          }
+
+          // Success: session is stored
+          return navigate('/account', { replace: true });
+        }
+
+        // 3) Legacy implicit flow: token in hash (#access_token=…)
+        if (accessToken) {
+          // getSessionFromUrl parses the hash and stores the session
+          const { error } = await supabase.auth.getSessionFromUrl({ storeSession: true });
+          window.history.replaceState({}, document.title, '/auth/callback');
+
+          if (error) {
+            console.error('[AuthCallback] getSessionFromUrl error:', error);
+            setErrorMsg('Login link expired or invalid.');
+            return navigate('/login?auth=error', { replace: true });
+          }
+
+          return navigate('/account', { replace: true });
+        }
+
+        // 4) Nothing usable in URL → back to login
+        console.warn('[AuthCallback] No code or token in URL');
+        setErrorMsg('Missing code. Please try logging in again.');
+        window.history.replaceState({}, document.title, '/auth/callback');
+        return navigate('/login?auth=failed', { replace: true });
       } catch (e) {
-        console.error('[AuthCallbackPage] Unexpected error:', e);
+        console.error('[AuthCallback] Unexpected error:', e);
         setErrorMsg('Something went wrong. Please try again.');
-        navigate('/account?auth=failed', { replace: true });
+        window.history.replaceState({}, document.title, '/auth/callback');
+        return navigate('/login?auth=error', { replace: true });
       }
     })();
   }, [navigate]);
