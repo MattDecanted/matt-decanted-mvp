@@ -1,29 +1,24 @@
-# netlify.toml
-
 [build]
   command   = "npm run build"
   publish   = "dist"
   functions = "netlify/functions"
 
-# Pin Node to ensure global fetch support in functions
 [build.environment]
-  NODE_VERSION = "20"   # or "18" if you prefer
+  NODE_VERSION = "20"
 
 [functions]
   node_bundler = "esbuild"
-  # Only include what you actually need to bundle
   external_node_modules = ["parse-multipart-data"]
 
-# Optional: if your app is a SPA, uncomment to route all paths to index.html
-# [[redirects]]
-#   from = "/*"
-#   to   = "/index.html"
-#   status = 200
+[[redirects]]
+  from = "/*"
+  to   = "/index.html"
+  status = 200
 
 [dev]
   command       = "vite"
-  port          = 5173    # Vite dev server
-  targetPort    = 8888    # Netlify dev proxy target
+  port          = 5173
+  targetPort    = 8888
   functionsPort = 9999
   publish       = "dist"
 
