@@ -1,7 +1,6 @@
-// src/components/AuthCodeHandler.tsx
 import { useEffect } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
-import { supabase } from "@/lib/supabase";
+import { supabase, setSessionFromUrlFragment as setSessionFromHashStrict } from "@/lib/supabase";
 
 export default function AuthCodeHandler() {
   const loc = useLocation();
@@ -10,16 +9,14 @@ export default function AuthCodeHandler() {
   useEffect(() => {
     const url = new URL(window.location.href);
 
-    // let dedicated page own /auth/callback
+    // Let /auth/callback own its own flow
     if (url.pathname.startsWith("/auth/callback")) return;
 
     const code = url.searchParams.get("code");
     const type = url.searchParams.get("type");
-    const hashParams = new URLSearchParams(url.hash.replace(/^#/, ""));
-    const access_token = hashParams.get("access_token");
-    const refresh_token = hashParams.get("refresh_token");
+    const hasHash = url.hash.includes("access_token");
 
-    // recovery anywhere → normalize to callback page
+    // Normalize recovery to /auth/callback
     if (type === "recovery") {
       navigate(`/auth/callback?type=recovery${code ? `&code=${code}` : ""}`, { replace: true });
       return;
@@ -28,26 +25,21 @@ export default function AuthCodeHandler() {
     if (code) {
       (async () => {
         const { error } = await supabase.auth.exchangeCodeForSession(url.href);
-        window.history.replaceState({}, document.title, url.pathname);
-        if (error) navigate("/login?auth=error", { replace: true });
+        window.history.replaceState({}, document.title, url.pathname); // clean
+        if (error) navigate("/signin?auth=error", { replace: true });
         else navigate("/account", { replace: true });
       })();
       return;
     }
 
-    if (access_token && refresh_token) {
+    if (hasHash) {
       (async () => {
-        // fallback if getSessionFromUrl is missing
-        const anyAuth = (supabase.auth as any);
-        let error: any = null;
-        if (typeof anyAuth.getSessionFromUrl === 'function') {
-          ({ error } = await anyAuth.getSessionFromUrl({ storeSession: true }));
-        } else {
-          ({ error } = await supabase.auth.setSession({ access_token, refresh_token }));
+        try {
+          await setSessionFromHashStrict();
+          navigate("/account", { replace: true });
+        } catch {
+          navigate("/signin?auth=error", { replace: true });
         }
-        window.history.replaceState({}, document.title, url.pathname + url.search);
-        if (error) navigate("/login?auth=error", { replace: true });
-        else navigate("/account", { replace: true });
       })();
     }
   }, [loc.pathname, loc.search, navigate]);
