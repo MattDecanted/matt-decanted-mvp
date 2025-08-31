@@ -52,13 +52,6 @@ import AuthCallbackPage from '@/pages/AuthCallbackPage';
 const FN_SUBMIT = '/.netlify/functions/trial-quiz-attempt';
 const PENDING_KEY = 'md_trial_pending';
 
-/* ---------- helper so guards don't redirect during hash login ---------- */
-function hasAuthHash(hash: string) {
-  if (!hash) return false;
-  const qp = new URLSearchParams(hash.startsWith('#') ? hash.slice(1) : hash);
-  return !!(qp.get('access_token') && qp.get('refresh_token'));
-}
-
 /* ---------- Auto resume pending trial-quiz posts on Account ---------- */
 function AutoResumeOnAccount() {
   React.useEffect(() => {
@@ -93,13 +86,12 @@ function AutoResumeOnAccount() {
   return null;
 }
 
-/* ---------- Route guards ---------- */
+/* ---------- Route guards (simplified: no hash blocking) ---------- */
 function RequireAuth({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuth();
   const location = useLocation();
-  const pendingHashLogin = hasAuthHash(location.hash);
 
-  if (loading || pendingHashLogin) return <div className="p-8">Loading...</div>;
+  if (loading) return <div className="p-8">Loading...</div>;
   if (!user) return <Navigate to="/signin" replace state={{ from: location }} />;
   return <>{children}</>;
 }
@@ -107,9 +99,8 @@ function RequireAuth({ children }: { children: React.ReactNode }) {
 function RequireAdmin({ children }: { children: React.ReactNode }) {
   const { user, profile, loading } = useAuth();
   const location = useLocation();
-  const pendingHashLogin = hasAuthHash(location.hash);
 
-  if (loading || pendingHashLogin) return <div className="p-8">Loading...</div>;
+  if (loading) return <div className="p-8">Loading...</div>;
   if (!user) return <Navigate to="/signin" replace state={{ from: location }} />;
   if ((profile as any)?.role !== 'admin') return <Navigate to="/dashboard" replace />;
   return <>{children}</>;
@@ -157,7 +148,7 @@ function App() {
       <AuthProvider>
         <PointsProvider>
           <Router>
-            {/* ✅ Global safety net: completes auth on ANY route */}
+            {/* ✅ Global safety net: completes auth on ANY route (PKCE, hash, recovery) */}
             <AuthCodeHandler />
 
             <AppErrorBoundary>
