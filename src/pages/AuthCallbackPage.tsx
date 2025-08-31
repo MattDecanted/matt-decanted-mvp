@@ -1,54 +1,61 @@
-// src/pages/AuthCallbackPage.tsx
-import { useEffect } from 'react';
-import { supabase, setSessionFromHashStrict } from '@/lib/supabase';
+import React, { useEffect, useState } from "react";
+import { useNavigate, useLocation } from "react-router-dom";
+import { supabase, setSessionFromHash } from "@/lib/supabase";
 
-export default function AuthCallbackPage() {
+export default function AuthCallback() {
+  const navigate = useNavigate();
+  const { search, hash } = useLocation();
+  const [message, setMessage] = useState("Setting your session and finishing up…");
+  const [error, setError] = useState<string | null>(null);
+
   useEffect(() => {
     (async () => {
       try {
-        const url = new URL(window.location.href);
-        const hasHash = url.hash.includes('access_token');
-        const code = url.searchParams.get('code');
+        // 1) If we have #access_token=… (implicit link), use your helper
+        if (hash.includes("access_token")) {
+          await setSessionFromHash(); // writes session + cleans hash (your lib)
+        }
 
-        // 1) Handle either flow, prefer hash (implicit)
-        if (hasHash) {
-          await setSessionFromHashStrict(); // sets session + cleans hash
-        } else if (code) {
-          const { error } = await supabase.auth.exchangeCodeForSession(url.href);
-          window.history.replaceState({}, document.title, '/auth/callback'); // clean query
+        // 2) If we have ?code=… (PKCE), exchange it
+        const params = new URLSearchParams(search);
+        const code = params.get("code");
+        if (code) {
+          const { error } = await supabase.auth.exchangeCodeForSession(code);
           if (error) throw error;
-        } else {
-          // no tokens/code – just send them back to sign in
-          window.location.replace('/signin?auth=missing');
-          return;
+          // clean the query string for neatness
+          const loc = new URL(window.location.href);
+          window.history.replaceState({}, document.title, loc.pathname);
         }
 
-        // 2) Poll up to 5s for the session to be visible (robust against race conditions)
-        const deadline = Date.now() + 5000;
-        while (Date.now() < deadline) {
-          const { data, error } = await supabase.auth.getSession();
-          if (error) break;
-          if (data?.session) {
-            // 3) Success → go straight to Account
-            window.location.replace('/account');
-            return;
-          }
-          await new Promise((r) => setTimeout(r, 250));
+        // 3) Confirm we actually have a session
+        const { data, error: getErr } = await supabase.auth.getSession();
+        if (getErr) throw getErr;
+        if (!data?.session) {
+          throw new Error("No session found after auth redirect");
         }
 
-        // Fallback: continue anyway (the session may still be stored)
-        window.location.replace('/account');
-      } catch {
-        window.location.replace('/signin?auth=error');
+        setMessage("Signed in. Redirecting…");
+
+        // Optional: if you stored a desired redirect in localStorage, use it
+        const redirectTo = localStorage.getItem("redirectTo") || "/";
+        localStorage.removeItem("redirectTo");
+
+        // 4) Navigate away so we don’t sit on a spinner forever
+        navigate(redirectTo, { replace: true });
+      } catch (e: any) {
+        console.error(e);
+        setError(e?.message || "Unexpected error");
+        setMessage("We couldn’t complete sign-in.");
       }
     })();
-  }, []);
+  }, [hash, search, navigate]);
 
   return (
-    <div className="min-h-[60vh] grid place-items-center p-6">
-      <div className="rounded-xl border bg-white shadow p-6 text-center">
-        <div className="font-semibold mb-1">Signing you in…</div>
-        <div className="text-sm text-gray-600">Setting your session and finishing up.</div>
+    <div className="min-h-[60vh] flex items-center justify-center">
+      <div className="rounded-xl border px-6 py-5 text-center shadow-sm">
+        <div className="text-lg font-semibold">Signing you in…</div>
+        <div className="mt-1 text-sm text-gray-600">{message}</div>
+        {error && <div className="mt-3 text-sm text-red-600">Error: {error}</div>}
       </div>
     </div>
   );
