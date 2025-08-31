@@ -1,4 +1,3 @@
-// src/lib/supabase.ts
 import { createClient } from '@supabase/supabase-js';
 
 const url = import.meta.env.VITE_SUPABASE_URL!;
@@ -45,7 +44,12 @@ export async function setSessionFromHashStrict() {
   window.history.replaceState({}, document.title, loc.pathname + loc.search);
 }
 
-/** Back-compat alias (so existing imports keep working) */
+/** Back-compat aliases (so existing imports keep working) */
 export async function setSessionFromUrlFragment() {
+  return setSessionFromHashStrict();
+}
+
+// 👇 Add this alias so DebugAuth and others can import it without errors
+export async function setSessionFromHash() {
   return setSessionFromHashStrict();
 }
