@@ -152,6 +152,11 @@ function App() {
             <AuthCodeHandler />
 
             <AppErrorBoundary>
+              {/* ✅ Handle callback OUTSIDE Layout to avoid header/guards interfering */}
+              <Routes>
+                <Route path="/auth/callback" element={<AuthCallbackPage />} />
+              </Routes>
+
               <Layout>
                 <Routes>
                   {/* Home */}
@@ -163,9 +168,6 @@ function App() {
                   <Route path="/sign-in" element={<Navigate to="/signin" replace />} />
                   <Route path="/activate" element={<Activate />} />
                   <Route path="/reset-password" element={<ResetPassword />} />
-
-                  {/* ✅ Supabase callback */}
-                  <Route path="/auth/callback" element={<AuthCallbackPage />} />
 
                   {/* ✅ Debug (public) */}
                   <Route path="/debug/auth" element={<DebugAuth />} />
