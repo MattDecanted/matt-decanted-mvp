@@ -232,8 +232,8 @@ if (SUPABASE_URL && SUPABASE_ANON_KEY) {
     auth: {
       persistSession: true,
       autoRefreshToken: true,
-      // We handle hash tokens ourselves via HashAuthBridge
-      detectSessionInUrl: false,
+      /** ✅ Let Supabase parse #access_token / #refresh_token automatically */
+      detectSessionInUrl: true,
     },
   });
 
@@ -257,7 +257,7 @@ if (SUPABASE_URL && SUPABASE_ANON_KEY) {
 /** Typed Supabase client for the browser app. */
 export const supabase = client;
 
-/** Helper: does the current URL hash look like an auth hash? */
+/** Helper: does the current URL hash look like an auth hash? (kept for compatibility) */
 export function hasAuthHash(hash?: string) {
   const h = hash ?? (typeof window !== 'undefined' ? window.location.hash : '');
   if (!h) return false;
@@ -266,8 +266,8 @@ export function hasAuthHash(hash?: string) {
 }
 
 /**
- * setSessionFromHash: used by HashAuthBridge to turn #tokens into a session.
- * Returns { handled: boolean, error?: AuthError }.
+ * setSessionFromHash: still exported for older code paths.
+ * With detectSessionInUrl=true, Supabase does this automatically on page load.
  */
 export async function setSessionFromHash(hash?: string) {
   const h = hash ?? (typeof window !== 'undefined' ? window.location.hash : '');
@@ -278,7 +278,6 @@ export async function setSessionFromHash(hash?: string) {
   const refresh_token = p.get('refresh_token');
   if (!access_token || !refresh_token) return { handled: false as const };
 
-  // If the client isn't configured, bail early (prevents "reading 'auth' of undefined")
   const maybeAuth = (supabase as any)?.auth;
   if (!maybeAuth || typeof maybeAuth.setSession !== 'function') {
     console.warn('[setSessionFromHash] Supabase client not configured.');
