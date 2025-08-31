@@ -1,6 +1,6 @@
 // src/components/Layout.tsx
 import * as React from "react";
-import { NavLink, Link } from "react-router-dom";
+import { NavLink, Link, useLocation } from "react-router-dom"; // ⬅️ add useLocation
 import { Globe, Trophy, Flame, Menu, X } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 import { usePoints } from "@/context/PointsContext";
@@ -22,6 +22,21 @@ export default function Layout({ children }: { children: React.ReactNode }) {
       isActive && "text-brand"
     );
 
+  // ⬇️ Hide chrome on auth-processing routes so nothing else interferes
+  const loc = useLocation();
+  const hideChrome =
+    loc.pathname.startsWith("/auth/callback") ||
+    loc.pathname.startsWith("/debug/url") ||
+    loc.pathname.startsWith("/reset-password");
+
+  if (hideChrome) {
+    return (
+      <div className="min-h-screen flex flex-col">
+        <main className="flex-1">{children}</main>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen flex flex-col">
       {/* thin brand top bar */}
@@ -31,15 +46,11 @@ export default function Layout({ children }: { children: React.ReactNode }) {
       <header className="site-header">
         <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
           <div className="h-14 flex items-center justify-between">
-            {/* Brand: two-line text logo */}
+            {/* Brand */}
             <Link to="/" className="flex items-center gap-3">
-              {/* (optional) place a small avatar/logo image here */}
-              {/* <img src="/logo.svg" alt="" className="w-6 h-6 rounded-full" /> */}
               <div className="leading-tight">
                 <div className="font-semibold text-gray-900">Matt Decanted</div>
-                <div className="-mt-0.5 text-[11px] text-gray-500">
-                  Wine Education
-                </div>
+                <div className="-mt-0.5 text-[11px] text-gray-500">Wine Education</div>
               </div>
             </Link>
 
@@ -55,13 +66,11 @@ export default function Layout({ children }: { children: React.ReactNode }) {
 
             {/* Right cluster */}
             <div className="hidden md:flex items-center gap-2">
-              {/* Language pill */}
               <div className="inline-flex items-center gap-1 rounded-md border border-gray-200 px-2.5 py-1 text-xs text-gray-700">
                 <Globe className="w-3.5 h-3.5" />
                 <span>EN</span>
               </div>
 
-              {/* Points pill */}
               <Link
                 to={user ? "/account" : "/signin"}
                 className="inline-flex items-center gap-2 rounded-md border border-gray-200 bg-white px-2.5 py-1 text-xs text-gray-800 hover:bg-gray-50"
@@ -74,15 +83,11 @@ export default function Layout({ children }: { children: React.ReactNode }) {
                 <span className="tabular-nums">0</span>
               </Link>
 
-              {/* Auth */}
               {user ? (
-                <button onClick={() => signOut()} className="btn-ghost">
-                  Sign out
-                </button>
+                <button onClick={() => signOut()} className="btn-ghost">Sign out</button>
               ) : (
                 <>
                   <Link to="/signin" className="btn-ghost">Sign in</Link>
-                  {/* Orange sign up */}
                   <Link
                     to="/pricing"
                     className="inline-flex items-center rounded-lg px-4 py-2 font-semibold text-white bg-brand-orange shadow hover:opacity-95"
@@ -137,9 +142,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
                   </button>
                 ) : (
                   <>
-                    <Link to="/signin" onClick={() => setOpen(false)} className="btn-ghost">
-                      Sign in
-                    </Link>
+                    <Link to="/signin" onClick={() => setOpen(false)} className="btn-ghost">Sign in</Link>
                     <Link
                       to="/pricing"
                       onClick={() => setOpen(false)}
