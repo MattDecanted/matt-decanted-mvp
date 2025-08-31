@@ -1,3 +1,4 @@
+// src/lib/supabase.ts
 import { createClient } from '@supabase/supabase-js';
 
 const url = import.meta.env.VITE_SUPABASE_URL!;
@@ -7,41 +8,44 @@ export const supabase = createClient(url, anon, {
   auth: {
     persistSession: true,
     autoRefreshToken: true,
-    // We’ll parse ?code= / #access_token ourselves in the callback/handler
+    // We handle ?code= and #access_token ourselves (callback/handler)
     detectSessionInUrl: false,
-    flowType: 'pkce', // fine with email links & OAuth
+    flowType: 'pkce',
   },
 });
 
-/**
- * Robust fallback for legacy hash links: /auth/callback#access_token=...&refresh_token=...
- * Uses getSessionFromUrl if available; otherwise sets the session directly.
- * Also cleans the URL hash afterwards.
+/** Read tokens from a legacy implicit hash:
+ *   /auth/callback#access_token=...&refresh_token=...&expires_in=3600&token_type=bearer
  */
-export async function setSessionFromUrlFragment() {
+export function readHashTokens() {
   const loc = new URL(window.location.href);
-  const hashParams = new URLSearchParams(loc.hash.replace(/^#/, ''));
-  const access_token = hashParams.get('access_token');
-  const refresh_token = hashParams.get('refresh_token');
-  if (!access_token || !refresh_token) return;
+  const hp = new URLSearchParams(loc.hash.replace(/^#/, ''));
+  const access_token = hp.get('access_token') || undefined;
+  const refresh_token = hp.get('refresh_token') || undefined;
+  const expires_in = Number(hp.get('expires_in') || '3600');
+  const token_type = hp.get('token_type') || 'bearer';
+  return { access_token, refresh_token, expires_in, token_type };
+}
 
-  const expires_in = Number(hashParams.get('expires_in') || '3600');
-  const token_type = hashParams.get('token_type') || 'bearer';
+/** Strict setter: always writes the session using all token fields, then cleans the URL hash. */
+export async function setSessionFromHashStrict() {
+  const { access_token, refresh_token, expires_in, token_type } = readHashTokens();
+  if (!access_token || !refresh_token) throw new Error('Missing tokens in URL hash');
 
-  const anyAuth = supabase.auth as any;
-  if (typeof anyAuth.getSessionFromUrl === 'function') {
-    const { error } = await anyAuth.getSessionFromUrl({ storeSession: true });
-    if (error) throw error;
-  } else {
-    const { error } = await supabase.auth.setSession({
-      access_token,
-      refresh_token,
-      expires_in,
-      token_type,
-    });
-    if (error) throw error;
-  }
+  const { error } = await supabase.auth.setSession({
+    access_token,
+    refresh_token,
+    expires_in,
+    token_type,
+  });
+  if (error) throw error;
 
   // remove the hash now that session is stored
+  const loc = new URL(window.location.href);
   window.history.replaceState({}, document.title, loc.pathname + loc.search);
+}
+
+/** Back-compat alias (so existing imports keep working) */
+export async function setSessionFromUrlFragment() {
+  return setSessionFromHashStrict();
 }
