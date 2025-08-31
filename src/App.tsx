@@ -48,6 +48,7 @@ import { supabase } from '@/lib/supabase';
 // ✅ NEW imports
 import AuthCodeHandler from '@/components/AuthCodeHandler';
 import AuthCallbackPage from '@/pages/AuthCallbackPage';
+import UrlDumpPage from '@/pages/UrlDumpPage'; // NEW
 
 const FN_SUBMIT = '/.netlify/functions/trial-quiz-attempt';
 const PENDING_KEY = 'md_trial_pending';
@@ -86,7 +87,7 @@ function AutoResumeOnAccount() {
   return null;
 }
 
-/* ---------- Route guards (simplified: no hash blocking) ---------- */
+/* ---------- Route guards (simplified) ---------- */
 function RequireAuth({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuth();
   const location = useLocation();
@@ -152,13 +153,18 @@ function App() {
             <AuthCodeHandler />
 
             <AppErrorBoundary>
-              {/* ✅ Handle callback OUTSIDE Layout to avoid header/guards interfering */}
+              {/* ✅ Handle callbacks OUTSIDE Layout so nothing interferes */}
               <Routes>
                 <Route path="/auth/callback" element={<AuthCallbackPage />} />
+                <Route path="/debug/url" element={<UrlDumpPage />} /> {/* NEW */}
               </Routes>
 
               <Layout>
                 <Routes>
+                  {/* ⛑️ No-ops to prevent wildcard from hijacking these paths */}
+                  <Route path="/auth/callback" element={<></>} />
+                  <Route path="/debug/url" element={<></>} /> {/* NEW */}
+
                   {/* Home */}
                   <Route path="/" element={<Home />} />
 
