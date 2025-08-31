@@ -1,370 +1,168 @@
 // src/pages/SignIn.tsx
-import * as React from "react";
-import { useNavigate, Link } from "react-router-dom";
+import React, { useEffect, useRef, useState } from "react";
 import { supabase } from "@/lib/supabase";
-import { ShieldCheck, Mail, Lock, Eye, EyeOff, ArrowLeft, LogIn, Wand2, Send } from "lucide-react";
 
-type Mode = "signin" | "signup" | "magic" | "reset";
+const COOLDOWN_SEC = 60;
+const KEY = "otp_last_request_at";
+const REDIRECT_TO = `${window.location.origin}/auth/callback`;
+
+type Mode = "idle" | "sent-magic" | "sent-recovery" | "error";
 
 export default function SignIn() {
-  const navigate = useNavigate();
+  const [email, setEmail] = useState("");
+  const [sending, setSending] = useState(false);
+  const [cooldown, setCooldown] = useState(0);
+  const [mode, setMode] = useState<Mode>("idle");
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const timerRef = useRef<number | null>(null);
 
-  const [mode, setMode] = React.useState<Mode>("signin");
-  const [email, setEmail] = React.useState("");
-  const [password, setPassword] = React.useState("");
-  const [fullName, setFullName] = React.useState("");
-  const [confirm, setConfirm] = React.useState("");
-  const [showPwd, setShowPwd] = React.useState(false);
-  const [busy, setBusy] = React.useState(false);
-  const [msg, setMsg] = React.useState<string | null>(null);
-  const [err, setErr] = React.useState<string | null>(null);
+  const isEmailValid = (e: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e.trim());
 
-  // Convenient redirect target
-  const redirectTo = `${window.location.origin}/dashboard`;
-  const emailRedirect = `${window.location.origin}/activate`;
-  const resetRedirect = `${window.location.origin}/reset-password`;
+  const startTimer = (startFrom: number) => {
+    if (timerRef.current) window.clearInterval(timerRef.current);
+    let t = startFrom;
+    setCooldown(t);
+    timerRef.current = window.setInterval(() => {
+      t -= 1;
+      setCooldown(t);
+      if (t <= 0 && timerRef.current) {
+        window.clearInterval(timerRef.current);
+        timerRef.current = null;
+      }
+    }, 1000);
+  };
 
-  function Tab({ value, children }: { value: Mode; children: React.ReactNode }) {
-    const active = mode === value;
-    return (
-      <button
-        type="button"
-        onClick={() => {
-          setMode(value);
-          setErr(null);
-          setMsg(null);
-        }}
-        className={
-          "px-3 py-1.5 rounded-md text-sm font-medium transition" +
-          (active
-            ? " bg-brand-blue text-white shadow"
-            : " bg-gray-900/90 text-white/90 hover:bg-gray-900")
-        }
-      >
-        {children}
-      </button>
-    );
-  }
+  const setCooldownNow = (secs: number) => {
+    localStorage.setItem(KEY, String(Date.now()));
+    startTimer(secs);
+  };
 
-  async function handleSignIn(e: React.FormEvent) {
-    e.preventDefault();
-    setErr(null); setMsg(null); setBusy(true);
-    try {
-      const { error } = await supabase.auth.signInWithPassword({ email, password });
-      if (error) throw error;
-      // best-effort trial start (no-op if already started)
-      try { await supabase.rpc("vv_start_trial", { p_days: 7 }); } catch {}
-      navigate("/dashboard");
-    } catch (e: any) {
-      setErr(e?.message ?? "Sign in failed.");
-    } finally {
-      setBusy(false);
-    }
-  }
+  useEffect(() => {
+    const last = Number(localStorage.getItem(KEY) || 0);
+    const delta = Math.max(0, COOLDOWN_SEC - Math.floor((Date.now() - last) / 1000));
+    if (delta > 0) startTimer(delta);
+    return () => { if (timerRef.current) window.clearInterval(timerRef.current); };
+  }, []);
 
-  async function handleGoogle() {
-    setErr(null); setMsg(null); setBusy(true);
-    try {
-      const { error } = await supabase.auth.signInWithOAuth({
-        provider: "google",
-        options: { redirectTo: redirectTo },
-      });
-      if (error) throw error;
-      // Supabase will redirect; nothing else to do here
-    } catch (e: any) {
-      setErr(e?.message ?? "Google sign-in failed.");
-      setBusy(false);
-    }
-  }
+  const secondsFrom429 = (m?: string | null) => {
+    if (!m) return null;
+    const mm = /after\s+(\d+)\s*seconds?/i.exec(m);
+    return mm ? Math.max(1, parseInt(mm[1], 10)) : null;
+  };
 
-  async function handleSignUp(e: React.FormEvent) {
-    e.preventDefault();
-    setErr(null); setMsg(null);
-    if (password !== confirm) {
-      setErr("Passwords do not match.");
-      return;
-    }
-    setBusy(true);
-    try {
-      const { error } = await supabase.auth.signUp({
-        email,
-        password,
-        options: {
-          emailRedirectTo: emailRedirect,
-          data: { full_name: fullName },
-        },
-      });
-      if (error) throw error;
-      setMsg("Check your email to confirm your account.");
-    } catch (e: any) {
-      setErr(e?.message ?? "Sign up failed.");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function handleMagic(e: React.FormEvent) {
-    e.preventDefault();
-    setErr(null); setMsg(null); setBusy(true);
+  const sendMagic = async () => {
+    setErrorMsg(null);
+    if (!isEmailValid(email) || cooldown > 0) return;
+    setSending(true);
     try {
       const { error } = await supabase.auth.signInWithOtp({
-        email,
-        options: { emailRedirectTo: redirectTo },
+        email: email.trim(),
+        options: { emailRedirectTo: REDIRECT_TO },
       });
-      if (error) throw error;
-      setMsg("Magic link sent. Check your inbox.");
-    } catch (e: any) {
-      setErr(e?.message ?? "Could not send magic link.");
+      if (error) {
+        const secs = secondsFrom429(error.message) ?? COOLDOWN_SEC;
+        if (String(error.message).toLowerCase().includes("429")) {
+          setCooldownNow(secs);
+          setMode("idle");
+          setErrorMsg(`We just sent a link recently. Try again in ~${secs}s.`);
+          return;
+        }
+        console.error("signInWithOtp error:", error);
+        setMode("error");
+        setErrorMsg(error.message);
+        return;
+      }
+      setMode("sent-magic");
+      setCooldownNow(COOLDOWN_SEC);
     } finally {
-      setBusy(false);
+      setSending(false);
     }
-  }
+  };
 
-  async function handleReset(e: React.FormEvent) {
-    e.preventDefault();
-    setErr(null); setMsg(null); setBusy(true);
+  const sendRecovery = async () => {
+    setErrorMsg(null);
+    if (!isEmailValid(email) || cooldown > 0) return;
+    setSending(true);
     try {
-      const { error } = await supabase.auth.resetPasswordForEmail(email, {
-        redirectTo: resetRedirect,
+      const { error } = await supabase.auth.resetPasswordForEmail(email.trim(), {
+        redirectTo: `${REDIRECT_TO}?type=recovery`,
       });
-      if (error) throw error;
-      setMsg("Reset email sent. Follow the link to set a new password.");
-    } catch (e: any) {
-      setErr(e?.message ?? "Could not send reset email.");
+      if (error) {
+        const secs = secondsFrom429(error.message) ?? COOLDOWN_SEC;
+        if (String(error.message).toLowerCase().includes("429")) {
+          setCooldownNow(secs);
+          setMode("idle");
+          setErrorMsg(`Recovery already requested. Try again in ~${secs}s.`);
+          return;
+        }
+        console.error("resetPasswordForEmail error:", error);
+        setMode("error");
+        setErrorMsg(error.message);
+        return;
+      }
+      setMode("sent-recovery");
+      setCooldownNow(COOLDOWN_SEC);
     } finally {
-      setBusy(false);
+      setSending(false);
     }
-  }
+  };
+
+  const onSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    sendMagic();
+  };
 
   return (
-    <div className="mx-auto max-w-lg px-4 py-10">
-      {/* Header */}
-      <div className="text-center mb-6">
-        <div className="mx-auto mb-3 inline-flex h-12 w-12 items-center justify-center rounded-full bg-blue-50 text-brand-blue">
-          <ShieldCheck className="h-6 w-6" />
-        </div>
-        <h1 className="text-2xl font-bold">Welcome back</h1>
-        <p className="text-sm text-gray-500">Sign in to continue.</p>
-      </div>
+    <div className="mx-auto max-w-md p-6 space-y-5">
+      <h1 className="text-2xl font-semibold">Sign in</h1>
 
-      {/* Tabs */}
-      <div className="mb-4 flex flex-wrap gap-2 justify-center">
-        <Tab value="signin">Sign in</Tab>
-        <Tab value="signup">Sign up</Tab>
-        <Tab value="magic">Magic link</Tab>
-        <Tab value="reset">Reset</Tab>
-      </div>
-
-      {/* Card */}
-      <div className="rounded-2xl border bg-white shadow-[0_8px_30px_rgba(0,0,0,.06)]">
-        <div className="p-5">
-          {mode === "signin" && (
-            <form onSubmit={handleSignIn} className="space-y-3">
-              <label className="block text-sm font-medium text-gray-700">Email</label>
-              <div className="relative">
-                <Mail className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
-                <input
-                  type="email"
-                  required
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  className="w-full rounded-lg border-gray-300 pl-9"
-                  placeholder="you@example.com"
-                />
-              </div>
-
-              <label className="block text-sm font-medium text-gray-700">Password</label>
-              <div className="relative">
-                <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
-                <input
-                  type={showPwd ? "text" : "password"}
-                  required
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  className="w-full rounded-lg border-gray-300 pl-9 pr-10"
-                  placeholder="••••••••"
-                />
-                <button
-                  type="button"
-                  aria-label={showPwd ? "Hide password" : "Show password"}
-                  onClick={() => setShowPwd((p) => !p)}
-                  className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-1 text-gray-500 hover:bg-gray-100"
-                >
-                  {showPwd ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                </button>
-              </div>
-
-              <button
-                type="submit"
-                disabled={busy}
-                className="mt-2 inline-flex w-full items-center justify-center rounded-lg bg-brand-blue px-4 py-2 font-semibold text-white hover:opacity-95 disabled:opacity-60"
-              >
-                <LogIn className="mr-2 h-4 w-4" /> {busy ? "Signing in…" : "Sign in"}
-              </button>
-
-              <button
-                type="button"
-                onClick={handleGoogle}
-                disabled={busy}
-                className="inline-flex w-full items-center justify-center rounded-lg bg-gray-900 px-4 py-2 font-semibold text-white hover:opacity-90 disabled:opacity-60"
-              >
-                Continue with Google
-              </button>
-
-              <div className="text-right">
-                <button
-                  type="button"
-                  onClick={() => setMode("reset")}
-                  className="text-sm text-brand-blue hover:underline"
-                >
-                  Forgot password?
-                </button>
-              </div>
-            </form>
-          )}
-
-          {mode === "signup" && (
-            <form onSubmit={handleSignUp} className="space-y-3">
-              <label className="block text-sm font-medium text-gray-700">Full name</label>
-              <input
-                type="text"
-                required
-                value={fullName}
-                onChange={(e) => setFullName(e.target.value)}
-                className="w-full rounded-lg border-gray-300"
-                placeholder="Your name"
-              />
-
-              <label className="block text-sm font-medium text-gray-700">Email</label>
-              <input
-                type="email"
-                required
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                className="w-full rounded-lg border-gray-300"
-                placeholder="you@example.com"
-              />
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700">Password</label>
-                  <input
-                    type="password"
-                    required
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    className="w-full rounded-lg border-gray-300"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700">Confirm</label>
-                  <input
-                    type="password"
-                    required
-                    value={confirm}
-                    onChange={(e) => setConfirm(e.target.value)}
-                    className="w-full rounded-lg border-gray-300"
-                  />
-                </div>
-              </div>
-
-              <button
-                type="submit"
-                disabled={busy}
-                className="mt-2 inline-flex w-full items-center justify-center rounded-lg bg-brand-blue px-4 py-2 font-semibold text-white hover:opacity-95 disabled:opacity-60"
-              >
-                Create account
-              </button>
-
-              <p className="text-xs text-gray-500 text-center">
-                We’ll email you a confirmation link to activate your account.
-              </p>
-            </form>
-          )}
-
-          {mode === "magic" && (
-            <form onSubmit={handleMagic} className="space-y-3">
-              <label className="block text-sm font-medium text-gray-700">Email</label>
-              <div className="relative">
-                <Mail className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
-                <input
-                  type="email"
-                  required
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  className="w-full rounded-lg border-gray-300 pl-9"
-                  placeholder="you@example.com"
-                />
-              </div>
-
-              <button
-                type="submit"
-                disabled={busy}
-                className="inline-flex w-full items-center justify-center rounded-lg bg-brand-blue px-4 py-2 font-semibold text-white hover:opacity-95 disabled:opacity-60"
-              >
-                <Wand2 className="mr-2 h-4 w-4" /> {busy ? "Sending…" : "Send magic link"}
-              </button>
-              <p className="text-xs text-gray-500 text-center">
-                We’ll email a one-time sign-in link.
-              </p>
-            </form>
-          )}
-
-          {mode === "reset" && (
-            <form onSubmit={handleReset} className="space-y-3">
-              <label className="block text-sm font-medium text-gray-700">Email</label>
-              <div className="relative">
-                <Mail className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
-                <input
-                  type="email"
-                  required
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  className="w-full rounded-lg border-gray-300 pl-9"
-                  placeholder="you@example.com"
-                />
-              </div>
-
-              <button
-                type="submit"
-                disabled={busy}
-                className="inline-flex w-full items-center justify-center rounded-lg bg-gray-900 px-4 py-2 font-semibold text-white hover:opacity-95 disabled:opacity-60"
-              >
-                <Send className="mr-2 h-4 w-4" /> {busy ? "Sending…" : "Send reset email"}
-              </button>
-
-              <p className="text-xs text-gray-500 text-center">
-                You’ll receive a link to set a new password. If you already have a link,
-                open it and you’ll be taken to reset.
-              </p>
-            </form>
-          )}
-
-          {/* Alerts */}
-          {(err || msg) && (
-            <div
-              className={
-                "mt-4 rounded-lg border px-3 py-2 text-sm " +
-                (err
-                  ? "border-red-200 bg-red-50 text-red-700"
-                  : "border-emerald-200 bg-emerald-50 text-emerald-700")
-              }
-            >
-              {err || msg}
-            </div>
-          )}
-        </div>
-      </div>
-
-      {/* Footer nav */}
-      <div className="mt-6 flex justify-center">
-        <Link
-          to="/"
-          className="inline-flex items-center gap-2 rounded-lg border px-3 py-1.5 text-sm hover:bg-gray-50"
+      <form onSubmit={onSubmit} className="space-y-3">
+        <label className="block text-sm font-medium">Email</label>
+        <input
+          className="w-full rounded border p-2"
+          placeholder="you@example.com"
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+          type="email"
+          autoComplete="email"
+          required
+        />
+        <button
+          type="submit"
+          className="w-full rounded bg-black px-4 py-2 text-white disabled:opacity-50"
+          disabled={sending || cooldown > 0 || !isEmailValid(email)}
         >
-          <ArrowLeft className="h-4 w-4" /> Back to home
-        </Link>
-      </div>
+          {cooldown > 0 ? `Wait ${cooldown}s…` : "Send magic link"}
+        </button>
+      </form>
+
+      <div className="pt-2 text-sm text-gray-600">Forgot password?</div>
+      <button
+        className="w-full rounded border px-4 py-2 disabled:opacity-50"
+        onClick={sendRecovery}
+        disabled={sending || cooldown > 0 || !isEmailValid(email)}
+      >
+        {cooldown > 0 ? `Wait ${cooldown}s…` : "Send recovery email"}
+      </button>
+
+      {mode === "sent-magic" && (
+        <div className="rounded-md bg-green-50 p-3 text-sm">
+          Check <b>{email}</b> for your sign-in link. Open it on this device.
+        </div>
+      )}
+      {mode === "sent-recovery" && (
+        <div className="rounded-md bg-green-50 p-3 text-sm">
+          Recovery email sent to <b>{email}</b>. Use the link to set a new password.
+        </div>
+      )}
+      {errorMsg && (
+        <div className="rounded-md bg-red-50 p-3 text-sm">
+          {errorMsg}
+        </div>
+      )}
+      <p className="text-xs text-gray-500">
+        Tip: links expire quickly. If it says expired, request another and use it straight away.
+      </p>
     </div>
   );
 }
