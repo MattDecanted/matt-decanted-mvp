@@ -1,4 +1,3 @@
-// src/lib/supabase.ts
 import { createClient } from '@supabase/supabase-js';
 
 const url = import.meta.env.VITE_SUPABASE_URL!;
@@ -8,50 +7,32 @@ export const supabase = createClient(url, anon, {
   auth: {
     persistSession: true,
     autoRefreshToken: true,
-    // We handle ?code= and #access_token ourselves (callback/handler)
-    detectSessionInUrl: false,
-    // ✅ Force magic links to return #access_token in the URL hash
-    flowType: 'implicit',
+    detectSessionInUrl: false, // we’ll handle it manually here
+    flowType: 'pkce',
   },
 });
 
-/** Read tokens from a legacy/implicit hash:
- *   /auth/callback#access_token=...&refresh_token=...&expires_in=3600&token_type=bearer
- */
-export function readHashTokens() {
-  const loc = new URL(window.location.href);
-  const hp = new URLSearchParams(loc.hash.replace(/^#/, ''));
-  const access_token = hp.get('access_token') || undefined;
-  const refresh_token = hp.get('refresh_token') || undefined;
-  const expires_in = Number(hp.get('expires_in') || '3600');
-  const token_type = hp.get('token_type') || 'bearer';
-  return { access_token, refresh_token, expires_in, token_type };
-}
-
-/** Strict setter: always writes the session using all token fields, then cleans the URL hash. */
-export async function setSessionFromHashStrict() {
-  const { access_token, refresh_token, expires_in, token_type } = readHashTokens();
-  if (!access_token || !refresh_token) throw new Error('Missing tokens in URL hash');
-
-  const { error } = await supabase.auth.setSession({
-    access_token,
-    refresh_token,
-    expires_in,
-    token_type,
-  });
+// --- New: one handler to parse either #access_token or ?code and store session
+export async function handleAuthRedirect() {
+  // Let the SDK read the fragment/query and persist the session
+  const { data, error } = await supabase.auth.getSessionFromUrl({ storeSession: true });
   if (error) throw error;
 
-  // remove the hash now that session is stored
+  // Clean the URL (remove hash/query) without reloading
   const loc = new URL(window.location.href);
-  window.history.replaceState({}, document.title, loc.pathname + loc.search);
+  window.history.replaceState({}, document.title, loc.pathname);
+
+  return data.session;
 }
 
-/** Back-compat aliases (so existing imports keep working) */
-export async function setSessionFromUrlFragment() {
-  return setSessionFromHashStrict();
-}
-
-// 👇 Alias so DebugAuth and others can import it without errors
+/** Back-compat aliases so existing imports keep working */
 export async function setSessionFromHash() {
-  return setSessionFromHashStrict();
+  return handleAuthRedirect();
 }
+export async function setSessionFromUrlFragment() {
+  return handleAuthRedirect();
+}
+
+// (Optional) keep your helpers if other code uses them, but they’re no longer needed:
+// export function readHashTokens() { ... }
+// export async function setSessionFromHashStrict() { ... }
