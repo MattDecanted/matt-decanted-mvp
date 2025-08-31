@@ -1,13 +1,12 @@
 // src/App.tsx
 import React from 'react';
-import { BrowserRouter as Router, Routes, Route, Navigate, useLocation } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route, Navigate, useLocation, useNavigate } from 'react-router-dom';
 
 // UI / Providers
 import { Toaster } from '@/components/ui/sonner';
 import { AuthProvider, useAuth } from '@/context/AuthContext';
 import { PointsProvider } from '@/context/PointsContext';
 import { AnalyticsProvider } from '@/context/AnalyticsContext';
-import HashAuthBridge from '@/components/HashAuthBridge';
 
 // Layout & Pages
 import Layout from '@/components/Layout';
@@ -43,19 +42,39 @@ import WSETLevel2Questions from '@/pages/blog/WSETLevel2Questions';
 import WineTastingGuide from '@/pages/blog/WineTastingGuide';
 import WineVocabularyQuiz from '@/pages/blog/WineVocabularyQuiz';
 
-import { supabase } from '@/lib/supabase';
-
-// ✅ NEW: debug page
 import DebugAuth from '@/pages/DebugAuth';
+import { supabase } from '@/lib/supabase';
 
 const FN_SUBMIT = '/.netlify/functions/trial-quiz-attempt';
 const PENDING_KEY = 'md_trial_pending';
 
-/* ---------- small helper so guards don't redirect during hash login ---------- */
+/* ---------- helper so guards don't redirect during hash login ---------- */
 function hasAuthHash(hash: string) {
   if (!hash) return false;
   const qp = new URLSearchParams(hash.startsWith('#') ? hash.slice(1) : hash);
   return !!(qp.get('access_token') && qp.get('refresh_token'));
+}
+
+/* ---------- Only navigate after Supabase parses the hash ---------- */
+function HashRedirect() {
+  const loc = useLocation();
+  const nav = useNavigate();
+
+  React.useEffect(() => {
+    const hash = loc.hash || '';
+    if (!hasAuthHash(hash)) return;
+
+    const qp = new URLSearchParams(hash.replace(/^#/, ''));
+    const type = qp.get('type') || '';
+    const redirectTo = type === 'recovery' ? '/reset-password' : '/dashboard';
+
+    // Navigate (Supabase has already processed tokens via detectSessionInUrl)
+    if (loc.pathname !== redirectTo) {
+      nav(redirectTo, { replace: true });
+    }
+  }, [loc.key, loc.hash, loc.pathname, nav]);
+
+  return null;
 }
 
 /* ---------- Auto resume pending trial-quiz posts on Account ---------- */
@@ -156,8 +175,8 @@ function App() {
       <AuthProvider>
         <PointsProvider>
           <Router>
-            {/* Turn #access_token/#refresh_token into a Supabase session */}
-            <HashAuthBridge />
+            {/* Supabase (detectSessionInUrl:true) parses the hash; we only redirect */}
+            <HashRedirect />
 
             <AppErrorBoundary>
               <Layout>
@@ -263,7 +282,7 @@ function App() {
                   {/* Legacy demo */}
                   <Route path="/demo" element={<BrandedDemo />} />
 
-                  {/* 404 fallback */}
+                  {/* 404 */}
                   <Route path="*" element={<Navigate to="/" replace />} />
                 </Routes>
               </Layout>
