@@ -1,6 +1,6 @@
 // src/App.tsx
 import React from 'react';
-import { BrowserRouter as Router, Routes, Route, Navigate, useLocation, useNavigate } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 
 // UI / Providers
 import { Toaster } from '@/components/ui/sonner';
@@ -45,6 +45,10 @@ import WineVocabularyQuiz from '@/pages/blog/WineVocabularyQuiz';
 import DebugAuth from '@/pages/DebugAuth';
 import { supabase } from '@/lib/supabase';
 
+// ✅ NEW imports
+import AuthCodeHandler from '@/components/AuthCodeHandler';
+import AuthCallbackPage from '@/pages/AuthCallbackPage';
+
 const FN_SUBMIT = '/.netlify/functions/trial-quiz-attempt';
 const PENDING_KEY = 'md_trial_pending';
 
@@ -53,28 +57,6 @@ function hasAuthHash(hash: string) {
   if (!hash) return false;
   const qp = new URLSearchParams(hash.startsWith('#') ? hash.slice(1) : hash);
   return !!(qp.get('access_token') && qp.get('refresh_token'));
-}
-
-/* ---------- Only navigate after Supabase parses the hash ---------- */
-function HashRedirect() {
-  const loc = useLocation();
-  const nav = useNavigate();
-
-  React.useEffect(() => {
-    const hash = loc.hash || '';
-    if (!hasAuthHash(hash)) return;
-
-    const qp = new URLSearchParams(hash.replace(/^#/, ''));
-    const type = qp.get('type') || '';
-    const redirectTo = type === 'recovery' ? '/reset-password' : '/dashboard';
-
-    // Navigate (Supabase has already processed tokens via detectSessionInUrl)
-    if (loc.pathname !== redirectTo) {
-      nav(redirectTo, { replace: true });
-    }
-  }, [loc.key, loc.hash, loc.pathname, nav]);
-
-  return null;
 }
 
 /* ---------- Auto resume pending trial-quiz posts on Account ---------- */
@@ -175,8 +157,8 @@ function App() {
       <AuthProvider>
         <PointsProvider>
           <Router>
-            {/* Supabase (detectSessionInUrl:true) parses the hash; we only redirect */}
-            <HashRedirect />
+            {/* ✅ Global safety net: completes auth on ANY route */}
+            <AuthCodeHandler />
 
             <AppErrorBoundary>
               <Layout>
@@ -190,6 +172,9 @@ function App() {
                   <Route path="/sign-in" element={<Navigate to="/signin" replace />} />
                   <Route path="/activate" element={<Activate />} />
                   <Route path="/reset-password" element={<ResetPassword />} />
+
+                  {/* ✅ Supabase callback */}
+                  <Route path="/auth/callback" element={<AuthCallbackPage />} />
 
                   {/* ✅ Debug (public) */}
                   <Route path="/debug/auth" element={<DebugAuth />} />
