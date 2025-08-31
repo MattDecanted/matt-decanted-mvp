@@ -1,3 +1,4 @@
+// src/lib/supabase.ts
 import { createClient } from '@supabase/supabase-js';
 
 const url = import.meta.env.VITE_SUPABASE_URL!;
@@ -9,11 +10,12 @@ export const supabase = createClient(url, anon, {
     autoRefreshToken: true,
     // We handle ?code= and #access_token ourselves (callback/handler)
     detectSessionInUrl: false,
-    flowType: 'pkce',
+    // ✅ Force magic links to return #access_token in the URL hash
+    flowType: 'implicit',
   },
 });
 
-/** Read tokens from a legacy implicit hash:
+/** Read tokens from a legacy/implicit hash:
  *   /auth/callback#access_token=...&refresh_token=...&expires_in=3600&token_type=bearer
  */
 export function readHashTokens() {
@@ -49,7 +51,7 @@ export async function setSessionFromUrlFragment() {
   return setSessionFromHashStrict();
 }
 
-// 👇 Add this alias so DebugAuth and others can import it without errors
+// 👇 Alias so DebugAuth and others can import it without errors
 export async function setSessionFromHash() {
   return setSessionFromHashStrict();
 }
