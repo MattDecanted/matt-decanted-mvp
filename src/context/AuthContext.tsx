@@ -1,4 +1,3 @@
-// src/context/AuthContext.tsx
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import type { User } from '@supabase/supabase-js';
 import { supabase } from '@/lib/supabase';
@@ -13,27 +12,20 @@ type AuthValue = {
 const AuthCtx = createContext<AuthValue | undefined>(undefined);
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const [user, setUser] = useState<User | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [user, setUser]     = useState<User | null>(null);
+  const [loading, setLoad]  = useState(true);
 
   useEffect(() => {
     let mounted = true;
-
     (async () => {
-      const { data } = await supabase.auth.getSession();    // ✅ pick up stored session
+      const { data } = await supabase.auth.getSession(); // pick up session your callback stored
       if (mounted) setUser(data.session?.user ?? null);
-      if (mounted) setLoading(false);
+      if (mounted) setLoad(false);
     })();
-
-    // ✅ react to login/logout/refresh
-    const { data: sub } = supabase.auth.onAuthStateChange((_event, session) => {
+    const { data: sub } = supabase.auth.onAuthStateChange((_e, session) => {
       setUser(session?.user ?? null);
     });
-
-    return () => {
-      sub.subscription.unsubscribe();
-      mounted = false;
-    };
+    return () => sub.subscription.unsubscribe();
   }, []);
 
   async function signInWithEmail(email: string) {
@@ -44,12 +36,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (error) throw error;
   }
 
-  async function signOut() {
-    await supabase.auth.signOut();
-  }
+  async function signOut() { await supabase.auth.signOut(); }
 
   return (
-    <AuthCtx.Provider value={{ user, loading, signInWithEmail, signOut }}>
+    <AuthCtx.Provider value={{ user, loading: loading, signInWithEmail, signOut }}>
       {children}
     </AuthCtx.Provider>
   );
