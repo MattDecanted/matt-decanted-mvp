@@ -1,28 +1,5 @@
-// src/pages/AuthCallbackPage.tsx
 import { useEffect, useState } from 'react';
 import { supabase, setSessionFromHash } from '@/lib/supabase';
-
-/** Best-effort call that enrolls the user as a free member + starts trial.
- *  Idempotent on the DB side; non-fatal if it fails. */
-async function joinMember() {
-  try {
-    const locale = (navigator.language || 'en').slice(0, 2) || 'en';
-    const { data, error, status } = await supabase.rpc('join_member', {
-      p_plan: 'free',
-      p_start_trial: true,
-      p_locale: locale,
-    });
-    if (error) console.warn('[join_member] rpc error', { status, error });
-    else console.log('[join_member] ok', data);
-  } catch (e) {
-    console.warn('[join_member] exception', e);
-  }
-}
-
-/** Don’t let background work block the redirect for long */
-function withTimeout<T>(p: Promise<T>, ms = 800): Promise<T | void> {
-  return Promise.race([p, new Promise<void>((r) => setTimeout(r, ms))]);
-}
 
 export default function AuthCallbackPage() {
   const [msg, setMsg] = useState('Signing you in…');
@@ -30,10 +7,30 @@ export default function AuthCallbackPage() {
   useEffect(() => {
     const go = () => {
       const dest = `${window.location.origin}/account`;
-      // 3 ways to force navigation, in case one is blocked by SPA history/state
       window.location.replace(dest);
       setTimeout(() => { window.location.href = dest; }, 400);
       setTimeout(() => { window.location.assign(dest); }, 1200);
+    };
+
+    // Don't let onboarding hang: race the RPC against a short timeout
+    const bestEffortJoin = async () => {
+      try {
+        setMsg('Setting up your account…');
+        const p = supabase.rpc('join_member', {
+          p_plan: 'free',
+          p_start_trial: true,
+          p_locale: (navigator.language || 'en').slice(0, 2),
+          // optional fields you can pass when you collect them:
+          // p_first_name: undefined,
+          // p_country: undefined,
+          // p_accept_tos: undefined,
+          // p_accept_notifications: undefined,
+        });
+        await Promise.race([p, new Promise((r) => setTimeout(r, 1200))]);
+      } catch (e) {
+        // Never block redirect if RPC hiccups
+        console.warn('[join_member] best-effort call failed:', e);
+      }
     };
 
     (async () => {
@@ -43,12 +40,8 @@ export default function AuthCallbackPage() {
         // 1) Implicit/hash (magic link): #access_token=...
         if (url.hash.includes('access_token') || url.hash.includes('refresh_token')) {
           setMsg('Storing session…');
-          await setSessionFromHash();                 // also cleans the hash
-
-          // New: enroll as free member + start trial (best-effort, tiny timeout)
-          setMsg('Finalizing your account…');
-          await withTimeout(joinMember());
-
+          await setSessionFromHash(); // also cleans the hash
+          await bestEffortJoin();
           setMsg('Redirecting…');
           go();
           return;
@@ -64,10 +57,7 @@ export default function AuthCallbackPage() {
           // Clean query so the app can’t mistake it for a fresh callback later
           window.history.replaceState({}, document.title, url.pathname);
 
-          // New: enroll as free member + start trial (best-effort, tiny timeout)
-          setMsg('Finalizing your account…');
-          await withTimeout(joinMember());
-
+          await bestEffortJoin();
           setMsg('Redirecting…');
           go();
           return;
