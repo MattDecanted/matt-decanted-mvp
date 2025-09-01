@@ -47,7 +47,6 @@ import { supabase } from '@/lib/supabase';
 
 // ✅ Auth callback + optional URL debugger
 import AuthCallbackPage from '@/pages/AuthCallbackPage';
-import UrlDumpPage from '@/pages/UrlDumpPage'; // optional
 
 const FN_SUBMIT = '/.netlify/functions/trial-quiz-attempt';
 const PENDING_KEY = 'md_trial_pending';
@@ -151,15 +150,14 @@ function App() {
             {/* ✅ Dedicated auth routes OUTSIDE Layout (so nothing interferes) */}
             <Routes>
               <Route path="/auth/callback" element={<AuthCallbackPage />} />
-              <Route path="/debug/url" element={<UrlDumpPage />} /> {/* optional */}
+           
             </Routes>
 
             <AppErrorBoundary>
               <Layout>
                 <Routes>
-                  {/* ⛑️ No-ops INSIDE Layout so the "*" wildcard below doesn't hijack them */}
-                  <Route path="/auth/callback" element={<></>} />
-                  <Route path="/debug/url" element={<></>} /> {/* optional */}
+      {/* optional no-op for callback so the wildcard doesn't catch it */}
+      <Route path="/auth/callback" element={<></>} />
 
                   {/* Home */}
                   <Route path="/" element={<Home />} />
