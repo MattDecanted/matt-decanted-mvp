@@ -12,7 +12,7 @@ import { useAuth } from '@/context/AuthContext';
 import { usePoints } from '@/context/PointsContext';
 import { useAnalytics } from '@/context/AnalyticsContext';
 import { toast } from 'sonner';
-import { supabase, setSessionFromUrlFragment as setSessionFromHashStrict } from '@/lib/supabase';
+import { supabase, setSessionFromHash } from '@/lib/supabase';
 
 /* ------------------------------ Helpers ---------------------------------- */
 function adelaideNow(): Date {
