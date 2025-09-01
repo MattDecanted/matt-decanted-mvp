@@ -26,7 +26,6 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   const loc = useLocation();
   const hideChrome =
     loc.pathname.startsWith("/auth/callback") ||
-    loc.pathname.startsWith("/debug/url") ||
     loc.pathname.startsWith("/reset-password");
 
   if (hideChrome) {
