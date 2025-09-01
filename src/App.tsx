@@ -45,10 +45,10 @@ import WineVocabularyQuiz from '@/pages/blog/WineVocabularyQuiz';
 import DebugAuth from '@/pages/DebugAuth';
 import { supabase } from '@/lib/supabase';
 
-// ✅ NEW imports
+// ✅ Auth routes/helpers
 import AuthCodeHandler from '@/components/AuthCodeHandler';
 import AuthCallbackPage from '@/pages/AuthCallbackPage';
-import UrlDumpPage from '@/pages/UrlDumpPage'; // NEW
+import UrlDumpPage from '@/pages/UrlDumpPage'; // optional
 
 const FN_SUBMIT = '/.netlify/functions/trial-quiz-attempt';
 const PENDING_KEY = 'md_trial_pending';
@@ -149,21 +149,21 @@ function App() {
       <AuthProvider>
         <PointsProvider>
           <Router>
-            {/* ✅ Global safety net: completes auth on ANY route (PKCE, hash, recovery) */}
+            {/* ✅ Global safety net for PKCE/hash/recovery arriving on any route */}
             <AuthCodeHandler />
 
             <AppErrorBoundary>
-              {/* ✅ Handle callbacks OUTSIDE Layout so nothing interferes */}
+              {/* ✅ Dedicated auth routes OUTSIDE Layout (nothing else can interfere) */}
               <Routes>
                 <Route path="/auth/callback" element={<AuthCallbackPage />} />
-                <Route path="/debug/url" element={<UrlDumpPage />} /> {/* NEW */}
+                <Route path="/debug/url" element={<UrlDumpPage />} /> {/* optional */}
               </Routes>
 
               <Layout>
                 <Routes>
-                  {/* ⛑️ No-ops to prevent wildcard from hijacking these paths */}
+                  {/* ⛑️ No-ops INSIDE Layout so the wildcard below doesn't hijack them */}
                   <Route path="/auth/callback" element={<></>} />
-                  <Route path="/debug/url" element={<></>} /> {/* NEW */}
+                  <Route path="/debug/url" element={<></>} /> {/* optional */}
 
                   {/* Home */}
                   <Route path="/" element={<Home />} />
