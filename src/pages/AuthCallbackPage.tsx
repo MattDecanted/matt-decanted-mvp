@@ -1,82 +1,81 @@
 // src/pages/AuthCallbackPage.tsx
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { supabase, setSessionFromHash } from '@/lib/supabase';
+
+/** Best-effort call that enrolls the user as a free member + starts trial.
+ *  Idempotent on the DB side; non-fatal if it fails. */
+async function joinMember() {
+  try {
+    const locale = (navigator.language || 'en').slice(0, 2) || 'en';
+    const { data, error, status } = await supabase.rpc('join_member', {
+      p_plan: 'free',
+      p_start_trial: true,
+      p_locale: locale,
+    });
+    if (error) console.warn('[join_member] rpc error', { status, error });
+    else console.log('[join_member] ok', data);
+  } catch (e) {
+    console.warn('[join_member] exception', e);
+  }
+}
+
+/** Don’t let background work block the redirect for long */
+function withTimeout<T>(p: Promise<T>, ms = 800): Promise<T | void> {
+  return Promise.race([p, new Promise<void>((r) => setTimeout(r, ms))]);
+}
 
 export default function AuthCallbackPage() {
   const [msg, setMsg] = useState('Signing you in…');
-  const ran = useRef(false); // guard against double-run (React StrictMode)
 
   useEffect(() => {
-    if (ran.current) return;
-    ran.current = true;
-
-    const dest = `${window.location.origin}/account`;
-
-    const redirect = () => {
-      // 3 ways, staggered, to defeat SPA history quirks
+    const go = () => {
+      const dest = `${window.location.origin}/account`;
+      // 3 ways to force navigation, in case one is blocked by SPA history/state
       window.location.replace(dest);
-      setTimeout(() => (window.location.href = dest), 400);
-      setTimeout(() => window.location.assign(dest), 1200);
+      setTimeout(() => { window.location.href = dest; }, 400);
+      setTimeout(() => { window.location.assign(dest); }, 1200);
     };
 
     (async () => {
       try {
         const url = new URL(window.location.href);
-        const hp = new URLSearchParams(url.hash.replace(/^#/, ''));
-        const hasAccess = !!hp.get('access_token');
-        const hasRefresh = !!hp.get('refresh_token');
 
-        if (hasAccess && hasRefresh) {
-          // Magic-link (implicit) flow
+        // 1) Implicit/hash (magic link): #access_token=...
+        if (url.hash.includes('access_token') || url.hash.includes('refresh_token')) {
           setMsg('Storing session…');
-          await setSessionFromHash(); // also cleans the hash
-        } else {
-          // PKCE / OAuth (?code=...)
-          const code = url.searchParams.get('code');
-          if (!code) {
-            // Nothing useful → back to sign-in
-            setMsg('Missing token. Please request a new link.');
-            window.location.replace(`${window.location.origin}/signin?auth=missing`);
-            return;
-          }
-          setMsg('Exchanging code…');
-          const { error } = await supabase.auth.exchangeCodeForSession(code);
-          if (error) throw error;
-          // Clean query so we don’t loop on refresh
-          window.history.replaceState({}, document.title, url.pathname + url.hash);
-        }
+          await setSessionFromHash();                 // also cleans the hash
 
-        setMsg('Finalizing…');
+          // New: enroll as free member + start trial (best-effort, tiny timeout)
+          setMsg('Finalizing your account…');
+          await withTimeout(joinMember());
 
-        // If we already have a session, go now
-        const first = await supabase.auth.getSession();
-        if (first.data.session) {
-          redirect();
+          setMsg('Redirecting…');
+          go();
           return;
         }
 
-        // Redirect as soon as auth state flips to signed in
-        const { data: sub } = supabase.auth.onAuthStateChange((_e, session) => {
-          if (session) {
-            try { sub.subscription.unsubscribe(); } catch {}
-            redirect();
-          }
-        });
+        // 2) PKCE: ?code=...
+        const code = url.searchParams.get('code');
+        if (code) {
+          setMsg('Exchanging code…');
+          const { error } = await supabase.auth.exchangeCodeForSession(code);
+          if (error) throw error;
 
-        // Fallback: short poll in case the event above is missed
-        const t0 = Date.now();
-        while (Date.now() - t0 < 3000) {
-          await new Promise((r) => setTimeout(r, 150));
-          const { data } = await supabase.auth.getSession();
-          if (data.session) {
-            try { sub.subscription.unsubscribe(); } catch {}
-            redirect();
-            return;
-          }
+          // Clean query so the app can’t mistake it for a fresh callback later
+          window.history.replaceState({}, document.title, url.pathname);
+
+          // New: enroll as free member + start trial (best-effort, tiny timeout)
+          setMsg('Finalizing your account…');
+          await withTimeout(joinMember());
+
+          setMsg('Redirecting…');
+          go();
+          return;
         }
 
-        // Last resort fallback
-        redirect();
+        // 3) Nothing useful in URL → back to sign in
+        setMsg('Missing token. Please request a new link.');
+        window.location.replace(`${window.location.origin}/signin?auth=missing`);
       } catch (e: any) {
         console.error('[AuthCallbackPage] error:', e);
         setMsg(e?.message || 'Could not sign you in.');
