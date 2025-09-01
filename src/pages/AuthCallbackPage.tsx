@@ -14,18 +14,23 @@ export default function AuthCallbackPage() {
       setTimeout(() => { window.location.assign(dest); }, 1200);
     };
 
-    // Safe, non-blocking membership setup (idempotent on the DB side)
-    const safeJoin = async () => {
+    const callJoinMember = async () => {
       try {
+        // locale: keep super-simple and safe
         const locale = (navigator.language || 'en').slice(0, 2);
         const { error } = await supabase.rpc('join_member', {
           p_plan: 'free',
           p_start_trial: true,
           p_locale: locale,
+          // leave optional fields null if you don't have a form here:
+          p_first_name: null,
+          p_country: null,
+          p_accept_terms: null,
+          p_accept_notifications: null,
         });
-        if (error) console.warn('[join_member] error:', error);
-      } catch (err) {
-        console.warn('[join_member] unexpected error:', err);
+        if (error) console.warn('[AuthCallback.join_member] rpc error:', error);
+      } catch (e) {
+        console.warn('[AuthCallback.join_member] threw:', e);
       }
     };
 
@@ -36,10 +41,14 @@ export default function AuthCallbackPage() {
         // 1) Implicit/hash (magic link): #access_token=...
         if (url.hash.includes('access_token') || url.hash.includes('refresh_token')) {
           setMsg('Storing session…');
-          await setSessionFromHash();                 // also cleans the hash
+          await setSessionFromHash(); // also cleans the hash
 
-          setMsg('Setting up your membership…');
-          await safeJoin();                           // ← added
+          // best-effort: ensure we actually have a session before RPC
+          const { data: s1 } = await supabase.auth.getSession();
+          if (s1?.session) {
+            setMsg('Setting up your account…');
+            await callJoinMember();
+          }
 
           setMsg('Redirecting…');
           go();
@@ -56,8 +65,12 @@ export default function AuthCallbackPage() {
           // Clean query so the app can’t mistake it for a fresh callback later
           window.history.replaceState({}, document.title, url.pathname);
 
-          setMsg('Setting up your membership…');
-          await safeJoin();                           // ← added
+          // best-effort: ensure we actually have a session before RPC
+          const { data: s2 } = await supabase.auth.getSession();
+          if (s2?.session) {
+            setMsg('Setting up your account…');
+            await callJoinMember();
+          }
 
           setMsg('Redirecting…');
           go();
