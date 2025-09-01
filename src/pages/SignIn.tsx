@@ -55,12 +55,11 @@ export default function SignIn() {
     if (!isEmailValid(email) || cooldown > 0) return;
     setSending(true);
     try {
-await supabase.auth.signInWithOtp({
-  email: email.trim(),
-  options: {
-    emailRedirectTo: `${window.location.origin}/auth/callback`, // ✅
-  },
-});
+      // ✅ capture the return value so `error` actually exists
+      const { error } = await supabase.auth.signInWithOtp({
+        email: email.trim(),
+        options: { emailRedirectTo: REDIRECT_TO },
+      });
 
       if (error) {
         const secs = secondsFrom429(error.message) ?? COOLDOWN_SEC;
@@ -75,6 +74,7 @@ await supabase.auth.signInWithOtp({
         setErrorMsg(error.message);
         return;
       }
+
       setMode("sent-magic");
       setCooldownNow(COOLDOWN_SEC);
     } finally {
@@ -112,7 +112,7 @@ await supabase.auth.signInWithOtp({
 
   const onSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    sendMagic();
+    void sendMagic();
   };
 
   return (
