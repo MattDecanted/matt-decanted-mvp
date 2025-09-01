@@ -1,40 +1,39 @@
-import React, { useEffect, useState } from "react";
-import { useNavigate, useLocation } from "react-router-dom";
-import { completeAuthFromUrl, supabase } from "@/lib/supabase";
+// src/pages/AuthCallbackPage.tsx
+import { useEffect } from 'react';
+import { supabase, setSessionFromHashStrict } from '@/lib/supabase';
 
-export default function AuthCallback() {
-  const navigate = useNavigate();
-  const { search, hash } = useLocation();
-  const [msg, setMsg] = useState("Setting your session and finishing up…");
-  const [err, setErr] = useState<string | null>(null);
-
+export default function AuthCallbackPage() {
   useEffect(() => {
     (async () => {
       try {
-        await completeAuthFromUrl();
+        const url = new URL(window.location.href);
+        const hasHash = url.hash.includes('access_token');
+        const code = url.searchParams.get('code');
 
-        const { data, error } = await supabase.auth.getSession();
-        if (error) throw error;
-        if (!data?.session) throw new Error("No session found after auth redirect");
-
-        setMsg("Signed in. Redirecting…");
-        const redirectTo = localStorage.getItem("redirectTo") || "/";
-        localStorage.removeItem("redirectTo");
-        navigate(redirectTo, { replace: true });
-      } catch (e: any) {
-        console.error("Auth callback error:", e);
-        setErr(e?.message || "Unexpected error");
-        setMsg("We couldn’t complete sign-in.");
+        if (hasHash) {
+          // Implicit: tokens are in the hash. Store them and clean the URL.
+          await setSessionFromHashStrict();
+        } else if (code) {
+          // PKCE/recovery: exchange the code for a session.
+          await supabase.auth.exchangeCodeForSession(url.href);
+          // Clean the URL query so refreshes don’t retry the exchange.
+          window.history.replaceState({}, document.title, '/auth/callback');
+        }
+      } catch (e) {
+        // swallow; we’ll still push through to /account
+        // console.error('[AuthCallbackPage] auth finalize error:', e);
+      } finally {
+        // Always finish by landing on Account
+        window.location.replace('/account');
       }
     })();
-  }, [hash, search, navigate]);
+  }, []);
 
   return (
-    <div className="min-h-[60vh] flex items-center justify-center">
-      <div className="rounded-xl border px-6 py-5 text-center shadow-sm">
-        <div className="text-lg font-semibold">Signing you in…</div>
-        <div className="mt-1 text-sm text-gray-600">{msg}</div>
-        {err && <div className="mt-3 text-sm text-red-600">Error: {err}</div>}
+    <div className="min-h-[60vh] grid place-items-center p-6">
+      <div className="rounded-xl border bg-white shadow p-6 text-center">
+        <div className="font-semibold mb-1">Signing you in…</div>
+        <div className="text-sm text-gray-600">Finishing up.</div>
       </div>
     </div>
   );
