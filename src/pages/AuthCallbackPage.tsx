@@ -7,6 +7,7 @@ export default function AuthCallbackPage() {
   useEffect(() => {
     const go = () => {
       const dest = `${window.location.origin}/account`;
+      // Try multiple navigation strategies so we don't get stuck
       window.location.replace(dest);
       setTimeout(() => { window.location.href = dest; }, 400);
       setTimeout(() => { window.location.assign(dest); }, 1200);
@@ -20,7 +21,7 @@ export default function AuthCallbackPage() {
           p_plan: 'free',
           p_start_trial: true,
           p_locale: (navigator.language || 'en').slice(0, 2),
-          // optional fields you can pass when you collect them:
+          // Optional fields you can pass when you collect them:
           // p_first_name: undefined,
           // p_country: undefined,
           // p_accept_tos: undefined,
@@ -37,7 +38,7 @@ export default function AuthCallbackPage() {
       try {
         const url = new URL(window.location.href);
 
-        // 1) Implicit/hash (magic link): #access_token=...
+        // 1) Implicit/hash (magic link): #access_token=... / #refresh_token=...
         if (url.hash.includes('access_token') || url.hash.includes('refresh_token')) {
           setMsg('Storing session…');
           await setSessionFromHash(); // also cleans the hash
@@ -51,6 +52,7 @@ export default function AuthCallbackPage() {
         const code = url.searchParams.get('code');
         if (code) {
           setMsg('Exchanging code…');
+          // Works across supabase-js versions; if yours prefers full URL, swap to exchangeCodeForSession(url.href)
           const { error } = await supabase.auth.exchangeCodeForSession(code);
           if (error) throw error;
 
