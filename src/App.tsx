@@ -45,8 +45,7 @@ import WineVocabularyQuiz from '@/pages/blog/WineVocabularyQuiz';
 import DebugAuth from '@/pages/DebugAuth';
 import { supabase } from '@/lib/supabase';
 
-// ✅ Auth routes/helpers
-import AuthCodeHandler from '@/components/AuthCodeHandler';
+// ✅ Auth callback + optional URL debugger
 import AuthCallbackPage from '@/pages/AuthCallbackPage';
 import UrlDumpPage from '@/pages/UrlDumpPage'; // optional
 
@@ -149,19 +148,16 @@ function App() {
       <AuthProvider>
         <PointsProvider>
           <Router>
-            {/* ✅ Global safety net for PKCE/hash/recovery arriving on any route */}
-            <AuthCodeHandler />
+            {/* ✅ Dedicated auth routes OUTSIDE Layout (so nothing interferes) */}
+            <Routes>
+              <Route path="/auth/callback" element={<AuthCallbackPage />} />
+              <Route path="/debug/url" element={<UrlDumpPage />} /> {/* optional */}
+            </Routes>
 
             <AppErrorBoundary>
-              {/* ✅ Dedicated auth routes OUTSIDE Layout (nothing else can interfere) */}
-              <Routes>
-                <Route path="/auth/callback" element={<AuthCallbackPage />} />
-                <Route path="/debug/url" element={<UrlDumpPage />} /> {/* optional */}
-              </Routes>
-
               <Layout>
                 <Routes>
-                  {/* ⛑️ No-ops INSIDE Layout so the wildcard below doesn't hijack them */}
+                  {/* ⛑️ No-ops INSIDE Layout so the "*" wildcard below doesn't hijack them */}
                   <Route path="/auth/callback" element={<></>} />
                   <Route path="/debug/url" element={<></>} /> {/* optional */}
 
