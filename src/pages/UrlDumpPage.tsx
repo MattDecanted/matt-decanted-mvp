@@ -1,67 +1,102 @@
+// src/pages/UrlDumpPage.tsx
 import React, { useEffect, useState } from "react";
-import { supabase } from "@/lib/supabase";
+import { supabase, completeAuthFromUrl, setSessionFromHashStrict } from "@/lib/supabase";
 
-type State =
+type View =
   | { status: "idle" }
   | { status: "pkce"; code: string }
-  | { status: "hash"; accessToken: string }
+  | { status: "hash"; accessTokenShort: string }
   | { status: "none" }
-  | { status: "ok"; email?: string; userId?: string }
+  | { status: "ok"; email?: string; userId?: string; expiresAt?: number | null }
   | { status: "error"; message: string };
 
+function readSbAuthKeys() {
+  const keys: Record<string, string | null> = {};
+  for (let i = 0; i < localStorage.length; i++) {
+    const k = localStorage.key(i)!;
+    // Supabase stores auth in keys like: "sb-<project-ref>-auth-token"
+    if (k.startsWith("sb-")) {
+      const v = localStorage.getItem(k);
+      keys[k] = v;
+    }
+  }
+  return keys;
+}
+
 export default function UrlDumpPage() {
-  const [state, setState] = useState<State>({ status: "idle" });
+  const [state, setState] = useState<View>({ status: "idle" });
   const [href, setHref] = useState("");
+  const [ls, setLs] = useState<Record<string, string | null>>({});
 
   useEffect(() => {
     const url = new URL(window.location.href);
     setHref(url.href);
+    setLs(readSbAuthKeys());
 
     const code = url.searchParams.get("code");
     const hash = url.hash.replace(/^#/, "");
     const hp = new URLSearchParams(hash);
-    const accessToken = hp.get("access_token");
+    const at = hp.get("access_token");
     const hashErr = hp.get("error") || hp.get("error_description");
 
     if (hashErr) {
-      setState({ status: "error", message: `Provider error: ${hashErr}` });
+      setState({ status: "error", message: `Provider error: ${decodeURIComponent(hashErr)}` });
       return;
     }
-    if (code) return setState({ status: "pkce", code });
-    if (accessToken) return setState({ status: "hash", accessToken });
-    return setState({ status: "none" });
+    if (code) {
+      setState({ status: "pkce", code });
+      return;
+    }
+    if (at) {
+      setState({ status: "hash", accessTokenShort: at.slice(0, 12) + "…" });
+      return;
+    }
+    setState({ status: "none" });
   }, []);
 
-  const exchangePkce = async () => {
-    try {
-      const { error } = await supabase.auth.exchangeCodeForSession(window.location.href);
-      if (error) throw error;
-      const { data } = await supabase.auth.getSession();
+  async function refreshSessionDisplay() {
+    const { data } = await supabase.auth.getSession();
+    setLs(readSbAuthKeys());
+    if (data.session) {
       setState({
         status: "ok",
-        email: data.session?.user?.email,
-        userId: data.session?.user?.id,
+        email: data.session.user?.email ?? undefined,
+        userId: data.session.user?.id ?? undefined,
+        expiresAt: data.session.expires_at ?? null,
       });
-      // Clean URL (no query/hash)
-      window.history.replaceState({}, document.title, "/debug/url");
+    }
+  }
+
+  const onAutoComplete = async () => {
+    try {
+      const ses = await completeAuthFromUrl(); // handles both hash and PKCE, cleans URL
+      await refreshSessionDisplay();
+      if (!ses) throw new Error("No session after completion");
+      // After success, keep this page but without auth params
+      const loc = new URL(window.location.href);
+      window.history.replaceState({}, document.title, loc.pathname);
     } catch (e: any) {
       setState({ status: "error", message: e?.message || String(e) });
     }
   };
 
-  const storeFromHash = async () => {
+  const onHashStrict = async () => {
     try {
-      const { error } = await supabase.auth.getSessionFromUrl({ storeSession: true });
-      if (error) throw error;
-      const { data } = await supabase.auth.getSession();
-      setState({
-        status: "ok",
-        email: data.session?.user?.email,
-        userId: data.session?.user?.id,
-      });
-      // Clean URL (no hash)
+      await setSessionFromHashStrict(); // writes session from #access_token and cleans hash
+      await refreshSessionDisplay();
+    } catch (e: any) {
+      setState({ status: "error", message: e?.message || String(e) });
+    }
+  };
+
+  const onPkceExchange = async () => {
+    try {
       const url = new URL(window.location.href);
-      window.history.replaceState({}, document.title, url.pathname + url.search);
+      const { error } = await supabase.auth.exchangeCodeForSession(url.href); // v2 requires full URL
+      if (error) throw error;
+      // Clean query so refreshes don’t retry
+      window.history.replaceState({}, document.title, url.pathname + url.hash);
+      await refreshSessionDisplay();
     } catch (e: any) {
       setState({ status: "error", message: e?.message || String(e) });
     }
@@ -69,27 +104,42 @@ export default function UrlDumpPage() {
 
   return (
     <div className="min-h-[60vh] grid place-items-center p-6">
-      <div className="rounded-xl border bg-white shadow p-6 space-y-4 max-w-xl w-full">
+      <div className="rounded-xl border bg-white shadow p-6 space-y-4 max-w-2xl w-full">
         <h1 className="text-lg font-semibold">Auth URL Debug</h1>
 
         <div className="text-xs break-all rounded bg-gray-50 p-2">{href}</div>
 
+        {/* Status & actions */}
         {state.status === "pkce" && (
-          <>
-            <div className="text-sm">Detected: <b>PKCE</b> (<code>?code=...</code>)</div>
-            <button className="rounded bg-black text-white px-4 py-2" onClick={exchangePkce}>
-              Exchange code for session
-            </button>
-          </>
+          <div className="space-y-2">
+            <div className="text-sm">
+              Detected: <b>PKCE</b> (<code>?code=…</code>)
+            </div>
+            <div className="flex gap-2">
+              <button className="rounded bg-black text-white px-4 py-2" onClick={onAutoComplete}>
+                Auto-complete from URL
+              </button>
+              <button className="rounded border px-4 py-2" onClick={onPkceExchange}>
+                Exchange code (manual)
+              </button>
+            </div>
+          </div>
         )}
 
         {state.status === "hash" && (
-          <>
-            <div className="text-sm">Detected: <b>Implicit</b> (<code>#access_token=...</code>)</div>
-            <button className="rounded bg-black text-white px-4 py-2" onClick={storeFromHash}>
-              Store session from hash
-            </button>
-          </>
+          <div className="space-y-2">
+            <div className="text-sm">
+              Detected: <b>Implicit</b> (<code>#access_token=…</code>) token={state.accessTokenShort}
+            </div>
+            <div className="flex gap-2">
+              <button className="rounded bg-black text-white px-4 py-2" onClick={onAutoComplete}>
+                Auto-complete from URL
+              </button>
+              <button className="rounded border px-4 py-2" onClick={onHashStrict}>
+                Store from hash (strict)
+              </button>
+            </div>
+          </div>
         )}
 
         {state.status === "none" && (
@@ -102,22 +152,15 @@ export default function UrlDumpPage() {
           <div className="space-y-2">
             <div className="text-green-700">✅ Session stored.</div>
             <div className="text-sm text-gray-700">
-              {state.email && <>Email: <b>{state.email}</b><br/></>}
-              {state.userId && <>User ID: <code className="text-xs">{state.userId}</code></>}
-            </div>
-            <div className="flex gap-2">
-              <a className="rounded bg-black text-white px-3 py-2" href="/account">Go to Account</a>
-              <a className="rounded border px-3 py-2" href="/dashboard">Go to Dashboard</a>
-            </div>
-          </div>
-        )}
-
-        {state.status === "error" && (
-          <div className="text-sm text-red-600">
-            {state.message}
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
+              {state.email && (
+                <>
+                  Email: <b>{state.email}</b>
+                  <br />
+                </>
+              )}
+              {state.userId && (
+                <>
+                  User ID: <code className="text-xs">{state.userId}</code>
+                  <br />
+                </>
+              )}
