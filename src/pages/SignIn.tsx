@@ -16,6 +16,15 @@ export default function SignIn() {
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const timerRef = useRef<number | null>(null);
 
+  // If already signed in, skip this page
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data }) => {
+      if (data.session) {
+        window.location.replace("/account");
+      }
+    });
+  }, []);
+
   const isEmailValid = (e: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e.trim());
 
   const startTimer = (startFrom: number) => {
@@ -41,57 +50,62 @@ export default function SignIn() {
     const last = Number(localStorage.getItem(KEY) || 0);
     const delta = Math.max(0, COOLDOWN_SEC - Math.floor((Date.now() - last) / 1000));
     if (delta > 0) startTimer(delta);
-    return () => { if (timerRef.current) window.clearInterval(timerRef.current); };
+    return () => {
+      if (timerRef.current) window.clearInterval(timerRef.current);
+    };
   }, []);
 
   const secondsFrom429 = (m?: string | null) => {
     if (!m) return null;
     const mm = /after\s+(\d+)\s*seconds?/i.exec(m);
     return mm ? Math.max(1, parseInt(mm[1], 10)) : null;
+    // Supabase sometimes returns a hint like “try again after 23 seconds”
   };
 
-const sendMagic = async () => {
-  setErrorMsg(null);
-  if (!isEmailValid(email) || cooldown > 0) return;
-  setSending(true);
-  try {
-    const { error } = await supabase.auth.signInWithOtp({
-      email: email.trim(),
-      options: {
-        emailRedirectTo: `${window.location.origin}/auth/callback`,
-      },
-    });
+  const sendMagic = async () => {
+    setErrorMsg(null);
+    if (!isEmailValid(email) || cooldown > 0) return;
 
-    if (error) {
-      const secs = secondsFrom429(error.message) ?? COOLDOWN_SEC;
-      if (String(error.message).toLowerCase().includes("429")) {
-        setCooldownNow(secs);
-        setMode("idle");
-        setErrorMsg(`We just sent a link recently. Try again in ~${secs}s.`);
+    setSending(true);
+    try {
+      const { error } = await supabase.auth.signInWithOtp({
+        email: email.trim(),
+        options: {
+          emailRedirectTo: REDIRECT_TO, // ✅ lands on /auth/callback
+        },
+      });
+
+      if (error) {
+        const secs = secondsFrom429(error.message) ?? COOLDOWN_SEC;
+        if (String(error.message).toLowerCase().includes("429")) {
+          setCooldownNow(secs);
+          setMode("idle");
+          setErrorMsg(`We just sent a link recently. Try again in ~${secs}s.`);
+          return;
+        }
+        console.error("signInWithOtp error:", error);
+        setMode("error");
+        setErrorMsg(error.message);
         return;
       }
-      console.error("signInWithOtp error:", error);
-      setMode("error");
-      setErrorMsg(error.message);
-      return;
+
+      setMode("sent-magic");
+      setCooldownNow(COOLDOWN_SEC);
+    } finally {
+      setSending(false);
     }
-
-    setMode("sent-magic");
-    setCooldownNow(COOLDOWN_SEC);
-  } finally {
-    setSending(false);
-  }
-};
-
+  };
 
   const sendRecovery = async () => {
     setErrorMsg(null);
     if (!isEmailValid(email) || cooldown > 0) return;
+
     setSending(true);
     try {
       const { error } = await supabase.auth.resetPasswordForEmail(email.trim(), {
         redirectTo: `${REDIRECT_TO}?type=recovery`,
       });
+
       if (error) {
         const secs = secondsFrom429(error.message) ?? COOLDOWN_SEC;
         if (String(error.message).toLowerCase().includes("429")) {
@@ -105,6 +119,7 @@ const sendMagic = async () => {
         setErrorMsg(error.message);
         return;
       }
+
       setMode("sent-recovery");
       setCooldownNow(COOLDOWN_SEC);
     } finally {
