@@ -55,10 +55,13 @@ export default function SignIn() {
     if (!isEmailValid(email) || cooldown > 0) return;
     setSending(true);
     try {
-      const { error } = await supabase.auth.signInWithOtp({
-        email: email.trim(),
-        options: { emailRedirectTo: REDIRECT_TO },
-      });
+await supabase.auth.signInWithOtp({
+  email: email.trim(),
+  options: {
+    emailRedirectTo: `${window.location.origin}/auth/callback`, // ✅
+  },
+});
+
       if (error) {
         const secs = secondsFrom429(error.message) ?? COOLDOWN_SEC;
         if (String(error.message).toLowerCase().includes("429")) {
