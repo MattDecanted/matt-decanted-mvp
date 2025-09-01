@@ -50,37 +50,39 @@ export default function SignIn() {
     return mm ? Math.max(1, parseInt(mm[1], 10)) : null;
   };
 
-  const sendMagic = async () => {
-    setErrorMsg(null);
-    if (!isEmailValid(email) || cooldown > 0) return;
-    setSending(true);
-    try {
-      // ✅ capture the return value so `error` actually exists
-      const { error } = await supabase.auth.signInWithOtp({
-        email: email.trim(),
-        options: { emailRedirectTo: REDIRECT_TO },
-      });
+const sendMagic = async () => {
+  setErrorMsg(null);
+  if (!isEmailValid(email) || cooldown > 0) return;
+  setSending(true);
+  try {
+    const { error } = await supabase.auth.signInWithOtp({
+      email: email.trim(),
+      options: {
+        emailRedirectTo: `${window.location.origin}/auth/callback`,
+      },
+    });
 
-      if (error) {
-        const secs = secondsFrom429(error.message) ?? COOLDOWN_SEC;
-        if (String(error.message).toLowerCase().includes("429")) {
-          setCooldownNow(secs);
-          setMode("idle");
-          setErrorMsg(`We just sent a link recently. Try again in ~${secs}s.`);
-          return;
-        }
-        console.error("signInWithOtp error:", error);
-        setMode("error");
-        setErrorMsg(error.message);
+    if (error) {
+      const secs = secondsFrom429(error.message) ?? COOLDOWN_SEC;
+      if (String(error.message).toLowerCase().includes("429")) {
+        setCooldownNow(secs);
+        setMode("idle");
+        setErrorMsg(`We just sent a link recently. Try again in ~${secs}s.`);
         return;
       }
-
-      setMode("sent-magic");
-      setCooldownNow(COOLDOWN_SEC);
-    } finally {
-      setSending(false);
+      console.error("signInWithOtp error:", error);
+      setMode("error");
+      setErrorMsg(error.message);
+      return;
     }
-  };
+
+    setMode("sent-magic");
+    setCooldownNow(COOLDOWN_SEC);
+  } finally {
+    setSending(false);
+  }
+};
+
 
   const sendRecovery = async () => {
     setErrorMsg(null);
