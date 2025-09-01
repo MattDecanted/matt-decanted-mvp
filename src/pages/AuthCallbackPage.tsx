@@ -16,13 +16,11 @@ export default function AuthCallbackPage() {
 
     const callJoinMember = async () => {
       try {
-        // locale: keep super-simple and safe
         const locale = (navigator.language || 'en').slice(0, 2);
         const { error } = await supabase.rpc('join_member', {
           p_plan: 'free',
           p_start_trial: true,
           p_locale: locale,
-          // leave optional fields null if you don't have a form here:
           p_first_name: null,
           p_country: null,
           p_accept_terms: null,
@@ -41,14 +39,16 @@ export default function AuthCallbackPage() {
         // 1) Implicit/hash (magic link): #access_token=...
         if (url.hash.includes('access_token') || url.hash.includes('refresh_token')) {
           setMsg('Storing session…');
-          await setSessionFromHash(); // also cleans the hash
 
-          // best-effort: ensure we actually have a session before RPC
-          const { data: s1 } = await supabase.auth.getSession();
-          if (s1?.session) {
-            setMsg('Setting up your account…');
-            await callJoinMember();
-          }
+          // Race storing the session vs a short timeout so we never hang
+          const store = (async () => { await setSessionFromHash(); })();
+          const timeout = new Promise((r) => setTimeout(r, 1500));
+          await Promise.race([store.catch(() => {}), timeout]);
+
+          // Cleaned inside setSessionFromHash; now kick off join_member in the background
+          supabase.auth.getSession().then(({ data }) => {
+            if (data?.session) void callJoinMember();
+          });
 
           setMsg('Redirecting…');
           go();
@@ -65,12 +65,10 @@ export default function AuthCallbackPage() {
           // Clean query so the app can’t mistake it for a fresh callback later
           window.history.replaceState({}, document.title, url.pathname);
 
-          // best-effort: ensure we actually have a session before RPC
-          const { data: s2 } = await supabase.auth.getSession();
-          if (s2?.session) {
-            setMsg('Setting up your account…');
-            await callJoinMember();
-          }
+          // Fire-and-forget join_member; don’t block redirect
+          supabase.auth.getSession().then(({ data }) => {
+            if (data?.session) void callJoinMember();
+          });
 
           setMsg('Redirecting…');
           go();
