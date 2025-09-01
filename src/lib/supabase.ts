@@ -1,25 +1,50 @@
-import { createClient, type Session } from '@supabase/supabase-js';
+// src/lib/supabase.ts
+import {
+  createClient,
+  type Session,
+  type SupabaseClient,
+} from '@supabase/supabase-js';
 
 const url  = import.meta.env.VITE_SUPABASE_URL!;
 const anon = import.meta.env.VITE_SUPABASE_ANON_KEY!;
 
-export const supabase = createClient(url, anon, {
+export const supabase: SupabaseClient = createClient(url, anon, {
   auth: {
     persistSession: true,
     autoRefreshToken: true,
-    detectSessionInUrl: false,     // we will do it ourselves
-    flowType: 'implicit',          // simplest + matches your magic links
+    // We handle auth params ourselves on /auth/callback (and any fallback pages)
+    detectSessionInUrl: false,
+    // Your emails use hash/implicit links, this is the simplest + most compatible
+    flowType: 'implicit',
   },
 });
 
-// Handy for console checks:
-console.log('[supabase.init]', { url, anon_prefix: anon.slice(0, 6) });
-// @ts-expect-error
-window.SB = supabase;
+// Helpful runtime breadcrumb + console access
+if (typeof window !== 'undefined') {
+  // eslint-disable-next-line no-console
+  console.log('[supabase.init]', { url, anon_prefix: anon?.slice(0, 6) });
+  (window as any).SB = supabase; // debug: SB.auth.getSession() in DevTools
+}
 
-// Helper: complete auth from a *hash* magic link on /auth/callback
-export async function setSessionFromHash(): Promise<Session | null> {
-  const loc = new URL(window.location.href);
+/** Return true if current URL contains auth info we can consume. */
+export function isAuthUrl(href: string = (typeof window !== 'undefined' ? window.location.href : '')): boolean {
+  try {
+    if (!href) return false;
+    const url = new URL(href);
+    const code = url.searchParams.get('code');
+    const hash = url.hash.replace(/^#/, '');
+    const hp = new URLSearchParams(hash);
+    return Boolean(code || hp.get('access_token') || hp.get('refresh_token'));
+  } catch {
+    return false;
+  }
+}
+
+/** Complete auth from an implicit/hash magic link: #access_token=…&refresh_token=… */
+export async function setSessionFromHash(href: string = (typeof window !== 'undefined' ? window.location.href : '')): Promise<Session | null> {
+  if (typeof window === 'undefined') return null;
+
+  const loc = new URL(href);
   const hp  = new URLSearchParams(loc.hash.replace(/^#/, ''));
 
   const err = hp.get('error') || hp.get('error_description');
@@ -32,14 +57,51 @@ export async function setSessionFromHash(): Promise<Session | null> {
 
   if (!access_token || !refresh_token) return null;
 
-  const { data, error } = await supabase.auth.setSession({
-    access_token, refresh_token, expires_in, token_type,
+  const { error } = await supabase.auth.setSession({
+    access_token,
+    refresh_token,
+    expires_in,
+    token_type,
   });
   if (error) throw error;
 
-  // clean hash
+  // Clean hash
   window.history.replaceState({}, document.title, loc.pathname + loc.search);
 
-  const sessionRes = await supabase.auth.getSession();
-  return sessionRes.data.session ?? null;
+  const { data } = await supabase.auth.getSession();
+  return data.session ?? null;
+}
+
+/** Complete auth from PKCE (?code=…) if you ever switch to it or use OAuth. */
+export async function exchangeCodeFromUrl(href: string = (typeof window !== 'undefined' ? window.location.href : '')): Promise<Session | null> {
+  if (typeof window === 'undefined') return null;
+
+  const url = new URL(href);
+  const code = url.searchParams.get('code');
+  if (!code) return null;
+
+  const { error } = await supabase.auth.exchangeCodeForSession(url.href);
+  if (error) throw error;
+
+  // Clean query
+  window.history.replaceState({}, document.title, url.pathname);
+
+  const { data } = await supabase.auth.getSession();
+  return data.session ?? null;
+}
+
+/** Try hash first (your current emails), then PKCE. Returns the session or null. */
+export async function completeAuthFromUrl(href?: string): Promise<Session | null> {
+  const s1 = await setSessionFromHash(href);
+  if (s1) return s1;
+  const s2 = await exchangeCodeFromUrl(href);
+  return s2;
+}
+
+/* ---------- Back-compat aliases so older imports don't break ---------- */
+export async function setSessionFromUrlFragment() {
+  return setSessionFromHash();
+}
+export async function setSessionFromHashStrict() {
+  return setSessionFromHash();
 }
