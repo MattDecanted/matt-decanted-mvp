@@ -12,28 +12,29 @@ export const supabase: SupabaseClient = createClient(url, anon, {
   auth: {
     persistSession: true,
     autoRefreshToken: true,
-    // We handle auth params ourselves on /auth/callback (and any fallback pages)
+    // We handle auth params ourselves on /auth/callback (and fallbacks)
     detectSessionInUrl: false,
-    // Your emails use hash/implicit links, this is the simplest + most compatible
+    // Your magic links are implicit (#access_token...). Keep it simple.
     flowType: 'implicit',
   },
 });
 
-// Helpful runtime breadcrumb + console access
+// Helpful runtime breadcrumb + console access for debugging
 if (typeof window !== 'undefined') {
   // eslint-disable-next-line no-console
   console.log('[supabase.init]', { url, anon_prefix: anon?.slice(0, 6) });
-  (window as any).SB = supabase; // debug: SB.auth.getSession() in DevTools
+  (window as any).SB = supabase; // e.g. SB.auth.getSession() in DevTools
 }
 
-/** Return true if current URL contains auth info we can consume. */
-export function isAuthUrl(href: string = (typeof window !== 'undefined' ? window.location.href : '')): boolean {
+/** True if current URL contains auth info we can consume. */
+export function isAuthUrl(
+  href: string = (typeof window !== 'undefined' ? window.location.href : '')
+): boolean {
   try {
     if (!href) return false;
-    const url = new URL(href);
-    const code = url.searchParams.get('code');
-    const hash = url.hash.replace(/^#/, '');
-    const hp = new URLSearchParams(hash);
+    const u = new URL(href);
+    const code = u.searchParams.get('code');
+    const hp = new URLSearchParams(u.hash.replace(/^#/, ''));
     return Boolean(code || hp.get('access_token') || hp.get('refresh_token'));
   } catch {
     return false;
@@ -41,7 +42,9 @@ export function isAuthUrl(href: string = (typeof window !== 'undefined' ? window
 }
 
 /** Complete auth from an implicit/hash magic link: #access_token=…&refresh_token=… */
-export async function setSessionFromHash(href: string = (typeof window !== 'undefined' ? window.location.href : '')): Promise<Session | null> {
+export async function setSessionFromHash(
+  href: string = (typeof window !== 'undefined' ? window.location.href : '')
+): Promise<Session | null> {
   if (typeof window === 'undefined') return null;
 
   const loc = new URL(href);
@@ -73,18 +76,21 @@ export async function setSessionFromHash(href: string = (typeof window !== 'unde
 }
 
 /** Complete auth from PKCE (?code=…) if you ever switch to it or use OAuth. */
-export async function exchangeCodeFromUrl(href: string = (typeof window !== 'undefined' ? window.location.href : '')): Promise<Session | null> {
+export async function exchangeCodeFromUrl(
+  href: string = (typeof window !== 'undefined' ? window.location.href : '')
+): Promise<Session | null> {
   if (typeof window === 'undefined') return null;
 
-  const url = new URL(href);
-  const code = url.searchParams.get('code');
+  const u = new URL(href);
+  const code = u.searchParams.get('code');
   if (!code) return null;
 
-  const { error } = await supabase.auth.exchangeCodeForSession(url.href);
+  // Pass the code directly (works across supabase-js versions)
+  const { error } = await supabase.auth.exchangeCodeForSession(code);
   if (error) throw error;
 
   // Clean query
-  window.history.replaceState({}, document.title, url.pathname);
+  window.history.replaceState({}, document.title, u.pathname);
 
   const { data } = await supabase.auth.getSession();
   return data.session ?? null;
