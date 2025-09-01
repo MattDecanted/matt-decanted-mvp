@@ -18,19 +18,22 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     let mounted = true;
+
     (async () => {
-      // ✅ pick up any session already stored by /auth/callback
-      const { data } = await supabase.auth.getSession();
+      const { data } = await supabase.auth.getSession();    // ✅ pick up stored session
       if (mounted) setUser(data.session?.user ?? null);
-      setLoading(false);
+      if (mounted) setLoading(false);
     })();
 
-    // ✅ react to future changes (login/logout/refresh)
+    // ✅ react to login/logout/refresh
     const { data: sub } = supabase.auth.onAuthStateChange((_event, session) => {
       setUser(session?.user ?? null);
     });
 
-    return () => sub.subscription.unsubscribe();
+    return () => {
+      sub.subscription.unsubscribe();
+      mounted = false;
+    };
   }, []);
 
   async function signInWithEmail(email: string) {
