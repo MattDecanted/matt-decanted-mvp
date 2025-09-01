@@ -58,7 +58,7 @@ export default function SignIn() {
 await supabase.auth.signInWithOtp({
   email: email.trim(),
   options: {
-    emailRedirectTo: `${window.location.origin}/auth/callback`, // ✅
+    emailRedirectTo: `${window.location.origin}//debug/url`, // ✅
   },
 });
 
