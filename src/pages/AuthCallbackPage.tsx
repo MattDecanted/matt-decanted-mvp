@@ -14,6 +14,21 @@ export default function AuthCallbackPage() {
       setTimeout(() => { window.location.assign(dest); }, 1200);
     };
 
+    // Safe, non-blocking membership setup (idempotent on the DB side)
+    const safeJoin = async () => {
+      try {
+        const locale = (navigator.language || 'en').slice(0, 2);
+        const { error } = await supabase.rpc('join_member', {
+          p_plan: 'free',
+          p_start_trial: true,
+          p_locale: locale,
+        });
+        if (error) console.warn('[join_member] error:', error);
+      } catch (err) {
+        console.warn('[join_member] unexpected error:', err);
+      }
+    };
+
     (async () => {
       try {
         const url = new URL(window.location.href);
@@ -22,6 +37,10 @@ export default function AuthCallbackPage() {
         if (url.hash.includes('access_token') || url.hash.includes('refresh_token')) {
           setMsg('Storing session…');
           await setSessionFromHash();                 // also cleans the hash
+
+          setMsg('Setting up your membership…');
+          await safeJoin();                           // ← added
+
           setMsg('Redirecting…');
           go();
           return;
@@ -36,6 +55,9 @@ export default function AuthCallbackPage() {
 
           // Clean query so the app can’t mistake it for a fresh callback later
           window.history.replaceState({}, document.title, url.pathname);
+
+          setMsg('Setting up your membership…');
+          await safeJoin();                           // ← added
 
           setMsg('Redirecting…');
           go();
