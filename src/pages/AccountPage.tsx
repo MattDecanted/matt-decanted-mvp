@@ -12,7 +12,7 @@ import { useAuth } from '@/context/AuthContext';
 import { usePoints } from '@/context/PointsContext';
 import { useAnalytics } from '@/context/AnalyticsContext';
 import { toast } from 'sonner';
-import { supabase } from '@/lib/supabase';
+import { supabase, setSessionFromHashStrict } from '@/lib/supabase';
 
 /* ------------------------------ Helpers ---------------------------------- */
 function adelaideNow(): Date {
@@ -35,33 +35,46 @@ function formatAdelaide(dt: Date): string {
   });
 }
 
-/** Fallback: if a magic link lands directly on /account, exchange it here. */
-function useSupabaseMagicLinkExchange() {
-  const { hash, search, pathname } = useLocation();
+/** Fallback: if a magic link lands directly on /account, finalize it here. */
+function useFinalizeAuthIfNeeded() {
+  const { hash, pathname, search } = useLocation();
 
   useEffect(() => {
     (async () => {
-      const url = new URL(window.location.href);
-      if (hash.includes('error=')) {
-        const params = new URLSearchParams(hash.replace('#', ''));
-        const desc = params.get('error_description') || 'Sign-in link is invalid or expired.';
-        toast.error(decodeURIComponent(desc));
-        history.replaceState({}, document.title, pathname);
-        return;
-      }
+      try {
+        const url = new URL(window.location.href);
 
-      const hasHashToken =
-        hash.includes('access_token') || hash.includes('refresh_token') || hash.includes('type=magiclink');
-      const hasCode = !!url.searchParams.get('code');
-      if (!hasHashToken && !hasCode) return;
+        // Provider error returned in hash
+        if (hash.includes('error=')) {
+          const params = new URLSearchParams(hash.replace(/^#/, ''));
+          const desc = params.get('error_description') || 'Sign-in link is invalid or expired.';
+          toast.error(decodeURIComponent(desc));
+          history.replaceState({}, document.title, pathname);
+          return;
+        }
 
-      const { error } = await supabase.auth.getSessionFromUrl({ storeSession: true });
-      if (error) {
-        console.error('getSessionFromUrl error:', error);
+        const hasHashToken =
+          hash.includes('access_token') ||
+          hash.includes('refresh_token') ||
+          hash.includes('type=magiclink');
+
+        const code = url.searchParams.get('code');
+
+        if (hasHashToken) {
+          // Implicit flow (hash): write session and clean URL
+          await setSessionFromHashStrict();
+          history.replaceState({}, document.title, pathname + search.replace(/\??$/, ''));
+        } else if (code) {
+          // PKCE/recovery: exchange and clean query
+          const { error } = await supabase.auth.exchangeCodeForSession(url.href);
+          if (error) throw error;
+          history.replaceState({}, document.title, pathname);
+        }
+      } catch (e) {
+        // Don’t block the page; just surface a toast
+        console.error('[AccountPage] finalize auth failed:', e);
         toast.error('Could not complete sign-in. Please request a new link.');
       }
-
-      history.replaceState({}, document.title, pathname);
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -69,15 +82,29 @@ function useSupabaseMagicLinkExchange() {
 
 /* ------------------------------ Component -------------------------------- */
 export default function AccountPage() {
-  console.log('✅ AccountPage mounted');
-  useSupabaseMagicLinkExchange();
+  useFinalizeAuthIfNeeded();
 
   const [email, setEmail] = useState('');
   const [loading, setLoading] = useState(false);
-  const { user, signInWithEmail, signOut } = useAuth();
-  const { totalPoints } = usePoints();
+
+  // auth / analytics
+  const { user, signOut } = useAuth();
   const { track } = useAnalytics();
 
+  // points (guarded: some apps expose .points, others .totalPoints)
+  const pointsCtx = usePoints?.();
+  const totalPoints = (pointsCtx?.totalPoints ?? pointsCtx?.points ?? 0) as number;
+
+  // session expiry (for the status banner)
+  const [expiresAt, setExpiresAt] = useState<number | null>(null);
+  useEffect(() => {
+    (async () => {
+      const { data } = await supabase.auth.getSession();
+      setExpiresAt(data.session?.expires_at ?? null);
+    })();
+  }, []);
+
+  // trial status
   const [trialStartedAt, setTrialStartedAt] = useState<string | null>(null);
   const [trialLoading, setTrialLoading] = useState(true);
   const [trialError, setTrialError] = useState<string | null>(null);
@@ -113,17 +140,22 @@ export default function AccountPage() {
     };
   }, [user?.id]);
 
+  // Send magic link from here (forces correct redirect)
   const handleSignIn = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!email.trim()) return;
     setLoading(true);
     try {
-      await signInWithEmail(email);
-      toast.success('Check your email for the sign-in link!');
-      track('signup_complete', { method: 'magic_link' });
+      const { error } = await supabase.auth.signInWithOtp({
+        email: email.trim(),
+        options: { emailRedirectTo: `${window.location.origin}/auth/callback` },
+      });
+      if (error) throw error;
+      toast.success('Check your email for the sign-in link.');
+      track?.('signup_complete', { method: 'magic_link' });
       setEmail('');
-    } catch (error) {
-      console.error('Sign in error:', error);
+    } catch (err) {
+      console.error('Sign in error:', err);
       toast.error('Failed to send sign-in link. Please try again.');
     } finally {
       setLoading(false);
@@ -190,10 +222,124 @@ export default function AccountPage() {
   const daysLeft = started ? Math.max(0, Math.ceil(msLeft / (1000 * 60 * 60 * 24))) : null;
   const trialActive = started ? msLeft > 0 : false;
 
+  /* --------------------------- Authed view --------------------------- */
   return (
     <div className="max-w-4xl mx-auto space-y-6">
-      {/* You can keep everything below exactly as-is */}
-      {/* ... */}
+      {/* ✅ Signed-in status banner */}
+      <div
+        className={
+          'rounded-md border px-3 py-2 text-sm ' +
+          (user ? 'border-green-200 bg-green-50 text-green-800' : 'border-red-200 bg-red-50 text-red-800')
+        }
+      >
+        {user ? (
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="font-medium">Signed in</span>
+            <span>
+              as <b>{user.email}</b>
+            </span>
+            {expiresAt ? (
+              <span className="text-xs text-gray-600">
+                (token expires {new Date(expiresAt * 1000).toLocaleString()})
+              </span>
+            ) : null}
+          </div>
+        ) : (
+          <div>
+            <span className="font-medium">Not signed in.</span>{' '}
+            <a className="underline" href="/signin">
+              Go to sign in
+            </a>
+          </div>
+        )}
+      </div>
+
+      {/* Profile + quick actions */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <User className="w-5 h-5" />
+            Your Account
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div className="rounded border p-3">
+              <div className="text-xs text-gray-500">Email</div>
+              <div className="font-medium">{user.email}</div>
+            </div>
+            <div className="rounded border p-3">
+              <div className="text-xs text-gray-500">User ID</div>
+              <div className="font-mono text-xs break-all">{user.id}</div>
+            </div>
+          </div>
+          <div className="flex gap-2">
+            <Link to="/dashboard" className="inline-flex items-center rounded border px-3 py-2 text-sm">
+              <Trophy className="w-4 h-4 mr-2" />
+              Go to Dashboard
+            </Link>
+            <Button variant="outline" onClick={handleSignOut}>
+              <LogOut className="w-4 h-4 mr-2" />
+              Sign out
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Points & Trial */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Trophy className="w-5 h-5" />
+              Points
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="text-3xl font-bold">{Number(totalPoints || 0)}</div>
+            <div className="text-xs text-gray-500">Total points earned</div>
+            <div className="mt-4">
+              <Progress value={Math.min(100, Number(totalPoints || 0) % 100)} />
+              <div className="text-xs mt-1 text-gray-500">Next reward at +100</div>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Calendar className="w-5 h-5" />
+              Trial
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-2">
+            {trialLoading ? (
+              <div className="text-sm text-gray-500">Loading trial status…</div>
+            ) : trialError ? (
+              <div className="text-sm text-red-600">{trialError}</div>
+            ) : started ? (
+              <>
+                <div className="text-sm">
+                  Started: <b>{formatAdelaide(started)}</b>
+                </div>
+                <div className="text-sm">
+                  Ends: <b>{formatAdelaide(ends!)}</b>
+                </div>
+                <div className="text-sm">
+                  Status:{' '}
+                  {trialActive ? (
+                    <Badge className="bg-green-600">Active ({daysLeft} day{daysLeft === 1 ? '' : 's'} left)</Badge>
+                  ) : (
+                    <Badge variant="secondary">Expired</Badge>
+                  )}
+                </div>
+              </>
+            ) : (
+              <div className="text-sm">Your free trial will start the first time you play.</div>
+            )}
+          </CardContent>
+        </Card>
+      </div>
     </div>
   );
 }
