@@ -3,13 +3,13 @@ import { createClient, type Session } from '@supabase/supabase-js';
 const url = import.meta.env.VITE_SUPABASE_URL!;
 const anon = import.meta.env.VITE_SUPABASE_ANON_KEY!;
 
+// src/lib/supabase.ts
 export const supabase = createClient(url, anon, {
   auth: {
     persistSession: true,
     autoRefreshToken: true,
-    // We handle redirects manually (hash and PKCE)
-    detectSessionInUrl: false,
-    flowType: 'pkce',
+    detectSessionInUrl: false,   // we handle the URL ourselves
+    flowType: 'implicit',
   },
 });
 
