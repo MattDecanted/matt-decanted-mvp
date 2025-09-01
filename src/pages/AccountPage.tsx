@@ -12,7 +12,7 @@ import { useAuth } from '@/context/AuthContext';
 import { usePoints } from '@/context/PointsContext';
 import { useAnalytics } from '@/context/AnalyticsContext';
 import { toast } from 'sonner';
-+ import { supabase, setSessionFromUrlFragment as setSessionFromHashStrict } from '@/lib/supabase';
+import { supabase, setSessionFromUrlFragment as setSessionFromHashStrict } from '@/lib/supabase';
 
 /* ------------------------------ Helpers ---------------------------------- */
 function adelaideNow(): Date {
@@ -44,7 +44,6 @@ function useFinalizeAuthIfNeeded() {
       try {
         const url = new URL(window.location.href);
 
-        // Provider error returned in hash
         if (hash.includes('error=')) {
           const params = new URLSearchParams(hash.replace(/^#/, ''));
           const desc = params.get('error_description') || 'Sign-in link is invalid or expired.';
@@ -61,17 +60,14 @@ function useFinalizeAuthIfNeeded() {
         const code = url.searchParams.get('code');
 
         if (hasHashToken) {
-          // Implicit flow (hash): write session and clean URL
-          await setSessionFromHashStrict();
+          await setSessionFromHashStrict(); // sets session + cleans hash
           history.replaceState({}, document.title, pathname + search.replace(/\??$/, ''));
         } else if (code) {
-          // PKCE/recovery: exchange and clean query
           const { error } = await supabase.auth.exchangeCodeForSession(url.href);
           if (error) throw error;
           history.replaceState({}, document.title, pathname);
         }
       } catch (e) {
-        // Don’t block the page; just surface a toast
         console.error('[AccountPage] finalize auth failed:', e);
         toast.error('Could not complete sign-in. Please request a new link.');
       }
@@ -87,15 +83,14 @@ export default function AccountPage() {
   const [email, setEmail] = useState('');
   const [loading, setLoading] = useState(false);
 
-  // auth / analytics
   const { user, signOut } = useAuth();
   const { track } = useAnalytics();
 
-  // points (guarded: some apps expose .points, others .totalPoints)
+  // points (guarded)
   const pointsCtx = usePoints?.();
   const totalPoints = (pointsCtx?.totalPoints ?? pointsCtx?.points ?? 0) as number;
 
-  // session expiry (for the status banner)
+  // session expiry (status banner)
   const [expiresAt, setExpiresAt] = useState<number | null>(null);
   useEffect(() => {
     (async () => {
@@ -278,7 +273,7 @@ export default function AccountPage() {
               <Trophy className="w-4 h-4 mr-2" />
               Go to Dashboard
             </Link>
-            <Button variant="outline" onClick={handleSignOut}>
+            <Button variant="outline" onClick={async () => { await handleSignOut(); }}>
               <LogOut className="w-4 h-4 mr-2" />
               Sign out
             </Button>
@@ -313,6 +308,7 @@ export default function AccountPage() {
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-2">
+            {/* trial state */}
             {trialLoading ? (
               <div className="text-sm text-gray-500">Loading trial status…</div>
             ) : trialError ? (
