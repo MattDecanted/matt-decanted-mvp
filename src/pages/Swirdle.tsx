@@ -8,6 +8,7 @@ import {
 import { useAuth } from '@/context/AuthContext';
 import { usePoints } from '@/context/PointsContext';
 import { supabase } from '@/lib/supabase';
+import { toast } from 'sonner';
 
 // =================== Config ===================
 const HINT_COST = 5;        // points to buy a hint
@@ -105,6 +106,15 @@ export type UserStats = {
   updated_at: string | null;
 };
 
+type EarnedBadge = {
+  badge_code: string;
+  name: string;
+  description: string;
+  icon: string | null;
+  tier: string | null;
+  awarded_at: string;
+};
+
 async function getWordForDate(date: string): Promise<{ data: SwirdleWord | null; error: any | null }> {
   const { data, error } = await supabase
     .from('swirdle_words')
@@ -171,6 +181,15 @@ async function fetchUserStats(userId: string): Promise<{ data: UserStats | null;
     .eq('user_id', userId)
     .maybeSingle();
   return { data: (data as UserStats) ?? null, error };
+}
+
+async function getMyBadges(userId: string): Promise<EarnedBadge[]> {
+  const { data, error } = await supabase.rpc('get_my_badges', { p_user_id: userId });
+  if (error) {
+    console.warn('get_my_badges error:', error.message);
+    return [];
+  }
+  return (data as EarnedBadge[]) || [];
 }
 
 // ✅ streak is consecutive by Adelaide date
@@ -240,6 +259,9 @@ const Swirdle: React.FC = () => {
   const [awardBusy, setAwardBusy] = useState(false);
   const [purchaseBusy, setPurchaseBusy] = useState(false);
 
+  // Track earned badges to diff later for toasts
+  const earnedBeforeRef = React.useRef<Set<string>>(new Set());
+
   // ---- Best-effort membership + trial (no-op if RPCs missing) ----
   useEffect(() => {
     if (!user?.id) return;
@@ -254,6 +276,18 @@ const Swirdle: React.FC = () => {
       try {
         await supabase.rpc('vv_start_trial', { p_days: 7 });
       } catch { /* ignore */ }
+    })();
+  }, [user?.id]);
+
+  // Prime earned badge baseline when user changes
+  useEffect(() => {
+    if (!user?.id) {
+      earnedBeforeRef.current = new Set();
+      return;
+    }
+    (async () => {
+      const mine = await getMyBadges(user.id);
+      earnedBeforeRef.current = new Set(mine.map(b => b.badge_code));
     })();
   }, [user?.id]);
 
@@ -320,84 +354,111 @@ const Swirdle: React.FC = () => {
   }, [user?.id]);
 
   // -------- Persist attempt + leaderboard/badges --------
-function calcPoints(won: boolean, hints: number) {
-  if (!won) return 0;
-  const raw = WIN_POINTS - HINT_COST * hints;
-  return Math.max(0, raw);
-}
-
-async function saveAttempt(override?: { completed?: boolean; won?: boolean; attempts?: number }) {
-  if (!user?.id || !todaysWord || !dbWordAvailable) return;
-
-  const completed = override?.completed ?? gameComplete;
-  const won = override?.won ?? gameWon;
-  const attemptsToSave = override?.attempts ?? currentAttempt;
-
-  try {
-    // 1) Upsert gameplay attempt (guesses, completed state, etc.)
-    const base: SwirdleAttempt = {
-      id: userAttempt?.id,
-      user_id: user.id,
-      word_id: todaysWord.id,
-      guesses: guesses.filter((g) => g.length > 0),
-      attempts: attemptsToSave,
-      completed,
-      won,
-      hints_used: hintsUsed,
-      completed_at: completed ? new Date().toISOString() : null,
-    };
-
-    const { data: saved, error: upsertErr } = await recordAttempt(base);
-    if (upsertErr) throw upsertErr;
-    if (saved) setUserAttempt(saved);
-
-    // 2) If completed, upsert stats to get the streak, then write leaderboard fields
-    if (completed) {
-      // Update per-user stats (your existing table/logic)
-      const { data: stats, error: statsErr } = await upsertUserStatsRow(user.id, !!won, attemptsToSave);
-      if (statsErr) console.warn('stats upsert warning:', statsErr?.message);
-      if (stats) setUserStats(stats ?? null);
-
-      // Compute points + streak_after
-      const pointsAwarded = calcPoints(!!won, hintsUsed.length);
-      const streakAfter = stats?.current_streak ?? (won ? 1 : 0);
-
-      // 3) Update the same attempt row with leaderboard fields
-      if (saved?.id) {
-        const { error: updateErr } = await supabase
-          .from('swirdle_attempts')
-          .update({
-            points: pointsAwarded,
-            streak_after: streakAfter,
-            played_at: new Date().toISOString(),
-          })
-          .eq('id', saved.id);
-        if (updateErr) console.warn('attempt leaderboard update warning:', updateErr?.message);
-      } else {
-        // Fallback: set by compound key (user_id + word_id) if id missing
-        const { error: updateErr2 } = await supabase
-          .from('swirdle_attempts')
-          .update({
-            points: pointsAwarded,
-            streak_after: streakAfter,
-            played_at: new Date().toISOString(),
-          })
-          .eq('user_id', user.id)
-          .eq('word_id', todaysWord.id);
-        if (updateErr2) console.warn('attempt leaderboard update (fallback) warning:', updateErr2?.message);
-      }
-
-      // 4) Badge award — idempotent (safe to call every completion)
-      try {
-        await supabase.rpc('award_badges_for_user', { p_user_id: user.id });
-      } catch (e: any) {
-        console.warn('award_badges_for_user warning:', e?.message ?? e);
-      }
-    }
-  } catch (e) {
-    console.error('saveAttempt error:', e);
+  function calcPoints(won: boolean, hints: number) {
+    if (!won) return 0;
+    const raw = WIN_POINTS - HINT_COST * hints;
+    return Math.max(0, raw);
   }
-}
+
+  function toastNewBadges(newOnes: EarnedBadge[]) {
+    if (!newOnes.length) return;
+    for (const b of newOnes) {
+      toast(`${b.icon ?? '🏅'} ${b.name}`, {
+        description: b.description || 'New badge unlocked!',
+        action: {
+          label: 'View badges',
+          onClick: () => { window.location.href = '/account#badges'; },
+        },
+        duration: 5000,
+      });
+    }
+  }
+
+  async function saveAttempt(override?: { completed?: boolean; won?: boolean; attempts?: number }) {
+    if (!user?.id || !todaysWord || !dbWordAvailable) return;
+
+    const completed = override?.completed ?? gameComplete;
+    const won = override?.won ?? gameWon;
+    const attemptsToSave = override?.attempts ?? currentAttempt;
+
+    try {
+      // 1) Upsert gameplay attempt (guesses, completed state, etc.)
+      const base: SwirdleAttempt = {
+        id: userAttempt?.id,
+        user_id: user.id,
+        word_id: todaysWord.id,
+        guesses: guesses.filter((g) => g.length > 0),
+        attempts: attemptsToSave,
+        completed,
+        won,
+        hints_used: hintsUsed,
+        completed_at: completed ? new Date().toISOString() : null,
+      };
+
+      const { data: saved, error: upsertErr } = await recordAttempt(base);
+      if (upsertErr) throw upsertErr;
+      if (saved) setUserAttempt(saved);
+
+      // 2) If completed, upsert stats to get the streak, then write leaderboard fields
+      if (completed) {
+        // Update per-user stats (your existing table/logic)
+        const { data: stats, error: statsErr } = await upsertUserStatsRow(user.id, !!won, attemptsToSave);
+        if (statsErr) console.warn('stats upsert warning:', statsErr?.message);
+        if (stats) setUserStats(stats ?? null);
+
+        // Compute points + streak_after
+        const pointsAwarded = calcPoints(!!won, hintsUsed.length);
+        const streakAfter = stats?.current_streak ?? (won ? 1 : 0);
+
+        // 3) Update the same attempt row with leaderboard fields
+        if (saved?.id) {
+          const { error: updateErr } = await supabase
+            .from('swirdle_attempts')
+            .update({
+              points: pointsAwarded,
+              streak_after: streakAfter,
+              played_at: new Date().toISOString(),
+            })
+            .eq('id', saved.id);
+          if (updateErr) console.warn('attempt leaderboard update warning:', updateErr?.message);
+        } else {
+          // Fallback: set by compound key (user_id + word_id) if id missing
+          const { error: updateErr2 } = await supabase
+            .from('swirdle_attempts')
+            .update({
+              points: pointsAwarded,
+              streak_after: streakAfter,
+              played_at: new Date().toISOString(),
+            })
+            .eq('user_id', user.id)
+            .eq('word_id', todaysWord.id);
+          if (updateErr2) console.warn('attempt leaderboard update (fallback) warning:', updateErr2?.message);
+        }
+
+        // 4) Badge award — idempotent (safe to call every completion)
+        try {
+          await supabase.rpc('award_badges_for_user', { p_user_id: user.id });
+        } catch (e: any) {
+          console.warn('award_badges_for_user warning:', e?.message ?? e);
+        }
+
+        // 5) Re-fetch and diff badges -> show toasts for any newly earned
+        try {
+          const after = await getMyBadges(user.id);
+          const beforeSet = earnedBeforeRef.current;
+          const newlyEarned = after.filter(b => !beforeSet.has(b.badge_code));
+          if (newlyEarned.length) {
+            toastNewBadges(newlyEarned);
+            for (const b of newlyEarned) beforeSet.add(b.badge_code);
+          }
+        } catch (e) {
+          console.warn('badge toast check failed:', e);
+        }
+      }
+    } catch (e) {
+      console.error('saveAttempt error:', e);
+    }
+  }
 
   // -------- Award on win (robust pipeline) --------
   async function handleWinAward(guessesCount: number) {
