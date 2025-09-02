@@ -9,8 +9,7 @@ function cx(...xs: Array<string | false | null | undefined>) {
   return xs.filter(Boolean).join(" ");
 }
 
-/** 🔧 Change this path if your avatar/logo lives elsewhere */
-const RHS_LOGO_SRC = "/images/matt-avatar.png"; // fallback handled if missing
+const RHS_LOGO_SRC = "/brand/matt-avatar.png"; // put your image in /public/brand/matt-avatar.png
 
 const LANGS = [
   { id: "en-US", country: "US", label: "English" },
@@ -30,21 +29,15 @@ export default function Layout({ children }: { children: React.ReactNode }) {
       isActive && "text-brand"
     );
 
-  // Hide chrome on auth-processing routes so nothing else interferes
   const loc = useLocation();
   const hideChrome =
     loc.pathname.startsWith("/auth/callback") ||
     loc.pathname.startsWith("/reset-password");
 
-  // ----- Language selector -----
+  // Language selector
   const [langOpen, setLangOpen] = React.useState(false);
-  const [lang, setLang] = React.useState<string>(() => {
-    return localStorage.getItem("app_lang") || "en-US";
-  });
-  const activeLang = React.useMemo(
-    () => LANGS.find((l) => l.id === lang) || LANGS[0],
-    [lang]
-  );
+  const [lang, setLang] = React.useState<string>(() => localStorage.getItem("app_lang") || "en-US");
+  const activeLang = React.useMemo(() => LANGS.find(l => l.id === lang) || LANGS[0], [lang]);
 
   React.useEffect(() => {
     document.documentElement.lang = (lang || "en-US").split("-")[0];
@@ -54,9 +47,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   React.useEffect(() => {
     const onClick = (e: MouseEvent) => {
       const node = e.target as HTMLElement;
-      if (!node.closest?.("#lang-popover") && !node.closest?.("#lang-button")) {
-        setLangOpen(false);
-      }
+      if (!node.closest?.("#lang-popover") && !node.closest?.("#lang-button")) setLangOpen(false);
     };
     window.addEventListener("click", onClick);
     return () => window.removeEventListener("click", onClick);
@@ -72,20 +63,22 @@ export default function Layout({ children }: { children: React.ReactNode }) {
 
   return (
     <div className="min-h-screen flex flex-col">
-      {/* Header */}
-      <header className="site-header relative">
+      <header
+        className="site-header relative bg-white"
+        style={{ borderBottom: "0", boxShadow: "none" }} // 🔧 remove any inherited 1px line
+      >
         <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
           <div className="h-14 flex items-center justify-between">
-            {/* Brand (left) */}
+            {/* Brand */}
             <Link to="/" className="flex items-center gap-3">
               <div className="leading-tight">
                 <div className="font-semibold text-gray-900">Matt Decanted</div>
-                <div className="-mt-0.5 text-[11px] text-gray-500">Wine Education</div>
+                <div className="-mt-0.5 text-[11px] text-amber-600">Wine Education</div>
               </div>
             </Link>
 
             {/* Desktop nav */}
-            <nav className="hidden md:flex items-center gap-5 site-nav">
+            <nav className="hidden md:flex items-center gap-5">
               <NavLink to="/blog" className={linkClass}>Blog</NavLink>
               <NavLink to="/play" className={linkClass}>Challenges</NavLink>
               <NavLink to="/swirdle" className={linkClass}>Swirdle</NavLink>
@@ -97,16 +90,14 @@ export default function Layout({ children }: { children: React.ReactNode }) {
               <NavLink to="/pricing" className={linkClass}>Pricing</NavLink>
             </nav>
 
-            {/* Right cluster: language, points, sign-in/out, logo */}
+            {/* Right cluster */}
             <div className="hidden md:flex items-center gap-3">
-              {/* Language popover */}
+              {/* Language */}
               <div className="relative">
                 <button
                   id="lang-button"
-                  onClick={() => setLangOpen((v) => !v)}
+                  onClick={() => setLangOpen(v => !v)}
                   className="inline-flex items-center gap-1 rounded-md border border-gray-200 px-2.5 py-1 text-xs text-gray-700 bg-white hover:bg-gray-50"
-                  aria-haspopup="menu"
-                  aria-expanded={langOpen}
                 >
                   <Globe className="w-3.5 h-3.5" />
                   <span className="uppercase">{activeLang.country}</span>
@@ -126,10 +117,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
                       return (
                         <button
                           key={l.id}
-                          onClick={() => {
-                            setLang(l.id);
-                            setLangOpen(false);
-                          }}
+                          onClick={() => { setLang(l.id); setLangOpen(false); }}
                           className={cx(
                             "w-full flex items-center justify-between px-3 py-2 text-sm",
                             active ? "bg-amber-50 text-amber-800" : "hover:bg-gray-50 text-gray-700"
@@ -147,7 +135,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
                 )}
               </div>
 
-              {/* Points / streak chip */}
+              {/* Points chip */}
               <Link
                 to={user ? "/account" : "/signin"}
                 className="inline-flex items-center gap-2 rounded-md border border-amber-200 bg-white px-2.5 py-1 text-xs text-gray-800 hover:bg-amber-50"
@@ -160,12 +148,11 @@ export default function Layout({ children }: { children: React.ReactNode }) {
                 <span className="tabular-nums">0</span>
               </Link>
 
-              {/* Auth buttons */}
+              {/* Auth */}
               {user ? (
                 <button
                   onClick={() => signOut()}
                   className="inline-flex items-center rounded-md border border-amber-300 bg-white px-3 py-1 text-xs font-medium text-amber-700 hover:bg-amber-50"
-                  title="Sign out"
                 >
                   Sign out
                 </button>
@@ -183,7 +170,6 @@ export default function Layout({ children }: { children: React.ReactNode }) {
 
               {/* RHS logo/avatar */}
               <Link to="/" className="ml-1 inline-flex h-8 w-8 items-center justify-center rounded-full border border-gray-200 overflow-hidden bg-white">
-                {/* If the src is missing, we fall back to an emoji */}
                 <img
                   src={RHS_LOGO_SRC}
                   alt="Matt Decanted"
@@ -199,7 +185,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
             {/* Mobile hamburger */}
             <button
               className="md:hidden inline-flex items-center justify-center w-9 h-9 rounded-md border border-gray-200"
-              onClick={() => setOpen((v) => !v)}
+              onClick={() => setOpen(v => !v)}
               aria-label="Toggle menu"
             >
               {open ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
@@ -207,8 +193,10 @@ export default function Layout({ children }: { children: React.ReactNode }) {
           </div>
         </div>
 
-        {/* Orange accent at the BOTTOM of the header (not the top) */}
-        <div className="h-1 w-full bg-brand-orange/80 shadow-[0_1px_0_rgba(0,0,0,0.04)]" />
+        {/* Soft-edged orange accent at the BOTTOM */}
+        <div className="w-full">
+          <div className="h-[2px] bg-gradient-to-r from-transparent via-amber-500 to-transparent rounded-full" />
+        </div>
       </header>
 
       {/* Mobile drawer */}
@@ -226,9 +214,8 @@ export default function Layout({ children }: { children: React.ReactNode }) {
             <NavLink to="/pricing" className={linkClass} onClick={() => setOpen(false)}>Pricing</NavLink>
 
             <div className="pt-2 flex items-center gap-2">
-              {/* Compact language quick toggle on mobile */}
               <button
-                onClick={() => setLang(LANGS[(LANGS.findIndex(l=>l.id===lang)+1)%LANGS.length].id)}
+                onClick={() => setLang(LANGS[(LANGS.findIndex(l => l.id === lang) + 1) % LANGS.length].id)}
                 className="inline-flex items-center gap-1 rounded-md border border-gray-200 px-2.5 py-1 text-xs text-gray-700 bg-white"
               >
                 <Globe className="w-3.5 h-3.5" />
@@ -250,19 +237,14 @@ export default function Layout({ children }: { children: React.ReactNode }) {
 
               {user ? (
                 <button
-                  onClick={() => {
-                    setOpen(false);
-                    void signOut();
-                  }}
+                  onClick={() => { setOpen(false); void signOut(); }}
                   className="inline-flex items-center rounded-md border border-amber-300 bg-white px-3 py-1 text-xs font-medium text-amber-700 hover:bg-amber-50"
                 >
                   Sign out
                 </button>
               ) : (
                 <>
-                  <Link to="/signin" onClick={() => setOpen(false)} className="btn-ghost">
-                    Sign In
-                  </Link>
+                  <Link to="/signin" onClick={() => setOpen(false)} className="btn-ghost">Sign In</Link>
                   <Link
                     to="/pricing"
                     onClick={() => setOpen(false)}
@@ -272,29 +254,27 @@ export default function Layout({ children }: { children: React.ReactNode }) {
                   </Link>
                 </>
               )}
-            </div>
 
-            {/* RHS logo on mobile */}
-            <Link
-              to="/"
-              onClick={() => setOpen(false)}
-              className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-gray-200 overflow-hidden bg-white"
-            >
-              <img
-                src={RHS_LOGO_SRC}
-                alt="Matt Decanted"
-                className="h-full w-full object-cover"
-                onError={(e) => {
-                  (e.currentTarget as HTMLImageElement).style.display = "none";
-                  (e.currentTarget.parentElement as HTMLElement).textContent = "🍷";
-                }}
-              />
-            </Link>
+              <Link
+                to="/"
+                onClick={() => setOpen(false)}
+                className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-gray-200 overflow-hidden bg-white"
+              >
+                <img
+                  src=Matt_decantednk.png
+                  alt="Matt Decanted"
+                  className="h-full w-full object-cover"
+                  onError={(e) => {
+                    (e.currentTarget as HTMLImageElement).style.display = "none";
+                    (e.currentTarget.parentElement as HTMLElement).textContent = "🍷";
+                  }}
+                />
+              </Link>
+            </div>
           </div>
         </div>
       )}
 
-      {/* Page body */}
       <main className="flex-1">{children}</main>
 
       <footer className="border-t border-gray-200 py-6 text-center text-xs text-gray-500">
