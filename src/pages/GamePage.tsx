@@ -669,7 +669,7 @@ const RoundPanel: React.FC<{
             const list = data.map((r: any) => r.subregion).filter(Boolean);
             const correct = round.correct_subregion || '';
             const opts = shuffle(uniq([correct, ...list])).slice(0, 10);
-            setSubs(opts.length ? opts : uniq([correct].filter(Boolean)]);
+            setSubs(opts.length ? opts : uniq([correct].filter(Boolean)));
           }
         } else {
           setSubs([]);
