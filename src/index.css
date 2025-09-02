@@ -88,6 +88,32 @@
     @apply px-4 py-2 rounded-md border border-transparent font-medium bg-primary text-primary-foreground transition-colors hover:border-border focus:outline-none focus-visible:ring-2 focus-visible:ring-ring;
   }
 }
+/* ---- Brand tweaks: header underline + buttons ---- */
+.header-underline {
+  height: 3px;                    /* ~50% thicker than 2px */
+  background: linear-gradient(
+    to right,
+    rgba(230, 126, 34, 0),        /* soften left edge */
+    rgba(230, 126, 34, 0.95),     /* brand orange core */
+    rgba(230, 126, 34, 0)         /* soften right edge */
+  );
+  filter: blur(0.35px);           /* soften vertically */
+}
+
+/* optional: ensure there's no default bottom border that competes */
+.site-header {
+  border-bottom: none !important;
+}
+
+/* nicer ghost button + brand accent for Sign out */
+.btn-ghost {
+  @apply inline-flex items-center rounded-md px-3 py-1.5 text-sm font-medium;
+  @apply text-gray-800 bg-white border border-gray-200 hover:bg-gray-50;
+}
+.btn-brand-outline {
+  @apply inline-flex items-center rounded-md px-3 py-1.5 text-sm font-semibold;
+  @apply border border-orange-500 text-orange-600 bg-white hover:bg-orange-50;
+}
 
 /* ---- Utilities ---- */
 @layer utilities {
