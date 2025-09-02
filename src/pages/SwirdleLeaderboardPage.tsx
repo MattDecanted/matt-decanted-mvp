@@ -1,8 +1,9 @@
 // src/pages/SwirdleLeaderboardPage.tsx
 import React, { useEffect, useState } from 'react';
-import { Award, Crown, Loader2 } from 'lucide-react';
+import { Crown, Loader2, Award } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/context/AuthContext';
+import RecentBadgesStrip from '@/components/RecentBadgesStrip';
 
 type Row = {
   user_id: string;
@@ -17,14 +18,10 @@ type RecentBadge = {
   user_id: string;
   badge_code: string;
   icon: string | null;
-  awarded_at: string;
+  awarded_at: string | null;
 };
 
 async function fetchLeaderboard(limit = 100): Promise<Row[]> {
-  // If you exposed a RPC, prefer that:
-  // const { data, error } = await supabase.rpc('get_swirdle_leaderboard', { p_limit: limit });
-
-  // Using the view from step 7.3 (rename if different):
   const { data, error } = await supabase
     .from('swirdle_leaderboard')
     .select('user_id, display_name, avatar_url, total_points, best_streak, last_played')
@@ -56,21 +53,26 @@ const SwirdleLeaderboardPage: React.FC = () => {
       try {
         setLoading(true);
         setErr('');
-
         const lb = await fetchLeaderboard(100);
         setRows(lb);
 
         const ids = lb.map((r) => r.user_id);
         const rb = await fetchRecentBadgesForUsers(ids);
 
-        // Group by user_id and keep the 2 most recent
+        // group by user_id then keep latest 3 by awarded_at
         const grouped: Record<string, RecentBadge[]> = {};
-        rb
-          .sort((a, b) => new Date(b.awarded_at).getTime() - new Date(a.awarded_at).getTime())
-          .forEach((b) => {
-            if (!grouped[b.user_id]) grouped[b.user_id] = [];
-            if (grouped[b.user_id].length < 2) grouped[b.user_id].push(b);
-          });
+        for (const b of rb) {
+          if (!grouped[b.user_id]) grouped[b.user_id] = [];
+          grouped[b.user_id].push(b);
+        }
+        for (const uid of Object.keys(grouped)) {
+          grouped[uid] = grouped[uid]
+            .sort(
+              (a, b) =>
+                new Date(b.awarded_at || 0).getTime() - new Date(a.awarded_at || 0).getTime()
+            )
+            .slice(0, 3);
+        }
 
         setBadges(grouped);
       } catch (e: any) {
@@ -119,65 +121,67 @@ const SwirdleLeaderboardPage: React.FC = () => {
             <div className="col-span-2 text-right">Last Played</div>
           </div>
 
-          {rows.length === 0 ? (
-            <div className="px-4 py-8 text-center text-sm text-gray-500">No players yet — be the first!</div>
-          ) : (
-            <ul className="divide-y divide-gray-100">
-              {rows.map((r, idx) => {
-                const isMe = myId && r.user_id === myId;
-                const rowBadges = badges[r.user_id] ?? [];
-                return (
-                  <li
-                    key={r.user_id}
-                    className={`grid grid-cols-12 items-center px-4 py-3 ${isMe ? 'bg-purple-50' : 'bg-white'}`}
-                  >
-                    <div className="col-span-1 font-mono text-sm text-gray-700">{rankEmoji(idx)}</div>
+          <ul className="divide-y divide-gray-100">
+            {rows.map((r, idx) => {
+              const isMe = myId && r.user_id === myId;
+              const rowBadges = badges[r.user_id] ?? [];
 
-                    <div className="col-span-6 flex items-center gap-3">
-                      <div className="h-8 w-8 rounded-full bg-gray-100 overflow-hidden flex items-center justify-center">
-                        {r.avatar_url ? (
-                          <img src={r.avatar_url} alt={`${r.display_name || 'Player'} avatar`} className="h-8 w-8 object-cover" />
+              return (
+                <li
+                  key={r.user_id}
+                  className={`grid grid-cols-12 items-center px-4 py-3 ${isMe ? 'bg-purple-50' : 'bg-white'}`}
+                >
+                  <div className="col-span-1 font-mono text-sm text-gray-700">{rankEmoji(idx)}</div>
+
+                  <div className="col-span-6 flex items-center gap-3">
+                    <div className="h-8 w-8 rounded-full bg-gray-100 overflow-hidden flex items-center justify-center">
+                      {r.avatar_url ? (
+                        <img src={r.avatar_url} alt="" className="h-8 w-8 object-cover" />
+                      ) : (
+                        <span className="text-xs text-gray-500">👤</span>
+                      )}
+                    </div>
+
+                    <div className="min-w-0">
+                      <div className="text-sm font-semibold text-gray-900 truncate">
+                        {r.display_name || 'Anonymous'} {isMe ? <span className="text-xs text-purple-600">(you)</span> : null}
+                      </div>
+
+                      <div className="mt-1">
+                        {rowBadges.length === 0 ? (
+                          <span className="text-[10px] text-gray-400 inline-flex items-center gap-1">
+                            <Award className="w-3 h-3" /> No badges yet
+                          </span>
                         ) : (
-                          <span className="text-xs text-gray-500">👤</span>
+                          <RecentBadgesStrip
+                            items={rowBadges.map((b) => ({
+                              badge_code: b.badge_code,
+                              icon: b.icon,
+                              awarded_at: b.awarded_at,
+                            }))}
+                            max={3}
+                            size={18}
+                          />
                         )}
                       </div>
-                      <div>
-                        <div className="text-sm font-semibold text-gray-900">
-                          {r.display_name || 'Anonymous'}
-                        </div>
-                        {/* Badge strip */}
-                        <div className="flex items-center gap-1 mt-1">
-                          {rowBadges.length === 0 ? (
-                            <span className="text-[10px] text-gray-400 flex items-center gap-1">
-                              <Award className="w-3 h-3" /> No badges yet
-                            </span>
-                          ) : (
-                            rowBadges.map((b) => (
-                              <span key={`${r.user_id}-${b.badge_code}`} title={b.badge_code} className="text-base">
-                                {b.icon || '🏅'}
-                              </span>
-                            ))
-                          )}
-                        </div>
-                      </div>
                     </div>
+                  </div>
 
-                    <div className="col-span-2 text-right font-semibold text-gray-900">
-                      {r.total_points}
-                    </div>
+                  <div className="col-span-2 text-right font-semibold text-gray-900">
+                    {r.total_points}
+                  </div>
 
-                    <div className="col-span-1 text-center text-gray-700">
-                      {r.best_streak}
-                    </div>
+                  <div className="col-span-1 text-center text-gray-700">
+                    {r.best_streak}
+                  </div>
 
-                    <div className="col-span-2 text-right text-xs text-gray-500">
-                      {r.last_played ? new Date(r.last_played).toLocaleDateString() : '—'}
-                    </div>
-                  </li>
-                );
-              })}
-            </ul>
-          )}
+                  <div className="col-span-2 text-right text-xs text-gray-500">
+                    {r.last_played ? new Date(r.last_played).toLocaleDateString() : '—'}
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
         </div>
 
         <div className="mt-6 text-center text-sm text-gray-500">
