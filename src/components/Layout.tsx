@@ -8,11 +8,15 @@ function cx(...xs: Array<string | false | null | undefined>) {
   return xs.filter(Boolean).join(" ");
 }
 
-export default function Layout({ children }: { children: React.ReactNode }) {
-  const { user, signOut } = useAuth();
+// ✅ change this if you have a different logo URL (or move to ENV)
+const LOGO_URL =
+  "https://matt-decanted.s3.ap-southeast-2.amazonaws.com/brand/matt-decanted-logo.png";
 
-  // ⬇️ Read any of: totalPoints | points | balance, and refresh after login
+export default function Layout({ children }: { children: React.ReactNode }) {
+  const { user, signOut, profile } = useAuth();
   const pointsCtx = usePoints?.();
+
+  // Be flexible: accept totalPoints | points | balance
   const displayPoints = Number(
     (pointsCtx as any)?.totalPoints ??
       (pointsCtx as any)?.points ??
@@ -22,7 +26,6 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   const pointsLoading = Boolean((pointsCtx as any)?.loading);
 
   React.useEffect(() => {
-    // refresh when user changes (no-op if provider already does this)
     if (user?.id && (pointsCtx as any)?.refreshPoints) {
       (pointsCtx as any).refreshPoints();
     }
@@ -34,11 +37,10 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     cx(
       "px-2 py-1 rounded-md transition-colors",
       "text-sm font-medium",
-      "hover:text-brand",
+      "no-underline border-b-0 hover:no-underline hover:text-brand",
       isActive && "text-brand"
     );
 
-  // Hide chrome on auth-processing routes
   const loc = useLocation();
   const hideChrome =
     loc.pathname.startsWith("/auth/callback") ||
@@ -52,41 +54,77 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     );
   }
 
+  // prefer display name if available
+  const displayName =
+    (profile as any)?.display_name ||
+    user?.user_metadata?.name ||
+    user?.email ||
+    "";
+
   return (
     <div className="min-h-screen flex flex-col">
       {/* Header */}
-      <header className="site-header">
+      <header
+        className="bg-white"
+        // ⛔️ hard-kill any global border/shadow from site-header CSS
+        style={{ borderBottom: "none", boxShadow: "none" }}
+      >
         <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
           <div className="h-14 flex items-center justify-between">
-            {/* Brand (far-left) */}
+            {/* Brand (far left) */}
             <Link to="/" className="flex items-center gap-3">
-              {/* Logo image (kept inline so the URL can be updated easily) */}
               <img
-                src="https://matt-decanted.s3.ap-southeast-2.amazonaws.com/brand/matt-decanted-logo.png"
+                src={LOGO_URL}
                 alt="Matt Decanted"
-                className="h-8 w-auto"
+                className="h-8 w-auto block"
+                onError={(e) => {
+                  // graceful fallback if CDN hiccups
+                  (e.currentTarget as HTMLImageElement).style.display = "none";
+                }}
               />
               <div className="leading-tight">
                 <div className="font-semibold text-gray-900">Matt Decanted</div>
-                <div className="-mt-0.5 text-[11px] text-orange-600">Wine Education</div>
+                <div className="-mt-0.5 text-[11px] text-orange-600">
+                  Wine Education
+                </div>
               </div>
             </Link>
 
             {/* Desktop nav */}
-            <nav className="hidden md:flex items-center gap-5 site-nav">
-              <NavLink to="/blog" className={linkClass}>Blog</NavLink>
-              <NavLink to="/play" className={linkClass}>Challenges</NavLink>
-              <NavLink to="/courses" className={linkClass}>Courses</NavLink>
-              <NavLink to="/community" className={linkClass}>Community</NavLink>
-              <NavLink to="/about" className={linkClass}>About</NavLink>
-              <NavLink to="/dashboard" className={linkClass}>Dashboard</NavLink>
+            <nav
+              className={cx(
+                "hidden md:flex items-center gap-5",
+                // remove any global underline if present: target children <a>
+                "[&_a]:no-underline [&_a]:border-b-0"
+              )}
+              style={{ borderBottom: "none" }}
+            >
+              <NavLink to="/blog" className={linkClass}>
+                Blog
+              </NavLink>
+              <NavLink to="/play" className={linkClass}>
+                Challenges
+              </NavLink>
+              <NavLink to="/courses" className={linkClass}>
+                Courses
+              </NavLink>
+              <NavLink to="/community" className={linkClass}>
+                Community
+              </NavLink>
+              <NavLink to="/about" className={linkClass}>
+                About
+              </NavLink>
+              <NavLink to="/dashboard" className={linkClass}>
+                Dashboard
+              </NavLink>
+              {/* ⛔️ Swirdle Leaderboard intentionally NOT here */}
             </nav>
 
             {/* Right cluster */}
             <div className="hidden md:flex items-center gap-2">
-              {/* Language (no-op for now) */}
+              {/* Language (enabled – stubbed to EN for now) */}
               <div
-                className="inline-flex items-center gap-1 rounded-md border border-gray-200 px-2.5 py-1 text-xs text-gray-700"
+                className="inline-flex items-center gap-1 rounded-md border border-gray-200 px-2.5 py-1 text-xs text-gray-700 bg-white"
                 title="Language"
               >
                 <Globe className="w-3.5 h-3.5" />
@@ -98,6 +136,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
                 to={user ? "/account" : "/signin"}
                 className="inline-flex items-center gap-2 rounded-md border border-gray-200 bg-white px-2.5 py-1 text-xs text-gray-800 hover:bg-gray-50"
                 title="Your points"
+                style={{ borderBottom: "none" }}
               >
                 <Trophy className="w-3.5 h-3.5 text-amber-500" />
                 <span className="tabular-nums">
@@ -108,24 +147,30 @@ export default function Layout({ children }: { children: React.ReactNode }) {
                 <span className="tabular-nums">0</span>
               </Link>
 
-              {/* Username (if you want to show it) */}
-              {user?.email && (
-                <span className="text-xs text-gray-600 max-w-[180px] truncate" title={user.email}>
-                  {user.email}
+              {/* User name (truncate) */}
+              {user && (
+                <span
+                  className="text-xs text-gray-600 max-w-[180px] truncate"
+                  title={displayName}
+                >
+                  {displayName}
                 </span>
               )}
 
+              {/* Sign in/out */}
               {user ? (
-                // ⬇️ Easier to read per your request (green/orange on white)
                 <button
                   onClick={() => signOut()}
                   className="inline-flex items-center rounded-md border border-green-600 bg-white px-3 py-1 text-xs font-semibold text-green-700 hover:bg-green-50"
+                  title="Sign out"
                 >
                   Sign out
                 </button>
               ) : (
                 <>
-                  <Link to="/signin" className="btn-ghost">Sign in</Link>
+                  <Link to="/signin" className="btn-ghost">
+                    Sign in
+                  </Link>
                   <Link
                     to="/pricing"
                     className="inline-flex items-center rounded-lg px-4 py-2 font-semibold text-white bg-brand-orange shadow hover:opacity-95"
@@ -147,70 +192,17 @@ export default function Layout({ children }: { children: React.ReactNode }) {
           </div>
         </div>
 
-        {/* Orange underline (under the menu, softer + slightly darker) */}
+        {/* 🍊 Orange underline BELOW the header nav (darker + soft vertical edges) */}
         <div
+          className="w-full"
           style={{
-            height: 4,
+            height: 6, // slightly thicker
             background:
-              "linear-gradient(to bottom, rgba(255,128,0,0.85), rgba(255,128,0,0.75))",
-            borderBottomLeftRadius: 6,
-            borderBottomRightRadius: 6,
+              "linear-gradient(to bottom, rgba(255,128,0,0.90), rgba(255,128,0,0.78))",
+            borderBottomLeftRadius: 8,
+            borderBottomRightRadius: 8,
           }}
         />
-        {/* Mobile drawer */}
-        {open && (
-          <div className="md:hidden border-t border-gray-200">
-            <div className="mx-auto max-w-7xl px-4 py-3 space-y-2">
-              <NavLink to="/blog" className={linkClass} onClick={() => setOpen(false)}>Blog</NavLink>
-              <NavLink to="/play" className={linkClass} onClick={() => setOpen(false)}>Challenges</NavLink>
-              <NavLink to="/courses" className={linkClass} onClick={() => setOpen(false)}>Courses</NavLink>
-              <NavLink to="/community" className={linkClass} onClick={() => setOpen(false)}>Community</NavLink>
-              <NavLink to="/about" className={linkClass} onClick={() => setOpen(false)}>About</NavLink>
-              <NavLink to="/dashboard" className={linkClass} onClick={() => setOpen(false)}>Dashboard</NavLink>
-
-              <div className="pt-2 flex items-center gap-2">
-                <div className="inline-flex items-center gap-1 rounded-md border border-gray-200 px-2.5 py-1 text-xs text-gray-700">
-                  <Globe className="w-3.5 h-3.5" />
-                  <span>EN</span>
-                </div>
-                <Link
-                  to={user ? "/account" : "/signin"}
-                  onClick={() => setOpen(false)}
-                  className="inline-flex items-center gap-2 rounded-md border border-gray-200 bg-white px-2.5 py-1 text-xs text-gray-800"
-                >
-                  <Trophy className="w-3.5 h-3.5 text-amber-500" />
-                  <span className="tabular-nums">
-                    {pointsLoading ? "…" : displayPoints}
-                  </span>
-                  <span className="mx-1 h-3 w-px bg-gray-200" />
-                  <Flame className="w-3.5 h-3.5 text-orange-500" />
-                  <span className="tabular-nums">0</span>
-                </Link>
-                {user ? (
-                  <button
-                    onClick={() => { setOpen(false); void signOut(); }}
-                    className="inline-flex items-center rounded-md border border-green-600 bg-white px-3 py-1 text-xs font-semibold text-green-700 hover:bg-green-50"
-                  >
-                    Sign out
-                  </button>
-                ) : (
-                  <>
-                    <Link to="/signin" onClick={() => setOpen(false)} className="btn-ghost">
-                      Sign in
-                    </Link>
-                    <Link
-                      to="/pricing"
-                      onClick={() => setOpen(false)}
-                      className="inline-flex items-center rounded-lg px-4 py-2 font-semibold text-white bg-brand-orange shadow hover:opacity-95"
-                    >
-                      Sign Up
-                    </Link>
-                  </>
-                )}
-              </div>
-            </div>
-          </div>
-        )}
       </header>
 
       {/* Page body */}
