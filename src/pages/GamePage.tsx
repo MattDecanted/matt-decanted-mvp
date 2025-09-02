@@ -1,3 +1,4 @@
+// src/pages/GamePage.tsx
 import React from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { supabase } from '@/lib/supabase';
@@ -5,6 +6,9 @@ import OCRUpload from '@/components/OCRUpload';
 import {
   Loader2, Users, Share2, Play, Trophy, Lock, Unlock, Eye, Camera, Search, Wine,
 } from 'lucide-react';
+
+// NEW: start trial helper (idempotent + fire-and-forget)
+import { startTrialBestEffort } from '@/lib/trial';
 
 /** ─────────────────────────────────────────────────────────────────────────────
  * Config
@@ -261,6 +265,10 @@ const GamePage: React.FC = () => {
   /** Host actions */
   async function startRoundWithOCR() {
     if (!session) return;
+
+    // NEW: start trial when the host actually starts a round
+    void startTrialBestEffort();
+
     const nextNumber = (rounds.slice(-1)[0]?.round_number || 0) + 1;
     const correct_country   = matched?.country || null;
     const correct_region    = matched?.region || matched?.appellation || null;
@@ -325,6 +333,9 @@ const GamePage: React.FC = () => {
 
   /** Minimal quick match from OCR */
   async function quickMatchFromOCR() {
+    // NEW: starting the “quick match” flow should also kick off the trial
+    void startTrialBestEffort();
+
     setBusy(true);
     setErr(null);
     try {
@@ -658,7 +669,7 @@ const RoundPanel: React.FC<{
             const list = data.map((r: any) => r.subregion).filter(Boolean);
             const correct = round.correct_subregion || '';
             const opts = shuffle(uniq([correct, ...list])).slice(0, 10);
-            setSubs(opts.length ? opts : uniq([correct].filter(Boolean)));
+            setSubs(opts.length ? opts : uniq([correct].filter(Boolean)]);
           }
         } else {
           setSubs([]);
