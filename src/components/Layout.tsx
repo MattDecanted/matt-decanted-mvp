@@ -9,7 +9,7 @@ function cx(...xs: Array<string | false | null | undefined>) {
   return xs.filter(Boolean).join(" ");
 }
 
-const RHS_LOGO_SRC = "/brand/matt-avatar.png"; // put your image in /public/brand/matt-avatar.png
+const RHS_LOGO_SRC = "/public/Branding/Matt_decantednk.png"; // put your image in /public/brand/matt-avatar.png
 
 const LANGS = [
   { id: "en-US", country: "US", label: "English" },
@@ -261,7 +261,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
                 className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-gray-200 overflow-hidden bg-white"
               >
                 <img
-                  src=Matt_decantednk.png
+                  src={RHS_LOGO_SRC}
                   alt="Matt Decanted"
                   className="h-full w-full object-cover"
                   onError={(e) => {
