@@ -1,7 +1,7 @@
 // src/pages/VinoVocabPage.tsx
 import React, { createContext, useContext, useEffect, useMemo, useState } from "react";
-import { Link } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
+import { Link } from "react-router-dom";
 import { supabase } from "@/lib/supabase";
 import {
   Trophy, Flame, Sparkles, Check, X, Lock, LogIn, LogOut, Info, CheckCircle2, AlertTriangle, ArrowRight
@@ -9,20 +9,9 @@ import {
 
 /**
  * Vino Vocab (Daily) — single-file page + local PointsProvider.
- * Awards (in order):
- *   1) award_points_v1('vocab', vocab_id) → recommended
- *   2) award_vocab_points(p_vocab, p_correct)
- *   3) vv_award_points(term, was_correct, points)
- *   4) vv_award_points(p_points, p_term, p_was_correct)
- *   5) REST fallback (views/tables)
- *
- * Totals/Streak update optimistically, then refresh from DB.
+ * Awards (in order): award_vocab_points -> vv_award_points(term,was_correct,points) -> vv_award_points(p_points,p_term,p_was_correct) -> REST fallback.
+ * Totals/Streak update optimistically (instant UI) then refresh from DB.
  */
-
-const ROUTES = {
-  swirdle: "/swirdle",
-  dailyQuiz: "/daily-quiz",
-};
 
 const tzAdelaide = "Australia/Adelaide";
 function formatDateAdelaide(d = new Date()) {
@@ -39,8 +28,8 @@ interface PointsContextType {
   currentStreak: number;
   loading: boolean;
   refreshPoints: () => Promise<void>;
-  applyDelta: (pointsDelta: number, nextStreak?: number) => void;
-  setTotals: (totals: number, streak: number) => void;
+  applyDelta: (pointsDelta: number, nextStreak?: number) => void; // optimistic UI helper
+  setTotals: (totals: number, streak: number) => void; // direct set helper
 }
 const PointsContext = createContext<PointsContextType | undefined>(undefined);
 
@@ -266,7 +255,7 @@ function VinoVocabInner() {
     const base = isCorrect ? (lesson?.points ?? 10) : 0;
     const term = lesson?.word ?? DEMO_TERM;
 
-    // 1) RECOMMENDED: generic points RPC
+    // 1) RECOMMENDED: generic points RPC (if present)
     if (lesson?.id) {
       const ap = await supabase.rpc("award_points_v1", {
         p_activity: "vocab",
@@ -333,6 +322,28 @@ function VinoVocabInner() {
     return { awarded: base, streak };
   }
 
+  // ✅ NEW: leaderboard writer — OUTSIDE awardPoints
+  const ensureLeaderboardRow = async (
+    userId: string | null,
+    lesson: Lesson | null,
+    isCorrect: boolean,
+    points: number
+  ) => {
+    if (!userId || !lesson?.id) return;
+    await supabase
+      .from("user_vocab_progress")
+      .upsert(
+        {
+          user_id: userId,
+          vocab_id: lesson.id,
+          is_correct: isCorrect,
+          points_earned: points,
+          completed_at: new Date().toISOString(),
+        },
+        { onConflict: "user_id,vocab_id" } // update if today’s row already exists
+      );
+  };
+
   const handleAnswer = async (idx: number) => {
     if (!lesson?.options) return;
 
@@ -352,30 +363,14 @@ function VinoVocabInner() {
         awarded = res.awarded;
         streak = res.streak;
 
-        // ✅ Optimistic UI
-        applyDelta(awarded, streak);
-        setTotalsLocal(prev => {
-          const baseTotals = prev?.total_points ?? totalPoints;
-          const baseCorrect = prev?.lessons_correct ?? 0;
-          return {
-            user_id: userId,
-            total_points: baseTotals + awarded,
-            lessons_correct: baseCorrect + (isCorrect ? 1 : 0),
-          } as TotalsRow;
-        });
-        setLatest({
-          user_id: userId,
-          streak_after: streak,
-          lesson_date: today,
-          completed_at: new Date().toISOString(),
-        });
+        // ✅ write/update today's row for the leaderboard
+        await ensureLeaderboardRow(userId, lesson, isCorrect, awarded);
 
-        // Then sync from server
+        // ✅ Optimistic UI: bump context + sidebar immediately
+        applyDelta(awarded, streak);
+
+        // Then refresh from server to stay in sync (optional here if your vv_get_user_stats covers it)
         void refreshPoints();
-        const t = await supabase.from("vocab_user_totals").select("user_id, total_points, lessons_correct").eq("user_id", userId).maybeSingle();
-        if (!t.error && t.data) setTotalsLocal(t.data as TotalsRow);
-        const l = await supabase.from("vocab_user_latest_correct").select("user_id, streak_after, lesson_date, completed_at").eq("user_id", userId).maybeSingle();
-        if (!l.error && l.data) setLatest(l.data as LatestCorrectRow);
       }
 
       setResult({
@@ -398,7 +393,6 @@ function VinoVocabInner() {
   };
 
   const resetSelection = () => { setSelected(null); setResult(null); };
-
   const selectedDemo = useMemo(() => (selected == null ? null : DEMO_OPTIONS[selected] ?? null), [selected]);
   const termForPrompt = lesson?.word ?? DEMO_TERM;
 
@@ -449,7 +443,7 @@ function VinoVocabInner() {
                   <div className="mt-4 flex items-center gap-6 text-sm sm:text-base">
                     <div className="text-center"><div className="font-semibold">Points</div><div className="text-2xl font-bold">{totalPoints}</div></div>
                     <div className="w-px h-8 bg-black/10" />
-                    <div className="text-center"><div className="font-semibold">Streak</div><div className="text-2xl font-bold">{currentStreak}🔥</div></div>
+                    <div className="text-center"><div className="font-semibold">Streak</div><div className="text-2xl font-bold">{/* flame */}{ }</div></div>
                   </div>
                 </div>
                 <LessonMeta lesson={lesson} />
@@ -549,13 +543,13 @@ function VinoVocabInner() {
                     {/* Next challenge shortcuts */}
                     <div className="mt-5 flex flex-wrap items-center gap-2">
                       <Link
-                        to={ROUTES.swirdle}
+                        to="/swirdle" // update this path if different in your app
                         className="inline-flex items-center gap-2 rounded-xl border border-neutral-300 bg-white px-3 py-2 text-sm hover:bg-neutral-50"
                       >
                         Play Swirdle <ArrowRight className="h-4 w-4" />
                       </Link>
                       <Link
-                        to={ROUTES.dailyQuiz}
+                        to="/quiz" // update this path if different in your app
                         className="inline-flex items-center gap-2 rounded-xl border border-neutral-300 bg-white px-3 py-2 text-sm hover:bg-neutral-50"
                       >
                         Daily Wine Quiz <ArrowRight className="h-4 w-4" />
@@ -578,7 +572,7 @@ function VinoVocabInner() {
             </div>
             <div className="rounded-2xl border border-neutral-200 p-4">
               <div className="text-xs text-neutral-500">Current streak</div>
-              <div className="mt-1 text-2xl font-semibold">{(latest?.streak_after ?? currentStreak)}</div>
+              <div className="mt-1 text-2xl font-semibold">{(latest?.streak_after ?? 0)}</div>
             </div>
           </div>
 
