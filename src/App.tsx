@@ -2,6 +2,9 @@
 import React from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 
+// ⬇️ add this line next to your other page imports/lazy imports
+const SwirdleLeaderboardPage = lazy(() => import('@/pages/SwirdleLeaderboardPage'));
+
 // UI / Providers
 import { Toaster } from '@/components/ui/sonner';
 import { AuthProvider, useAuth } from '@/context/AuthContext';
@@ -205,6 +208,24 @@ function App() {
                       </RequireAdmin>
                     }
                   />
+                  
+                  export default function App() {
+  return (
+    <Router>
+      {/* If you already have a Suspense wrapper, keep yours and just add the Route below */}
+      <Suspense fallback={null}>
+        <Routes>
+          {/* ...your existing routes... */}
+
+          {/* ⬇️ add this new route */}
+          <Route path="/swirdle/leaderboard" element={<SwirdleLeaderboardPage />} />
+        </Routes>
+      </Suspense>
+    </Router>
+  );
+}
+
+                  
                   <Route
                     path="/admin/quizzes"
                     element={
