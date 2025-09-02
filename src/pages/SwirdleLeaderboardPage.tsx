@@ -1,6 +1,8 @@
-import React from "react";
-import { Crown, Trophy, Medal, RefreshCw, Search, Calendar } from "lucide-react";
-import { supabase } from "@/lib/supabase";
+// 10.2 — src/pages/SwirdleLeaderboardPage.tsx
+import React, { useEffect, useMemo, useState } from 'react';
+import { Award, Crown, Loader2 } from 'lucide-react';
+import { supabase } from '@/lib/supabase';
+import { useAuth } from '@/context/AuthContext';
 
 type Row = {
   user_id: string;
@@ -8,155 +10,172 @@ type Row = {
   avatar_url: string | null;
   total_points: number;
   best_streak: number;
-  last_played: string | null; // ISO
+  last_played: string | null;
 };
 
-const DEFAULT_LIMIT = 50;
+type RecentBadge = {
+  user_id: string;
+  badge_code: string;
+  icon: string | null;
+  awarded_at: string;
+};
 
-export default function SwirdleLeaderboardPage() {
-  const [rows, setRows] = React.useState<Row[]>([]);
-  const [loading, setLoading] = React.useState(true);
-  const [error, setError] = React.useState<string | null>(null);
-  const [q, setQ] = React.useState("");
-  const [days, setDays] = React.useState<7 | 30 | 90 | 365>(30);
+async function fetchLeaderboard(limit = 100): Promise<Row[]> {
+  // If you exposed a RPC, prefer that:
+  // const { data, error } = await supabase.rpc('get_swirdle_leaderboard', { p_limit: limit });
+  // Using the view from step 7.3 (rename if different):
+  const { data, error } = await supabase
+    .from('swirdle_leaderboard')
+    .select('user_id, display_name, avatar_url, total_points, best_streak, last_played')
+    .order('total_points', { ascending: false })
+    .limit(limit);
 
-  const fetchData = React.useCallback(async () => {
-    setLoading(true);
-    setError(null);
+  if (error) throw error;
+  return (data as Row[]) ?? [];
+}
 
-    try {
-      // Preferred: materialized/regular VIEW named swirdle_leaderboard
-      const since = new Date();
-      since.setDate(since.getDate() - days);
-      const sinceISO = since.toISOString();
+async function fetchRecentBadgesForUsers(userIds: string[]): Promise<RecentBadge[]> {
+  if (userIds.length === 0) return [];
+  const { data, error } = await supabase.rpc('get_recent_badges_for_users', { p_user_ids: userIds });
+  if (error) throw error;
+  return (data as RecentBadge[]) ?? [];
+}
 
-      // Try the view first
-      let { data, error } = await supabase
-        .from("swirdle_leaderboard")
-        .select("*")
-        .gte("last_played", sinceISO)
-        .order("total_points", { ascending: false })
-        .limit(DEFAULT_LIMIT);
+const rankEmoji = (i: number) => (i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `${i + 1}.`);
 
-      // Fallback: call RPC if the view isn't there (error.code === '42P01' server-side)
-      if (error) {
-        const rpc = await supabase.rpc("get_swirdle_leaderboard", { since_iso: sinceISO });
-        if (rpc.error) throw rpc.error;
-        data = rpc.data as Row[];
+const SwirdleLeaderboardPage: React.FC = () => {
+  const { user } = useAuth();
+  const [rows, setRows] = useState<Row[]>([]);
+  const [badges, setBadges] = useState<Record<string, RecentBadge[]>>({});
+  const [loading, setLoading] = useState(true);
+  const [err, setErr] = useState<string>('');
+
+  useEffect(() => {
+    (async () => {
+      try {
+        setLoading(true);
+        setErr('');
+        const lb = await fetchLeaderboard(100);
+        setRows(lb);
+
+        const ids = lb.map(r => r.user_id);
+        const rb = await fetchRecentBadgesForUsers(ids);
+        // group by user_id and take top 2
+        const grouped: Record<string, RecentBadge[]> = {};
+        for (const b of rb) {
+          if (!grouped[b.user_id]) grouped[b.user_id] = [];
+          if (grouped[b.user_id].length < 2) grouped[b.user_id].push(b);
+        }
+        setBadges(grouped);
+      } catch (e: any) {
+        setErr(e?.message ?? 'Failed to load leaderboard');
+      } finally {
+        setLoading(false);
       }
+    })();
+  }, [user?.id]);
 
-      // Client-side filter for quick search (by name)
-      const filtered = (data || []).filter((r) =>
-        q.trim() ? (r.display_name || "").toLowerCase().includes(q.trim().toLowerCase()) : true
-      );
+  const myId = user?.id ?? null;
 
-      setRows(filtered);
-    } catch (e: any) {
-      setError(e?.message || "Failed to load leaderboard");
-    } finally {
-      setLoading(false);
-    }
-  }, [q, days]);
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <Loader2 className="w-6 h-6 animate-spin text-gray-400" />
+      </div>
+    );
+  }
 
-  React.useEffect(() => {
-    fetchData();
-  }, [fetchData]);
+  if (err) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <p className="text-sm text-red-600">{err}</p>
+      </div>
+    );
+  }
 
   return (
-    <main className="mx-auto max-w-3xl p-6">
-      <header className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-        <div className="flex items-center gap-3">
-          <Crown className="h-6 w-6" />
-          <h1 className="text-2xl font-semibold">Swirdle Leaderboard</h1>
+    <div className="min-h-screen bg-gradient-to-br from-purple-50 via-white to-amber-50">
+      <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-10">
+        <div className="mb-8 text-center">
+          <div className="flex items-center justify-center mb-2">
+            <Crown className="w-8 h-8 text-purple-600 mr-2" />
+            <h1 className="text-3xl font-bold text-gray-900">Swirdle Leaderboard</h1>
+          </div>
+          <p className="text-gray-600">Top players by total points. Badges show latest achievements.</p>
         </div>
 
-        <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-          <label className="flex items-center gap-2 rounded-xl border px-3 py-2">
-            <Search className="h-4 w-4" />
-            <input
-              className="outline-none bg-transparent"
-              placeholder="Search player"
-              value={q}
-              onChange={(e) => setQ(e.target.value)}
-            />
-          </label>
+        <div className="bg-white border border-gray-200 rounded-xl overflow-hidden shadow-sm">
+          <div className="grid grid-cols-12 px-4 py-3 text-xs font-medium text-gray-500 bg-gray-50">
+            <div className="col-span-1">Rank</div>
+            <div className="col-span-6">Player</div>
+            <div className="col-span-2 text-right">Points</div>
+            <div className="col-span-1 text-center">Best Streak</div>
+            <div className="col-span-2 text-right">Last Played</div>
+          </div>
 
-          <label className="flex items-center gap-2 rounded-xl border px-3 py-2">
-            <Calendar className="h-4 w-4" />
-            <select
-              className="bg-transparent outline-none"
-              value={days}
-              onChange={(e) => setDays(Number(e.target.value) as any)}
-            >
-              <option value={7}>Last 7 days</option>
-              <option value={30}>Last 30 days</option>
-              <option value={90}>Last 90 days</option>
-              <option value={365}>Last 365 days</option>
-            </select>
-          </label>
+          <ul className="divide-y divide-gray-100">
+            {rows.map((r, idx) => {
+              const isMe = myId && r.user_id === myId;
+              const rowBadges = badges[r.user_id] ?? [];
+              return (
+                <li
+                  key={r.user_id}
+                  className={`grid grid-cols-12 items-center px-4 py-3 ${isMe ? 'bg-purple-50' : 'bg-white'}`}
+                >
+                  <div className="col-span-1 font-mono text-sm text-gray-700">{rankEmoji(idx)}</div>
 
-          <button
-            onClick={fetchData}
-            className="inline-flex items-center gap-2 rounded-xl border px-3 py-2"
-            aria-label="Refresh leaderboard"
-          >
-            <RefreshCw className="h-4 w-4" />
-            Refresh
-          </button>
+                  <div className="col-span-6 flex items-center gap-3">
+                    <div className="h-8 w-8 rounded-full bg-gray-100 overflow-hidden flex items-center justify-center">
+                      {r.avatar_url ? (
+                        <img src={r.avatar_url} alt="" className="h-8 w-8 object-cover" />
+                      ) : (
+                        <span className="text-xs text-gray-500">👤</span>
+                      )}
+                    </div>
+                    <div>
+                      <div className="text-sm font-semibold text-gray-900">
+                        {r.display_name || 'Anonymous'}
+                      </div>
+                      {/* Badge strip */}
+                      <div className="flex items-center gap-1 mt-1">
+                        {rowBadges.length === 0 ? (
+                          <span className="text-[10px] text-gray-400 flex items-center gap-1">
+                            <Award className="w-3 h-3" /> No badges yet
+                          </span>
+                        ) : (
+                          rowBadges.map((b) => (
+                            <span key={b.badge_code} title={b.badge_code} className="text-base">
+                              {b.icon || '🏅'}
+                            </span>
+                          ))
+                        )}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="col-span-2 text-right font-semibold text-gray-900">
+                    {r.total_points}
+                  </div>
+
+                  <div className="col-span-1 text-center text-gray-700">
+                    {r.best_streak}
+                  </div>
+
+                  <div className="col-span-2 text-right text-xs text-gray-500">
+                    {r.last_played ? new Date(r.last_played).toLocaleDateString() : '—'}
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
         </div>
-      </header>
 
-      {loading && <div className="p-6">Loading…</div>}
-      {error && (
-        <div className="rounded-xl border border-red-300 bg-red-50 p-4 text-sm text-red-700">
-          {error}
+        <div className="mt-6 text-center text-sm text-gray-500">
+          Earn badges by winning daily, keeping streaks, and hitting point milestones!
         </div>
-      )}
-
-      {!loading && !error && rows.length === 0 && (
-        <div className="p-6 text-sm opacity-70">No results.</div>
-      )}
-
-      <section className="space-y-3">
-        {rows.map((row, i) => (
-          <article
-            key={row.user_id}
-            className="flex items-center justify-between rounded-xl border p-4"
-          >
-            <div className="flex items-center gap-3">
-              {i === 0 ? (
-                <Trophy className="h-5 w-5" />
-              ) : i === 1 ? (
-                <Medal className="h-5 w-5" />
-              ) : i === 2 ? (
-                <Medal className="h-5 w-5" />
-              ) : (
-                <span className="w-5 text-center text-sm opacity-60">{i + 1}</span>
-              )}
-              {row.avatar_url ? (
-                <img
-                  src={row.avatar_url}
-                  className="h-8 w-8 rounded-full object-cover"
-                  alt=""
-                  loading="lazy"
-                />
-              ) : (
-                <div className="h-8 w-8 rounded-full bg-gray-200" />
-              )}
-              <div>
-                <div className="font-medium">
-                  {row.display_name || "Anonymous"}{" "}
-                  <span className="text-xs opacity-60">• best streak {row.best_streak}d</span>
-                </div>
-                <div className="text-xs opacity-60">
-                  {row.last_played ? new Date(row.last_played).toLocaleDateString() : "—"}
-                </div>
-              </div>
-            </div>
-            <div className="text-sm font-semibold">{row.total_points} pts</div>
-          </article>
-        ))}
-      </section>
-    </main>
+      </div>
+    </div>
   );
-}
+};
+
+export default SwirdleLeaderboardPage;
