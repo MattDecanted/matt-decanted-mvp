@@ -8,13 +8,26 @@ function cx(...xs: Array<string | false | null | undefined>) {
   return xs.filter(Boolean).join(" ");
 }
 
-const LOGO_URL =
-  import.meta.env.VITE_BRAND_LOGO_URL ||
-  "/md-logo.svg"; // set VITE_BRAND_LOGO_URL to your hosted logo URL
-
 export default function Layout({ children }: { children: React.ReactNode }) {
-  const { user, signOut, profile } = useAuth() as any;
-  const { points } = usePoints?.() ?? { points: 0 };
+  const { user, signOut } = useAuth();
+
+  // ⬇️ Read any of: totalPoints | points | balance, and refresh after login
+  const pointsCtx = usePoints?.();
+  const displayPoints = Number(
+    (pointsCtx as any)?.totalPoints ??
+      (pointsCtx as any)?.points ??
+      (pointsCtx as any)?.balance ??
+      0
+  );
+  const pointsLoading = Boolean((pointsCtx as any)?.loading);
+
+  React.useEffect(() => {
+    // refresh when user changes (no-op if provider already does this)
+    if (user?.id && (pointsCtx as any)?.refreshPoints) {
+      (pointsCtx as any).refreshPoints();
+    }
+  }, [user?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const [open, setOpen] = React.useState(false);
 
   const linkClass = ({ isActive }: { isActive: boolean }) =>
@@ -25,6 +38,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
       isActive && "text-brand"
     );
 
+  // Hide chrome on auth-processing routes
   const loc = useLocation();
   const hideChrome =
     loc.pathname.startsWith("/auth/callback") ||
@@ -38,89 +52,77 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     );
   }
 
-  const displayName =
-    profile?.display_name || user?.user_metadata?.full_name || user?.email;
-
   return (
     <div className="min-h-screen flex flex-col">
       {/* Header */}
       <header className="site-header">
         <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
           <div className="h-14 flex items-center justify-between">
-            {/* Far-left brand cluster: text (LHS) + logo (RHS) */}
-            <Link to="/" className="flex items-center gap-3 shrink-0">
-              <div className="text-right leading-tight">
-                <div className="font-semibold text-gray-900">Matt Decanted</div>
-                <div className="-mt-0.5 text-[11px] text-orange-600">
-                  Wine Education
-                </div>
-              </div>
+            {/* Brand (far-left) */}
+            <Link to="/" className="flex items-center gap-3">
+              {/* Logo image (kept inline so the URL can be updated easily) */}
               <img
-                src={LOGO_URL}
+                src="https://matt-decanted.s3.ap-southeast-2.amazonaws.com/brand/matt-decanted-logo.png"
                 alt="Matt Decanted"
-                className="h-7 w-auto"
-                onError={(e) => {
-                  // fail-safe so missing asset doesn't break layout
-                  (e.currentTarget as HTMLImageElement).style.display = "none";
-                }}
+                className="h-8 w-auto"
               />
+              <div className="leading-tight">
+                <div className="font-semibold text-gray-900">Matt Decanted</div>
+                <div className="-mt-0.5 text-[11px] text-orange-600">Wine Education</div>
+              </div>
             </Link>
 
-            {/* Desktop nav (removed Swirdle Leaderboard link here) */}
-            <nav className="hidden md:flex items-center gap-5">
+            {/* Desktop nav */}
+            <nav className="hidden md:flex items-center gap-5 site-nav">
               <NavLink to="/blog" className={linkClass}>Blog</NavLink>
               <NavLink to="/play" className={linkClass}>Challenges</NavLink>
               <NavLink to="/courses" className={linkClass}>Courses</NavLink>
               <NavLink to="/community" className={linkClass}>Community</NavLink>
               <NavLink to="/about" className={linkClass}>About</NavLink>
-              <NavLink to="/pricing" className={linkClass}>Pricing</NavLink>
+              <NavLink to="/dashboard" className={linkClass}>Dashboard</NavLink>
             </nav>
 
             {/* Right cluster */}
             <div className="hidden md:flex items-center gap-2">
-              {/* language */}
-              <details className="group relative">
-                <summary className="list-none inline-flex items-center gap-1 rounded-md border border-gray-200 px-2.5 py-1 text-xs text-gray-700 cursor-pointer">
-                  <Globe className="w-3.5 h-3.5" />
-                  <span>US English</span>
-                </summary>
-                <div className="absolute right-0 mt-2 w-40 rounded-md border bg-white p-2 shadow z-50">
-                  <button className="w-full text-left text-xs px-2 py-1 rounded hover:bg-gray-50">
-                    English
-                  </button>
-                  <button className="w-full text-left text-xs px-2 py-1 rounded hover:bg-gray-50">
-                    한국어
-                  </button>
-                </div>
-              </details>
+              {/* Language (no-op for now) */}
+              <div
+                className="inline-flex items-center gap-1 rounded-md border border-gray-200 px-2.5 py-1 text-xs text-gray-700"
+                title="Language"
+              >
+                <Globe className="w-3.5 h-3.5" />
+                <span>EN</span>
+              </div>
 
-              {/* points / streak chip */}
+              {/* Points / streak pill */}
               <Link
                 to={user ? "/account" : "/signin"}
                 className="inline-flex items-center gap-2 rounded-md border border-gray-200 bg-white px-2.5 py-1 text-xs text-gray-800 hover:bg-gray-50"
                 title="Your points"
               >
                 <Trophy className="w-3.5 h-3.5 text-amber-500" />
-                <span>{Number(points || 0)}</span>
+                <span className="tabular-nums">
+                  {pointsLoading ? "…" : displayPoints}
+                </span>
                 <span className="mx-1 h-3 w-px bg-gray-200" />
                 <Flame className="w-3.5 h-3.5 text-orange-500" />
                 <span className="tabular-nums">0</span>
               </Link>
 
-              {/* account / sign in/out */}
+              {/* Username (if you want to show it) */}
+              {user?.email && (
+                <span className="text-xs text-gray-600 max-w-[180px] truncate" title={user.email}>
+                  {user.email}
+                </span>
+              )}
+
               {user ? (
-                <>
-                  <Link
-                    to="/account"
-                    className="btn-ghost"
-                    title="Your account"
-                  >
-                    {displayName}
-                  </Link>
-                  <button onClick={() => signOut()} className="btn-brand-outline">
-                    Sign out
-                  </button>
-                </>
+                // ⬇️ Easier to read per your request (green/orange on white)
+                <button
+                  onClick={() => signOut()}
+                  className="inline-flex items-center rounded-md border border-green-600 bg-white px-3 py-1 text-xs font-semibold text-green-700 hover:bg-green-50"
+                >
+                  Sign out
+                </button>
               ) : (
                 <>
                   <Link to="/signin" className="btn-ghost">Sign in</Link>
@@ -145,6 +147,16 @@ export default function Layout({ children }: { children: React.ReactNode }) {
           </div>
         </div>
 
+        {/* Orange underline (under the menu, softer + slightly darker) */}
+        <div
+          style={{
+            height: 4,
+            background:
+              "linear-gradient(to bottom, rgba(255,128,0,0.85), rgba(255,128,0,0.75))",
+            borderBottomLeftRadius: 6,
+            borderBottomRightRadius: 6,
+          }}
+        />
         {/* Mobile drawer */}
         {open && (
           <div className="md:hidden border-t border-gray-200">
@@ -154,51 +166,33 @@ export default function Layout({ children }: { children: React.ReactNode }) {
               <NavLink to="/courses" className={linkClass} onClick={() => setOpen(false)}>Courses</NavLink>
               <NavLink to="/community" className={linkClass} onClick={() => setOpen(false)}>Community</NavLink>
               <NavLink to="/about" className={linkClass} onClick={() => setOpen(false)}>About</NavLink>
-              <NavLink to="/pricing" className={linkClass} onClick={() => setOpen(false)}>Pricing</NavLink>
+              <NavLink to="/dashboard" className={linkClass} onClick={() => setOpen(false)}>Dashboard</NavLink>
 
               <div className="pt-2 flex items-center gap-2">
-                <details className="group relative">
-                  <summary className="list-none inline-flex items-center gap-1 rounded-md border border-gray-200 px-2.5 py-1 text-xs text-gray-700 cursor-pointer">
-                    <Globe className="w-3.5 h-3.5" />
-                    <span>US English</span>
-                  </summary>
-                  <div className="absolute left-0 mt-2 w-40 rounded-md border bg-white p-2 shadow z-50">
-                    <button className="w-full text-left text-xs px-2 py-1 rounded hover:bg-gray-50">
-                      English
-                    </button>
-                    <button className="w-full text-left text-xs px-2 py-1 rounded hover:bg-gray-50">
-                      한국어
-                    </button>
-                  </div>
-                </details>
-
+                <div className="inline-flex items-center gap-1 rounded-md border border-gray-200 px-2.5 py-1 text-xs text-gray-700">
+                  <Globe className="w-3.5 h-3.5" />
+                  <span>EN</span>
+                </div>
                 <Link
                   to={user ? "/account" : "/signin"}
                   onClick={() => setOpen(false)}
                   className="inline-flex items-center gap-2 rounded-md border border-gray-200 bg-white px-2.5 py-1 text-xs text-gray-800"
                 >
                   <Trophy className="w-3.5 h-3.5 text-amber-500" />
-                  <span>{Number(points || 0)}</span>
+                  <span className="tabular-nums">
+                    {pointsLoading ? "…" : displayPoints}
+                  </span>
                   <span className="mx-1 h-3 w-px bg-gray-200" />
                   <Flame className="w-3.5 h-3.5 text-orange-500" />
                   <span className="tabular-nums">0</span>
                 </Link>
-
                 {user ? (
-                  <>
-                    <Link to="/account" onClick={() => setOpen(false)} className="btn-ghost">
-                      {displayName}
-                    </Link>
-                    <button
-                      onClick={() => {
-                        setOpen(false);
-                        void signOut();
-                      }}
-                      className="btn-brand-outline"
-                    >
-                      Sign out
-                    </button>
-                  </>
+                  <button
+                    onClick={() => { setOpen(false); void signOut(); }}
+                    className="inline-flex items-center rounded-md border border-green-600 bg-white px-3 py-1 text-xs font-semibold text-green-700 hover:bg-green-50"
+                  >
+                    Sign out
+                  </button>
                 ) : (
                   <>
                     <Link to="/signin" onClick={() => setOpen(false)} className="btn-ghost">
@@ -218,9 +212,6 @@ export default function Layout({ children }: { children: React.ReactNode }) {
           </div>
         )}
       </header>
-
-      {/* Darker/softer orange underline BELOW the header */}
-      <div className="header-underline" />
 
       {/* Page body */}
       <main className="flex-1">{children}</main>
