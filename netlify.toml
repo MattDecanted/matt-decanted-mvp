@@ -1,26 +1,19 @@
 [build]
-  command   = "npm run build"
-  publish   = "dist"
+  command = "npm run build"
+  publish = "dist"
   functions = "netlify/functions"
 
 [build.environment]
-  NODE_VERSION = "20"
+  NODE_VERSION = "18"
 
-[functions]
-  node_bundler = "esbuild"
-  external_node_modules = ["parse-multipart-data"]
-
+# Single Page App: send all routes to index.html
 [[redirects]]
   from = "/*"
-  to   = "/index.html"
+  to = "/index.html"
   status = 200
 
-[dev]
-  command       = "vite"
-  port          = 5173
-  targetPort    = 8888
-  functionsPort = 9999
-  publish       = "dist"
-
-[[plugins]]
-  package = "@netlify/plugin-functions-install-core"
+# (Optional) CORS for functions if you ever call them cross-origin
+#[[headers]]
+#  for = "/.netlify/functions/*"
+#  [headers.values]
+#    Access-Control-Allow-Origin = "*"
