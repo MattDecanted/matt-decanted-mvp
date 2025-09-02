@@ -319,38 +319,85 @@ const Swirdle: React.FC = () => {
     })();
   }, [user?.id]);
 
-  // -------- Persist attempt --------
-  async function saveAttempt(override?: { completed?: boolean; won?: boolean; attempts?: number }) {
-    if (!user?.id || !todaysWord || !dbWordAvailable) return;
+  // -------- Persist attempt + leaderboard/badges --------
+function calcPoints(won: boolean, hints: number) {
+  if (!won) return 0;
+  const raw = WIN_POINTS - HINT_COST * hints;
+  return Math.max(0, raw);
+}
 
-    const completed = override?.completed ?? gameComplete;
-    const won = override?.won ?? gameWon;
-    const attemptsToSave = override?.attempts ?? currentAttempt;
+async function saveAttempt(override?: { completed?: boolean; won?: boolean; attempts?: number }) {
+  if (!user?.id || !todaysWord || !dbWordAvailable) return;
 
-    try {
-      const base: SwirdleAttempt = {
-        id: userAttempt?.id,
-        user_id: user.id,
-        word_id: todaysWord.id,
-        guesses: guesses.filter((g) => g.length > 0),
-        attempts: attemptsToSave,
-        completed,
-        won,
-        hints_used: hintsUsed,
-        completed_at: completed ? new Date().toISOString() : null,
-      };
+  const completed = override?.completed ?? gameComplete;
+  const won = override?.won ?? gameWon;
+  const attemptsToSave = override?.attempts ?? currentAttempt;
 
-      const { data: saved } = await recordAttempt(base);
-      if (saved) setUserAttempt(saved);
+  try {
+    // 1) Upsert gameplay attempt (guesses, completed state, etc.)
+    const base: SwirdleAttempt = {
+      id: userAttempt?.id,
+      user_id: user.id,
+      word_id: todaysWord.id,
+      guesses: guesses.filter((g) => g.length > 0),
+      attempts: attemptsToSave,
+      completed,
+      won,
+      hints_used: hintsUsed,
+      completed_at: completed ? new Date().toISOString() : null,
+    };
 
-      if (completed) {
-        const { data: stats } = await upsertUserStatsRow(user.id, !!won, attemptsToSave);
-        if (stats) setUserStats(stats);
+    const { data: saved, error: upsertErr } = await recordAttempt(base);
+    if (upsertErr) throw upsertErr;
+    if (saved) setUserAttempt(saved);
+
+    // 2) If completed, upsert stats to get the streak, then write leaderboard fields
+    if (completed) {
+      // Update per-user stats (your existing table/logic)
+      const { data: stats, error: statsErr } = await upsertUserStatsRow(user.id, !!won, attemptsToSave);
+      if (statsErr) console.warn('stats upsert warning:', statsErr?.message);
+      if (stats) setUserStats(stats ?? null);
+
+      // Compute points + streak_after
+      const pointsAwarded = calcPoints(!!won, hintsUsed.length);
+      const streakAfter = stats?.current_streak ?? (won ? 1 : 0);
+
+      // 3) Update the same attempt row with leaderboard fields
+      if (saved?.id) {
+        const { error: updateErr } = await supabase
+          .from('swirdle_attempts')
+          .update({
+            points: pointsAwarded,
+            streak_after: streakAfter,
+            played_at: new Date().toISOString(),
+          })
+          .eq('id', saved.id);
+        if (updateErr) console.warn('attempt leaderboard update warning:', updateErr?.message);
+      } else {
+        // Fallback: set by compound key (user_id + word_id) if id missing
+        const { error: updateErr2 } = await supabase
+          .from('swirdle_attempts')
+          .update({
+            points: pointsAwarded,
+            streak_after: streakAfter,
+            played_at: new Date().toISOString(),
+          })
+          .eq('user_id', user.id)
+          .eq('word_id', todaysWord.id);
+        if (updateErr2) console.warn('attempt leaderboard update (fallback) warning:', updateErr2?.message);
       }
-    } catch (e) {
-      console.error('saveAttempt error:', e);
+
+      // 4) Badge award — idempotent (safe to call every completion)
+      try {
+        await supabase.rpc('award_badges_for_user', { p_user_id: user.id });
+      } catch (e: any) {
+        console.warn('award_badges_for_user warning:', e?.message ?? e);
+      }
     }
+  } catch (e) {
+    console.error('saveAttempt error:', e);
   }
+}
 
   // -------- Award on win (robust pipeline) --------
   async function handleWinAward(guessesCount: number) {
