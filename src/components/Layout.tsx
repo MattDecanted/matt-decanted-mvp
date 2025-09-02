@@ -1,7 +1,16 @@
 // src/components/Layout.tsx
 import * as React from "react";
 import { NavLink, Link, useLocation } from "react-router-dom";
-import { Globe, Trophy, Flame, Menu, X, ChevronDown } from "lucide-react";
+import {
+  Globe,
+  Trophy,
+  Flame,
+  Menu,
+  X,
+  User as UserIcon,
+  LayoutDashboard,
+  LogOut,
+} from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 import { usePoints } from "@/context/PointsContext";
 
@@ -9,23 +18,8 @@ function cx(...xs: Array<string | false | null | undefined>) {
   return xs.filter(Boolean).join(" ");
 }
 
-/**
- * ▶️ Logo source
- * Paste your URL in VITE_BRAND_LOGO_URL (recommended), or edit FALLBACK_LOGO_URL below.
- * Example: VITE_BRAND_LOGO_URL=https://your.cdn.com/path/logo.png
- */
-const FALLBACK_LOGO_URL =
-  "https://placehold.co/64x64/png?text=%F0%9F%8D%B7"; // ← replace if you want
-const RHS_LOGO_SRC =
-  (import.meta as any).env?.VITE_BRAND_LOGO_URL || FALLBACK_LOGO_URL;
-
-const LANGS = [
-  { id: "en-US", country: "US", label: "English" },
-  { id: "ko-KR", country: "KR", label: "한국어" },
-];
-
 export default function Layout({ children }: { children: React.ReactNode }) {
-  const { user, signOut } = useAuth();
+  const { user, signOut, profile } = useAuth(); // ⬅️ profile expected to include display_name, avatar_url
   const { points } = usePoints?.() ?? { points: 0 };
   const [open, setOpen] = React.useState(false);
 
@@ -37,29 +31,33 @@ export default function Layout({ children }: { children: React.ReactNode }) {
       isActive && "text-brand"
     );
 
+  // Hide chrome on auth-processing routes
   const loc = useLocation();
   const hideChrome =
     loc.pathname.startsWith("/auth/callback") ||
     loc.pathname.startsWith("/reset-password");
 
-  // Language selector state
-  const [langOpen, setLangOpen] = React.useState(false);
-  const [lang, setLang] = React.useState<string>(() => localStorage.getItem("app_lang") || "en-US");
-  const activeLang = React.useMemo(() => LANGS.find(l => l.id === lang) || LANGS[0], [lang]);
+  // ---- derived display name
+  const displayName =
+    (profile as any)?.display_name ||
+    (user?.user_metadata as any)?.full_name ||
+    (user?.email ? user.email.split("@")[0] : "");
 
-  React.useEffect(() => {
-    document.documentElement.lang = (lang || "en-US").split("-")[0];
-    localStorage.setItem("app_lang", lang);
-  }, [lang]);
-
-  React.useEffect(() => {
-    const onClick = (e: MouseEvent) => {
-      const node = e.target as HTMLElement;
-      if (!node.closest?.("#lang-popover") && !node.closest?.("#lang-button")) setLangOpen(false);
-    };
-    window.addEventListener("click", onClick);
-    return () => window.removeEventListener("click", onClick);
-  }, []);
+  // Small circle avatar (initial)
+  const Avatar = ({ className = "h-6 w-6" }: { className?: string }) => {
+    const letter = (displayName || user?.email || "?").slice(0, 1).toUpperCase();
+    return (
+      <div
+        className={cx(
+          "rounded-full bg-amber-100 text-amber-800 flex items-center justify-center font-semibold",
+          className
+        )}
+        aria-hidden
+      >
+        {letter}
+      </div>
+    );
+  };
 
   if (hideChrome) {
     return (
@@ -71,103 +69,121 @@ export default function Layout({ children }: { children: React.ReactNode }) {
 
   return (
     <div className="min-h-screen flex flex-col">
-      {/* HEADER */}
-      <header
-        className="relative bg-white"
-        style={{ borderBottom: "0", boxShadow: "none" }} // 🔧 kill any inherited 1px underline
-      >
+      {/* soft orange underline (bottom of header) */}
+      <div className="top-accent" />
+
+      {/* Header */}
+      <header className="site-header">
         <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
           <div className="h-14 flex items-center justify-between">
-            {/* Brand (LHS) */}
-            <Link to="/" className="flex items-center gap-3">
-              <div className="leading-tight">
-                <div className="font-semibold text-gray-900">Matt Decanted</div>
-                <div className="-mt-0.5 text-[11px] text-amber-600">Wine Education</div>
-              </div>
-            </Link>
-
-            {/* Desktop nav */}
-            <nav className="hidden md:flex items-center gap-5">
-              <NavLink to="/blog" className={linkClass}>Blog</NavLink>
-              <NavLink to="/play" className={linkClass}>Challenges</NavLink>
-              <NavLink to="/swirdle" className={linkClass}>Swirdle</NavLink>
-              <NavLink to="/swirdle/leaderboard" className={linkClass}>Leaderboard</NavLink>
-              <NavLink to="/badges" className={linkClass}>Badges</NavLink>
-              <NavLink to="/courses" className={linkClass}>Courses</NavLink>
-              <NavLink to="/community" className={linkClass}>Community</NavLink>
-              <NavLink to="/about" className={linkClass}>About</NavLink>
-              <NavLink to="/pricing" className={linkClass}>Pricing</NavLink>
+            {/* Left: primary nav */}
+            <nav className="hidden md:flex items-center gap-5 site-nav">
+              <NavLink to="/blog" className={linkClass}>
+                Blog
+              </NavLink>
+              <NavLink to="/play" className={linkClass}>
+                Challenges
+              </NavLink>
+              <NavLink to="/swirdle" className={linkClass}>
+                Swirdle
+              </NavLink>
+              <NavLink to="/swirdle/leaderboard" className={linkClass}>
+                Leaderboard
+              </NavLink>
+              <NavLink to="/badges" className={linkClass}>
+                Badges
+              </NavLink>
+              <NavLink to="/courses" className={linkClass}>
+                Courses
+              </NavLink>
+              <NavLink to="/community" className={linkClass}>
+                Community
+              </NavLink>
+              <NavLink to="/about" className={linkClass}>
+                About
+              </NavLink>
+              <NavLink to="/pricing" className={linkClass}>
+                Pricing
+              </NavLink>
             </nav>
 
-            {/* RHS cluster: language • points • sign out • brand text • logo */}
+            {/* Center spacer (keeps logo right-aligned) */}
+            <div className="flex-1" />
+
+            {/* Right: brand logo + controls */}
             <div className="hidden md:flex items-center gap-3">
-              {/* Language */}
-              <div className="relative">
-                <button
-                  id="lang-button"
-                  onClick={() => setLangOpen(v => !v)}
-                  className="inline-flex items-center gap-1 rounded-md border border-gray-200 px-2.5 py-1 text-xs text-gray-700 bg-white hover:bg-gray-50"
-                >
-                  <Globe className="w-3.5 h-3.5" />
-                  <span className="uppercase">{activeLang.country}</span>
-                  <span>{activeLang.label}</span>
-                  <ChevronDown className="w-3 h-3 opacity-70" />
-                </button>
-                {langOpen && (
-                  <div
-                    id="lang-popover"
-                    className="absolute right-0 mt-1 w-56 rounded-md border border-gray-200 bg-white shadow-lg z-20"
-                  >
-                    <div className="px-3 py-2 text-[10px] font-semibold text-gray-400">
-                      Select language
-                    </div>
-                    {LANGS.map((l) => {
-                      const active = l.id === lang;
-                      return (
-                        <button
-                          key={l.id}
-                          onClick={() => { setLang(l.id); setLangOpen(false); }}
-                          className={cx(
-                            "w-full flex items-center justify-between px-3 py-2 text-sm",
-                            active ? "bg-amber-50 text-amber-800" : "hover:bg-gray-50 text-gray-700"
-                          )}
-                        >
-                          <span className="flex items-center gap-2">
-                            <span className="uppercase text-xs text-gray-400">{l.country}</span>
-                            <span>{l.label}</span>
-                          </span>
-                          {active && <span className="text-amber-500">•</span>}
-                        </button>
-                      );
-                    })}
-                  </div>
-                )}
+              {/* Brand on RHS */}
+              <a
+                href="/"
+                className="flex items-center gap-2 pr-2 border-r border-gray-200"
+                title="Matt Decanted"
+              >
+                <img
+                  src="https://cdn.jsdelivr.net/gh/mattdecanted/assets/md-logo-32.png"
+                  alt="Matt Decanted"
+                  className="h-7 w-7 rounded"
+                />
+                <div className="leading-tight text-right">
+                  <div className="font-semibold text-gray-900">Matt Decanted</div>
+                  <div className="-mt-0.5 text-[11px] text-brand-orange">Wine Education</div>
+                </div>
+              </a>
+
+              {/* Language (placeholder for now; hook up i18n when ready) */}
+              <div
+                className="inline-flex items-center gap-1 rounded-md border border-gray-200 px-2.5 py-1 text-xs text-gray-700 bg-white"
+                title="Language"
+              >
+                <Globe className="w-3.5 h-3.5" />
+                <span>EN</span>
               </div>
 
-              {/* Points chip (matches badges/awards colors) */}
+              {/* Points pill */}
               <Link
                 to={user ? "/account" : "/signin"}
-                className="inline-flex items-center gap-2 rounded-md border border-amber-200 bg-white px-2.5 py-1 text-xs text-gray-800 hover:bg-amber-50"
+                className="inline-flex items-center gap-2 rounded-md border border-gray-200 bg-white px-2.5 py-1 text-xs text-gray-800 hover:bg-gray-50"
                 title="Your points"
               >
                 <Trophy className="w-3.5 h-3.5 text-amber-500" />
                 <span className="tabular-nums">{Number(points || 0)}</span>
-                <span className="mx-1 h-3 w-px bg-amber-200" />
+                <span className="mx-1 h-3 w-px bg-gray-200" />
                 <Flame className="w-3.5 h-3.5 text-orange-500" />
                 <span className="tabular-nums">0</span>
               </Link>
 
-              {/* Auth button (orange-on-white for readability) */}
+              {/* User cluster */}
               {user ? (
-                <button
-                  onClick={() => signOut()}
-                  className="inline-flex items-center rounded-md border border-amber-300 bg-white px-3 py-1 text-xs font-medium text-amber-700 hover:bg-amber-50"
-                >
-                  Sign out
-                </button>
+                <>
+                  <Link
+                    to="/account"
+                    className="inline-flex items-center gap-2 rounded-md border border-gray-200 bg-white px-2.5 py-1 text-xs text-gray-800 hover:bg-gray-50"
+                    title="Your account"
+                  >
+                    <Avatar />
+                    <span className="max-w-[12ch] truncate">{displayName || "Account"}</span>
+                  </Link>
+                  <Link
+                    to="/dashboard"
+                    className="inline-flex items-center gap-2 rounded-md border border-gray-200 bg-white px-2.5 py-1 text-xs text-gray-800 hover:bg-gray-50"
+                    title="Dashboard"
+                  >
+                    <LayoutDashboard className="w-3.5 h-3.5" />
+                    <span>Dashboard</span>
+                  </Link>
+                  <button
+                    onClick={() => signOut()}
+                    className="inline-flex items-center rounded-lg px-3 py-1.5 text-xs font-semibold text-white bg-brand-orange hover:opacity-95"
+                    title="Sign out"
+                  >
+                    <LogOut className="w-3.5 h-3.5 mr-1" />
+                    Sign out
+                  </button>
+                </>
               ) : (
                 <>
-                  <Link to="/signin" className="btn-ghost text-gray-700">Sign In</Link>
+                  <Link to="/signin" className="btn-ghost">
+                    Sign In
+                  </Link>
                   <Link
                     to="/pricing"
                     className="inline-flex items-center rounded-lg px-4 py-2 font-semibold text-white bg-brand-orange shadow hover:opacity-95"
@@ -176,31 +192,12 @@ export default function Layout({ children }: { children: React.ReactNode }) {
                   </Link>
                 </>
               )}
-
-              {/* Brand text to the LEFT of the logo (as requested) */}
-              <div className="leading-tight text-right">
-                <div className="text-sm font-semibold text-gray-900">Matt Decanted</div>
-                <div className="-mt-0.5 text-[10px] text-amber-600">Wine Education</div>
-              </div>
-
-              {/* RHS logo */}
-              <Link to="/" className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-gray-200 overflow-hidden bg-white">
-                <img
-                  src={RHS_LOGO_SRC}
-                  alt="Matt Decanted"
-                  className="h-full w-full object-cover"
-                  onError={(e) => {
-                    (e.currentTarget as HTMLImageElement).style.display = "none";
-                    (e.currentTarget.parentElement as HTMLElement).textContent = "🍷";
-                  }}
-                />
-              </Link>
             </div>
 
             {/* Mobile hamburger */}
             <button
               className="md:hidden inline-flex items-center justify-center w-9 h-9 rounded-md border border-gray-200"
-              onClick={() => setOpen(v => !v)}
+              onClick={() => setOpen((v) => !v)}
               aria-label="Toggle menu"
             >
               {open ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
@@ -208,77 +205,127 @@ export default function Layout({ children }: { children: React.ReactNode }) {
           </div>
         </div>
 
-        {/* Soft-edged orange accent line at the BOTTOM */}
-        <div className="w-full">
-          <div className="h-[2px] bg-gradient-to-r from-transparent via-amber-500 to-transparent rounded-full" />
-        </div>
-      </header>
+        {/* Mobile drawer */}
+        {open && (
+          <div className="md:hidden border-t border-gray-200">
+            <div className="mx-auto max-w-7xl px-4 py-3 space-y-2">
+              <div className="flex items-center justify-between">
+                <a href="/" className="flex items-center gap-2" onClick={() => setOpen(false)}>
+                  <img
+                    src="https://cdn.jsdelivr.net/gh/mattdecanted/assets/md-logo-32.png"
+                    alt="Matt Decanted"
+                    className="h-7 w-7 rounded"
+                  />
+                  <div className="leading-tight">
+                    <div className="font-semibold text-gray-900">Matt Decanted</div>
+                    <div className="-mt-0.5 text-[11px] text-brand-orange">Wine Education</div>
+                  </div>
+                </a>
+                <div className="inline-flex items-center gap-1 rounded-md border border-gray-200 px-2.5 py-1 text-xs text-gray-700">
+                  <Globe className="w-3.5 h-3.5" />
+                  <span>EN</span>
+                </div>
+              </div>
 
-      {/* Mobile drawer */}
-      {open && (
-        <div className="md:hidden border-b border-gray-200">
-          <div className="mx-auto max-w-7xl px-4 py-3 space-y-2">
-            <NavLink to="/blog" className={linkClass} onClick={() => setOpen(false)}>Blog</NavLink>
-            <NavLink to="/play" className={linkClass} onClick={() => setOpen(false)}>Challenges</NavLink>
-            <NavLink to="/swirdle" className={linkClass} onClick={() => setOpen(false)}>Swirdle</NavLink>
-            <NavLink to="/swirdle/leaderboard" className={linkClass} onClick={() => setOpen(false)}>Leaderboard</NavLink>
-            <NavLink to="/badges" className={linkClass} onClick={() => setOpen(false)}>Badges</NavLink>
-            <NavLink to="/courses" className={linkClass} onClick={() => setOpen(false)}>Courses</NavLink>
-            <NavLink to="/community" className={linkClass} onClick={() => setOpen(false)}>Community</NavLink>
-            <NavLink to="/about" className={linkClass} onClick={() => setOpen(false)}>About</NavLink>
-            <NavLink to="/pricing" className={linkClass} onClick={() => setOpen(false)}>Pricing</NavLink>
-
-            <div className="pt-2 flex items-center gap-2">
-              {/* quick language cycle on mobile */}
-              <button
-                onClick={() => setLang(LANGS[(LANGS.findIndex(l => l.id === lang) + 1) % LANGS.length].id)}
-                className="inline-flex items-center gap-1 rounded-md border border-gray-200 px-2.5 py-1 text-xs text-gray-700 bg-white"
-              >
-                <Globe className="w-3.5 h-3.5" />
-                <span className="uppercase">{activeLang.country}</span>
-                <span>{activeLang.label}</span>
-              </button>
-
-              <Link
-                to={user ? "/account" : "/signin"}
+              <NavLink to="/blog" className={linkClass} onClick={() => setOpen(false)}>
+                Blog
+              </NavLink>
+              <NavLink to="/play" className={linkClass} onClick={() => setOpen(false)}>
+                Challenges
+              </NavLink>
+              <NavLink to="/swirdle" className={linkClass} onClick={() => setOpen(false)}>
+                Swirdle
+              </NavLink>
+              <NavLink
+                to="/swirdle/leaderboard"
+                className={linkClass}
                 onClick={() => setOpen(false)}
-                className="inline-flex items-center gap-2 rounded-md border border-amber-200 bg-white px-2.5 py-1 text-xs text-gray-800"
               >
-                <Trophy className="w-3.5 h-3.5 text-amber-500" />
-                <span className="tabular-nums">{Number(points || 0)}</span>
-                <span className="mx-1 h-3 w-px bg-amber-200" />
-                <Flame className="w-3.5 h-3.5 text-orange-500" />
-                <span className="tabular-nums">0</span>
-              </Link>
+                Leaderboard
+              </NavLink>
+              <NavLink to="/badges" className={linkClass} onClick={() => setOpen(false)}>
+                Badges
+              </NavLink>
+              <NavLink to="/courses" className={linkClass} onClick={() => setOpen(false)}>
+                Courses
+              </NavLink>
+              <NavLink to="/community" className={linkClass} onClick={() => setOpen(false)}>
+                Community
+              </NavLink>
+              <NavLink to="/about" className={linkClass} onClick={() => setOpen(false)}>
+                About
+              </NavLink>
+              <NavLink to="/pricing" className={linkClass} onClick={() => setOpen(false)}>
+                Pricing
+              </NavLink>
 
-              {user ? (
-                <button
-                  onClick={() => { setOpen(false); void signOut(); }}
-                  className="inline-flex items-center rounded-md border border-amber-300 bg-white px-3 py-1 text-xs font-medium text-amber-700 hover:bg-amber-50"
+              <div className="pt-2 flex flex-wrap items-center gap-2">
+                <Link
+                  to={user ? "/account" : "/signin"}
+                  onClick={() => setOpen(false)}
+                  className="inline-flex items-center gap-2 rounded-md border border-gray-200 bg-white px-2.5 py-1 text-xs text-gray-800"
                 >
-                  Sign out
-                </button>
-              ) : (
-                <>
-                  <Link to="/signin" onClick={() => setOpen(false)} className="btn-ghost">Sign In</Link>
-                  <Link
-                    to="/pricing"
-                    onClick={() => setOpen(false)}
-                    className="inline-flex items-center rounded-lg px-4 py-2 font-semibold text-white bg-brand-orange shadow hover:opacity-95"
-                  >
-                    Sign Up
-                  </Link>
-                </>
-              )}
+                  <Trophy className="w-3.5 h-3.5 text-amber-500" />
+                  <span className="tabular-nums">{Number(points || 0)}</span>
+                  <span className="mx-1 h-3 w-px bg-gray-200" />
+                  <Flame className="w-3.5 h-3.5 text-orange-500" />
+                  <span className="tabular-nums">0</span>
+                </Link>
+
+                {user ? (
+                  <>
+                    <Link
+                      to="/account"
+                      onClick={() => setOpen(false)}
+                      className="inline-flex items-center gap-2 rounded-md border border-gray-200 bg-white px-2.5 py-1 text-xs text-gray-800"
+                    >
+                      <Avatar />
+                      <span className="max-w-[18ch] truncate">
+                        {displayName || "Account"}
+                      </span>
+                    </Link>
+                    <Link
+                      to="/dashboard"
+                      onClick={() => setOpen(false)}
+                      className="inline-flex items-center gap-2 rounded-md border border-gray-200 bg-white px-2.5 py-1 text-xs text-gray-800"
+                    >
+                      <LayoutDashboard className="w-3.5 h-3.5" />
+                      <span>Dashboard</span>
+                    </Link>
+                    <button
+                      onClick={() => {
+                        setOpen(false);
+                        void signOut();
+                      }}
+                      className="inline-flex items-center rounded-lg px-3 py-1.5 text-xs font-semibold text-white bg-brand-orange"
+                    >
+                      <LogOut className="w-3.5 h-3.5 mr-1" />
+                      Sign out
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <Link to="/signin" onClick={() => setOpen(false)} className="btn-ghost">
+                      Sign In
+                    </Link>
+                    <Link
+                      to="/pricing"
+                      onClick={() => setOpen(false)}
+                      className="inline-flex items-center rounded-lg px-4 py-2 font-semibold text-white bg-brand-orange shadow hover:opacity-95"
+                    >
+                      Sign Up
+                    </Link>
+                  </>
+                )}
+              </div>
             </div>
           </div>
-        </div>
-      )}
+        )}
+      </header>
 
-      {/* PAGE */}
+      {/* Page body */}
       <main className="flex-1">{children}</main>
 
-      {/* FOOTER */}
       <footer className="border-t border-gray-200 py-6 text-center text-xs text-gray-500">
         © {new Date().getFullYear()} Matt Decanted
       </footer>
