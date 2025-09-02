@@ -193,7 +193,7 @@ async function getMyBadges(userId: string): Promise<EarnedBadge[]> {
 }
 
 // ✅ streak is consecutive by Adelaide date
-async function upsertUserStatsRow(userId: string, didWin: boolean, attempts: number): Promise<{ data: UserStats | null; error: any | null }> {
+async function upsertUserStatsRow(userId: string, didWin: boolean, _attempts: number): Promise<{ data: UserStats | null; error: any | null }> {
   const today = formatDateAdelaide();
   const yesterday = addDays(today, -1);
   const { data: existing } = await fetchUserStats(userId);
