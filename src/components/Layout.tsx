@@ -9,7 +9,15 @@ function cx(...xs: Array<string | false | null | undefined>) {
   return xs.filter(Boolean).join(" ");
 }
 
-const RHS_LOGO_SRC = "/public/Branding/Matt_decantednk.png"; // put your image in /public/brand/matt-avatar.png
+/**
+ * ▶️ Logo source
+ * Paste your URL in VITE_BRAND_LOGO_URL (recommended), or edit FALLBACK_LOGO_URL below.
+ * Example: VITE_BRAND_LOGO_URL=https://your.cdn.com/path/logo.png
+ */
+const FALLBACK_LOGO_URL =
+  "https://placehold.co/64x64/png?text=%F0%9F%8D%B7"; // ← replace if you want
+const RHS_LOGO_SRC =
+  (import.meta as any).env?.VITE_BRAND_LOGO_URL || FALLBACK_LOGO_URL;
 
 const LANGS = [
   { id: "en-US", country: "US", label: "English" },
@@ -34,7 +42,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     loc.pathname.startsWith("/auth/callback") ||
     loc.pathname.startsWith("/reset-password");
 
-  // Language selector
+  // Language selector state
   const [langOpen, setLangOpen] = React.useState(false);
   const [lang, setLang] = React.useState<string>(() => localStorage.getItem("app_lang") || "en-US");
   const activeLang = React.useMemo(() => LANGS.find(l => l.id === lang) || LANGS[0], [lang]);
@@ -63,13 +71,14 @@ export default function Layout({ children }: { children: React.ReactNode }) {
 
   return (
     <div className="min-h-screen flex flex-col">
+      {/* HEADER */}
       <header
-        className="site-header relative bg-white"
-        style={{ borderBottom: "0", boxShadow: "none" }} // 🔧 remove any inherited 1px line
+        className="relative bg-white"
+        style={{ borderBottom: "0", boxShadow: "none" }} // 🔧 kill any inherited 1px underline
       >
         <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
           <div className="h-14 flex items-center justify-between">
-            {/* Brand */}
+            {/* Brand (LHS) */}
             <Link to="/" className="flex items-center gap-3">
               <div className="leading-tight">
                 <div className="font-semibold text-gray-900">Matt Decanted</div>
@@ -90,7 +99,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
               <NavLink to="/pricing" className={linkClass}>Pricing</NavLink>
             </nav>
 
-            {/* Right cluster */}
+            {/* RHS cluster: language • points • sign out • brand text • logo */}
             <div className="hidden md:flex items-center gap-3">
               {/* Language */}
               <div className="relative">
@@ -135,7 +144,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
                 )}
               </div>
 
-              {/* Points chip */}
+              {/* Points chip (matches badges/awards colors) */}
               <Link
                 to={user ? "/account" : "/signin"}
                 className="inline-flex items-center gap-2 rounded-md border border-amber-200 bg-white px-2.5 py-1 text-xs text-gray-800 hover:bg-amber-50"
@@ -148,7 +157,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
                 <span className="tabular-nums">0</span>
               </Link>
 
-              {/* Auth */}
+              {/* Auth button (orange-on-white for readability) */}
               {user ? (
                 <button
                   onClick={() => signOut()}
@@ -168,8 +177,14 @@ export default function Layout({ children }: { children: React.ReactNode }) {
                 </>
               )}
 
-              {/* RHS logo/avatar */}
-              <Link to="/" className="ml-1 inline-flex h-8 w-8 items-center justify-center rounded-full border border-gray-200 overflow-hidden bg-white">
+              {/* Brand text to the LEFT of the logo (as requested) */}
+              <div className="leading-tight text-right">
+                <div className="text-sm font-semibold text-gray-900">Matt Decanted</div>
+                <div className="-mt-0.5 text-[10px] text-amber-600">Wine Education</div>
+              </div>
+
+              {/* RHS logo */}
+              <Link to="/" className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-gray-200 overflow-hidden bg-white">
                 <img
                   src={RHS_LOGO_SRC}
                   alt="Matt Decanted"
@@ -193,7 +208,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
           </div>
         </div>
 
-        {/* Soft-edged orange accent at the BOTTOM */}
+        {/* Soft-edged orange accent line at the BOTTOM */}
         <div className="w-full">
           <div className="h-[2px] bg-gradient-to-r from-transparent via-amber-500 to-transparent rounded-full" />
         </div>
@@ -214,6 +229,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
             <NavLink to="/pricing" className={linkClass} onClick={() => setOpen(false)}>Pricing</NavLink>
 
             <div className="pt-2 flex items-center gap-2">
+              {/* quick language cycle on mobile */}
               <button
                 onClick={() => setLang(LANGS[(LANGS.findIndex(l => l.id === lang) + 1) % LANGS.length].id)}
                 className="inline-flex items-center gap-1 rounded-md border border-gray-200 px-2.5 py-1 text-xs text-gray-700 bg-white"
@@ -254,29 +270,15 @@ export default function Layout({ children }: { children: React.ReactNode }) {
                   </Link>
                 </>
               )}
-
-              <Link
-                to="/"
-                onClick={() => setOpen(false)}
-                className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-gray-200 overflow-hidden bg-white"
-              >
-                <img
-                  src={RHS_LOGO_SRC}
-                  alt="Matt Decanted"
-                  className="h-full w-full object-cover"
-                  onError={(e) => {
-                    (e.currentTarget as HTMLImageElement).style.display = "none";
-                    (e.currentTarget.parentElement as HTMLElement).textContent = "🍷";
-                  }}
-                />
-              </Link>
             </div>
           </div>
         </div>
       )}
 
+      {/* PAGE */}
       <main className="flex-1">{children}</main>
 
+      {/* FOOTER */}
       <footer className="border-t border-gray-200 py-6 text-center text-xs text-gray-500">
         © {new Date().getFullYear()} Matt Decanted
       </footer>
