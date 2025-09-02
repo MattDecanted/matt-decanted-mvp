@@ -153,18 +153,17 @@ function App() {
       <AuthProvider>
         <PointsProvider>
           <Router>
-            {/* ✅ Dedicated auth routes OUTSIDE Layout (so nothing interferes) */}
+            {/* ✅ Dedicated auth route OUTSIDE Layout (avoid header/layout interfering) */}
             <Routes>
               <Route path="/auth/callback" element={<AuthCallbackPage />} />
             </Routes>
 
             <AppErrorBoundary>
               <Layout>
-                {/* If you already have a Suspense wrapper, keep it.
-                    Here we wrap routes that include lazy pages (like SwirdleLeaderboardPage). */}
+                {/* Wrap lazy pages (leaderboard) */}
                 <Suspense fallback={<div className="p-6">Loading…</div>}>
                   <Routes>
-                    {/* optional no-op for callback so the wildcard doesn't catch it */}
+                    {/* Optional no-op so wildcard doesn't catch it inside Layout */}
                     <Route path="/auth/callback" element={<></>} />
 
                     {/* Home */}
@@ -177,7 +176,7 @@ function App() {
                     <Route path="/activate" element={<Activate />} />
                     <Route path="/reset-password" element={<ResetPassword />} />
 
-                    {/* ✅ Debug (public) */}
+                    {/* Debug (public) */}
                     <Route path="/debug/auth" element={<DebugAuth />} />
 
                     {/* Blog */}
@@ -192,9 +191,12 @@ function App() {
                     <Route path="/swirdle" element={<Swirdle />} />
                     {/* ⬇️ NEW: Swirdle Leaderboard */}
                     <Route path="/swirdle/leaderboard" element={<SwirdleLeaderboardPage />} />
+                    {/* Convenience redirect */}
+                    <Route path="/leaderboard" element={<Navigate to="/swirdle/leaderboard" replace />} />
                     <Route path="/play" element={<GamePage />} />
                     <Route path="/game/:slug" element={<GamePage />} />
 
+                    {/* Badges */}
                     <Route path="/badges" element={<BadgesPage />} />
                     <Route path="/account/badges" element={<AccountBadges />} />
 
