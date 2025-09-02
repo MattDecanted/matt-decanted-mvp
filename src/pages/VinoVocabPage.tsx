@@ -1,6 +1,6 @@
-
 // src/pages/VinoVocabPage.tsx
 import React, { createContext, useContext, useEffect, useMemo, useState } from "react";
+import { Link } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { supabase } from "@/lib/supabase";
 import {
@@ -9,9 +9,20 @@ import {
 
 /**
  * Vino Vocab (Daily) — single-file page + local PointsProvider.
- * Awards (in order): award_vocab_points -> vv_award_points(term,was_correct,points) -> vv_award_points(p_points,p_term,p_was_correct) -> REST fallback.
- * Totals/Streak now update optimistically (immediate UI) + then refresh from DB.
+ * Awards (in order):
+ *   1) award_points_v1('vocab', vocab_id) → recommended
+ *   2) award_vocab_points(p_vocab, p_correct)
+ *   3) vv_award_points(term, was_correct, points)
+ *   4) vv_award_points(p_points, p_term, p_was_correct)
+ *   5) REST fallback (views/tables)
+ *
+ * Totals/Streak update optimistically, then refresh from DB.
  */
+
+const ROUTES = {
+  swirdle: "/swirdle",
+  dailyQuiz: "/daily-quiz",
+};
 
 const tzAdelaide = "Australia/Adelaide";
 function formatDateAdelaide(d = new Date()) {
@@ -28,8 +39,8 @@ interface PointsContextType {
   currentStreak: number;
   loading: boolean;
   refreshPoints: () => Promise<void>;
-  applyDelta: (pointsDelta: number, nextStreak?: number) => void; // NEW: optimistic UI helper
-  setTotals: (totals: number, streak: number) => void; // NEW: direct set helper
+  applyDelta: (pointsDelta: number, nextStreak?: number) => void;
+  setTotals: (totals: number, streak: number) => void;
 }
 const PointsContext = createContext<PointsContextType | undefined>(undefined);
 
@@ -58,7 +69,6 @@ function PointsProvider({ children }: { children: React.ReactNode }) {
     setLoading(false);
   };
 
-  // NEW: optimistic helpers
   const applyDelta: PointsContextType["applyDelta"] = (delta, nextStreak) => {
     setTotalPoints((p) => Math.max(0, p + (delta || 0)));
     if (typeof nextStreak === "number") setCurrentStreak(nextStreak);
@@ -189,7 +199,7 @@ function LessonMeta({ lesson }: { lesson: Lesson | null }) {
 
 // ---------- Inner page ----------
 function VinoVocabInner() {
-  const { totalPoints, currentStreak, refreshPoints, applyDelta, setTotals } = usePoints();
+  const { totalPoints, currentStreak, refreshPoints, applyDelta } = usePoints();
 
   const [userId, setUserId] = useState<string | null>(null);
   const [profileTier, setProfileTier] = useState<string | null>(null);
@@ -256,7 +266,21 @@ function VinoVocabInner() {
     const base = isCorrect ? (lesson?.points ?? 10) : 0;
     const term = lesson?.word ?? DEMO_TERM;
 
-    // 1) award by vocab id
+    // 1) RECOMMENDED: generic points RPC
+    if (lesson?.id) {
+      const ap = await supabase.rpc("award_points_v1", {
+        p_activity: "vocab",
+        p_ref_id: String(lesson.id),
+        p_points: null, // use catalog default
+        p_meta: { correct: isCorrect, term },
+      });
+      if (!ap.error) {
+        const row = (ap.data?.[0] ?? {}) as { points_awarded?: number; streak_after?: number };
+        return { awarded: row.points_awarded ?? base, streak: row.streak_after ?? (isCorrect ? currentStreak + 1 : currentStreak) };
+      }
+    }
+
+    // 2) Specific vocab RPC
     if (lesson?.id) {
       const r1 = await supabase.rpc("award_vocab_points", { p_vocab: lesson.id, p_correct: isCorrect });
       if (!r1.error) {
@@ -265,21 +289,21 @@ function VinoVocabInner() {
       }
     }
 
-    // 2) canonical vv_award_points(term, was_correct, points)
+    // 3) canonical vv_award_points(term, was_correct, points)
     const r2 = await supabase.rpc("vv_award_points", { term, was_correct: isCorrect, points: base });
     if (!r2.error) {
       const row = (r2.data?.[0] ?? {}) as { points_awarded?: number; streak_after?: number };
       return { awarded: row.points_awarded ?? base, streak: row.streak_after ?? (isCorrect ? currentStreak + 1 : currentStreak) };
     }
 
-    // 3) compatibility vv_award_points(p_points, p_term, p_was_correct)
+    // 4) compatibility vv_award_points(p_points, p_term, p_was_correct)
     const r3 = await supabase.rpc("vv_award_points", { p_points: base, p_term: term, p_was_correct: isCorrect });
     if (!r3.error) {
       const row = (r3.data?.[0] ?? {}) as { points_awarded?: number; streak_after?: number };
       return { awarded: row.points_awarded ?? base, streak: row.streak_after ?? (isCorrect ? currentStreak + 1 : currentStreak) };
     }
 
-    // 4) REST fallback — direct tables (requires permissive RLS for user_id = auth.uid())
+    // 5) REST fallback — direct tables (requires permissive RLS for user_id = auth.uid())
     const uid = userId;
     if (!uid) return { awarded: base, streak: isCorrect ? currentStreak + 1 : currentStreak };
 
@@ -328,7 +352,7 @@ function VinoVocabInner() {
         awarded = res.awarded;
         streak = res.streak;
 
-        // ✅ Optimistic UI: bump context + sidebar immediately
+        // ✅ Optimistic UI
         applyDelta(awarded, streak);
         setTotalsLocal(prev => {
           const baseTotals = prev?.total_points ?? totalPoints;
@@ -346,7 +370,7 @@ function VinoVocabInner() {
           completed_at: new Date().toISOString(),
         });
 
-        // Then sync from server (ensures we match DB if policies/logic differ)
+        // Then sync from server
         void refreshPoints();
         const t = await supabase.from("vocab_user_totals").select("user_id, total_points, lessons_correct").eq("user_id", userId).maybeSingle();
         if (!t.error && t.data) setTotalsLocal(t.data as TotalsRow);
@@ -421,7 +445,7 @@ function VinoVocabInner() {
                     {lesson?.description ?? `“${DEMO_TERM}” describes a bright, youthful red core most common in younger red wines; with age it trends toward garnet at the rim.`}
                   </div>
 
-                  {/* points + streak mini (now reflect optimistic changes) */}
+                  {/* points + streak mini */}
                   <div className="mt-4 flex items-center gap-6 text-sm sm:text-base">
                     <div className="text-center"><div className="font-semibold">Points</div><div className="text-2xl font-bold">{totalPoints}</div></div>
                     <div className="w-px h-8 bg-black/10" />
@@ -523,21 +547,20 @@ function VinoVocabInner() {
                     </div>
 
                     {/* Next challenge shortcuts */}
-<div className="mt-5 flex flex-wrap items-center gap-2">
-  <Link
-    to={ROUTES.swirdle}
-    className="inline-flex items-center gap-2 rounded-xl border border-neutral-300 bg-white px-3 py-2 text-sm hover:bg-neutral-50"
-  >
-    Play Swirdle <ArrowRight className="h-4 w-4" />
-  </Link>
-  <Link
-    to={ROUTES.dailyQuiz}
-    className="inline-flex items-center gap-2 rounded-xl border border-neutral-300 bg-white px-3 py-2 text-sm hover:bg-neutral-50"
-  >
-    Daily Wine Quiz <ArrowRight className="h-4 w-4" />
-  </Link>
-</div>
-
+                    <div className="mt-5 flex flex-wrap items-center gap-2">
+                      <Link
+                        to={ROUTES.swirdle}
+                        className="inline-flex items-center gap-2 rounded-xl border border-neutral-300 bg-white px-3 py-2 text-sm hover:bg-neutral-50"
+                      >
+                        Play Swirdle <ArrowRight className="h-4 w-4" />
+                      </Link>
+                      <Link
+                        to={ROUTES.dailyQuiz}
+                        className="inline-flex items-center gap-2 rounded-xl border border-neutral-300 bg-white px-3 py-2 text-sm hover:bg-neutral-50"
+                      >
+                        Daily Wine Quiz <ArrowRight className="h-4 w-4" />
+                      </Link>
+                    </div>
                   </motion.div>
                 )}
               </AnimatePresence>
