@@ -53,7 +53,7 @@ export default function AuthCallbackPage() {
         if (code) {
           setMsg('Exchanging code…');
           // Works across supabase-js versions; if yours prefers full URL, swap to exchangeCodeForSession(url.href)
-          const { error } = await supabase.auth.exchangeCodeForSession(code);
+          const { error } = await supabase.auth.exchangeCodeForSession(url.href);
           if (error) throw error;
 
           // Clean query so the app can’t mistake it for a fresh callback later
