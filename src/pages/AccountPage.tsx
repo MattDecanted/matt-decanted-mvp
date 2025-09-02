@@ -35,6 +35,30 @@ function formatAdelaide(dt: Date): string {
   });
 }
 
+/** Safe, non-blocking attempt to ensure membership row exists */
+async function bestEffortJoinMember() {
+  try {
+    const { data: s } = await supabase.auth.getSession();
+    if (!s?.session) return;
+
+    const p = supabase.rpc('join_member', {
+      p_plan: 'free',
+      p_start_trial: true,
+      p_locale: (navigator.language || 'en').slice(0, 2),
+      // Optional fields when/if you collect them:
+      // p_first_name: undefined,
+      // p_country: undefined,
+      // p_accept_tos: undefined,
+      // p_accept_notifications: undefined,
+    });
+
+    // Don’t hang the page if the RPC is slow
+    await Promise.race([p, new Promise((r) => setTimeout(r, 1200))]);
+  } catch (err) {
+    console.warn('[join_member] best-effort call failed:', err);
+  }
+}
+
 /** Fallback: if a magic link lands directly on /account, finalize it here. */
 function useFinalizeAuthIfNeeded() {
   const { hash, pathname, search } = useLocation();
@@ -60,11 +84,15 @@ function useFinalizeAuthIfNeeded() {
         const code = url.searchParams.get('code');
 
         if (hasHashToken) {
-          await setSessionFromHashStrict(); // sets session + cleans hash
+          // Use the helper you already export from lib/supabase
+          await setSessionFromHash(); // sets session + cleans hash
+          await bestEffortJoinMember();
           history.replaceState({}, document.title, pathname + search.replace(/\??$/, ''));
         } else if (code) {
-          const { error } = await supabase.auth.exchangeCodeForSession(url.href);
+          // Pass JUST the code to Supabase (not the whole URL)
+          const { error } = await supabase.auth.exchangeCodeForSession(code);
           if (error) throw error;
+          await bestEffortJoinMember();
           history.replaceState({}, document.title, pathname);
         }
       } catch (e) {
