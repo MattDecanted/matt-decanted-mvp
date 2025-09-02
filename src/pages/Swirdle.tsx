@@ -1017,7 +1017,17 @@ const Swirdle: React.FC = () => {
                 </button>
               </div>
             </div>
-          </div>
+          </div>{/* --- Bottom: Leaderboard link --- */}
+<div className="max-w-lg mx-auto mt-12 mb-4 text-center">
+  <a
+    href="/swirdle/leaderboard"
+    className="inline-flex items-center rounded-md border border-gray-200 bg-white px-4 py-2 text-sm font-semibold text-gray-800 hover:bg-gray-50"
+  >
+    View Swirdle Leaderboard
+  </a>
+</div>
+
+        
         )}
 
       </div>
