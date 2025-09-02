@@ -2,7 +2,7 @@
 import React, { useEffect, useState } from 'react';
 import {
   Wine, Trophy, Target, Share2, Brain, Calendar,
-  TrendingUp, Lightbulb, X, CheckCircle
+  Lightbulb, X, CheckCircle
 } from 'lucide-react';
 
 import { useAuth } from '@/context/AuthContext';
@@ -11,7 +11,7 @@ import { supabase } from '@/lib/supabase';
 
 // =================== Config ===================
 const HINT_COST = 5;        // points to buy a hint
-const WIN_POINTS = 15;      // points awarded on a win
+const WIN_POINTS = 15;      // points awarded on a win (used if award_points_v1 has no catalog default)
 const MAX_GUESSES = 6;
 const TZ = 'Australia/Adelaide';
 
@@ -43,7 +43,7 @@ function cyrb53(str: string, seed = 0) {
   return (h2 & 2097151) * 4294967296 + h1;
 }
 
-// Minimal Wordle-like status calc (avoid external import)
+// Minimal Wordle-like status calc
 function computeStatuses(answer: string, guess: string): Array<'correct' | 'present' | 'absent'> {
   const A = answer.toUpperCase().split('');
   const G = guess.toUpperCase().split('');
@@ -173,7 +173,7 @@ async function fetchUserStats(userId: string): Promise<{ data: UserStats | null;
   return { data: (data as UserStats) ?? null, error };
 }
 
-// ✅ streak is now truly consecutive by Adelaide date
+// ✅ streak is consecutive by Adelaide date
 async function upsertUserStatsRow(userId: string, didWin: boolean, attempts: number): Promise<{ data: UserStats | null; error: any | null }> {
   const today = formatDateAdelaide();
   const yesterday = addDays(today, -1);
@@ -240,12 +240,18 @@ const Swirdle: React.FC = () => {
   const [awardBusy, setAwardBusy] = useState(false);
   const [purchaseBusy, setPurchaseBusy] = useState(false);
 
-  // ---- Trial trigger (idempotent, ignore if RPC missing) ----
+  // ---- Best-effort membership + trial (no-op if RPCs missing) ----
   useEffect(() => {
     if (!user?.id) return;
     (async () => {
       try {
-        // Will silently no-op if you haven't created vv_start_trial yet
+        await supabase.rpc('join_member', {
+          p_plan: 'free',
+          p_start_trial: true,
+          p_locale: (navigator.language || 'en').slice(0, 2),
+        });
+      } catch { /* ignore */ }
+      try {
         await supabase.rpc('vv_start_trial', { p_days: 7 });
       } catch { /* ignore */ }
     })();
@@ -346,18 +352,26 @@ const Swirdle: React.FC = () => {
     }
   }
 
-  // -------- Award on win --------
+  // -------- Award on win (robust pipeline) --------
   async function handleWinAward(guessesCount: number) {
     if (!user?.id || awardBusy) return;
     setAwardBusy(true);
     try {
-      await supabase.rpc('record_event', {
-        p_user: user.id,
-        p_type: 'SWIRDLE_WIN',
+      // 1) Preferred: single generic points RPC
+      const ap = await supabase.rpc('award_points_v1', {
+        p_activity: 'swirdle',
+        p_ref_id: String(todaysWord?.id ?? ''),
+        p_points: null, // use catalog default if configured; fallback below if not
         p_meta: { guesses: guessesCount },
       });
-      await supabase.rpc('add_points', { p_user: user.id, p_points: WIN_POINTS });
-      await supabase.rpc('evaluate_badges', { p_user: user.id });
+
+      if (ap.error) {
+        // 2) Fallback: old-style chain
+        try { await supabase.rpc('record_event', { p_user: user.id, p_type: 'SWIRDLE_WIN', p_meta: { guesses: guessesCount } }); } catch {}
+        try { await supabase.rpc('add_points', { p_user: user.id, p_points: WIN_POINTS }); } catch {}
+        try { await supabase.rpc('evaluate_badges', { p_user: user.id }); } catch {}
+      }
+
       await refreshPoints();
     } catch (e) {
       console.error('award RPC failed:', e);
@@ -391,11 +405,13 @@ const Swirdle: React.FC = () => {
         setAvailableHint(todaysWord.hints[hintIndex]);
       }
 
-      await supabase.rpc('record_event', {
-        p_user: user.id,
-        p_type: 'HINT_PURCHASED',
-        p_meta: { game: 'SWIRDLE', hint_index: hintIndex, cost: HINT_COST },
-      });
+      try {
+        await supabase.rpc('record_event', {
+          p_user: user.id,
+          p_type: 'HINT_PURCHASED',
+          p_meta: { game: 'SWIRDLE', hint_index: hintIndex, cost: HINT_COST },
+        });
+      } catch {/* ignore */}
 
       await refreshPoints();
     } catch (e: any) {
