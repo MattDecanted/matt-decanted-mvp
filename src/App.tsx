@@ -38,6 +38,7 @@ import SoloWineOptions from '@/pages/SoloWineOptions';
 import GamePage from '@/pages/GamePage';
 
 import Dashboard from '@/pages/Dashboard';
+import BadgesPage from '@/pages/BadgesPage';
 
 import BlogIndex from '@/pages/blog/BlogIndex';
 import HowToBecomeWinemaker from '@/pages/blog/HowToBecomeWinemaker';
@@ -191,6 +192,8 @@ function App() {
                     <Route path="/swirdle/leaderboard" element={<SwirdleLeaderboardPage />} />
                     <Route path="/play" element={<GamePage />} />
                     <Route path="/game/:slug" element={<GamePage />} />
+
+                    <Route path="/badges" element={<BadgesPage />} />
 
                     {/* Shorts */}
                     <Route path="/shorts" element={<ShortsPage />} />
