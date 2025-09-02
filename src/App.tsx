@@ -1,8 +1,8 @@
 // src/App.tsx
-import React from 'react';
+import React, { Suspense, lazy } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 
-// ⬇️ add this line next to your other page imports/lazy imports
+// ⬇️ lazy import for Swirdle Leaderboard page
 const SwirdleLeaderboardPage = lazy(() => import('@/pages/SwirdleLeaderboardPage'));
 
 // UI / Providers
@@ -153,137 +153,124 @@ function App() {
             {/* ✅ Dedicated auth routes OUTSIDE Layout (so nothing interferes) */}
             <Routes>
               <Route path="/auth/callback" element={<AuthCallbackPage />} />
-           
             </Routes>
 
             <AppErrorBoundary>
               <Layout>
-                <Routes>
-      {/* optional no-op for callback so the wildcard doesn't catch it */}
-      <Route path="/auth/callback" element={<></>} />
+                {/* If you already have a Suspense wrapper, keep it.
+                    Here we wrap routes that include lazy pages (like SwirdleLeaderboardPage). */}
+                <Suspense fallback={<div className="p-6">Loading…</div>}>
+                  <Routes>
+                    {/* optional no-op for callback so the wildcard doesn't catch it */}
+                    <Route path="/auth/callback" element={<></>} />
 
-                  {/* Home */}
-                  <Route path="/" element={<Home />} />
+                    {/* Home */}
+                    <Route path="/" element={<Home />} />
 
-                  {/* Core info & auth */}
-                  <Route path="/about" element={<About />} />
-                  <Route path="/signin" element={<SignIn />} />
-                  <Route path="/sign-in" element={<Navigate to="/signin" replace />} />
-                  <Route path="/activate" element={<Activate />} />
-                  <Route path="/reset-password" element={<ResetPassword />} />
+                    {/* Core info & auth */}
+                    <Route path="/about" element={<About />} />
+                    <Route path="/signin" element={<SignIn />} />
+                    <Route path="/sign-in" element={<Navigate to="/signin" replace />} />
+                    <Route path="/activate" element={<Activate />} />
+                    <Route path="/reset-password" element={<ResetPassword />} />
 
-                  {/* ✅ Debug (public) */}
-                  <Route path="/debug/auth" element={<DebugAuth />} />
+                    {/* ✅ Debug (public) */}
+                    <Route path="/debug/auth" element={<DebugAuth />} />
 
-                  {/* Blog */}
-                  <Route path="/blog" element={<BlogIndex />} />
-                  <Route path="/blog/how-to-become-winemaker" element={<HowToBecomeWinemaker />} />
-                  <Route path="/blog/wset-level-2-questions" element={<WSETLevel2Questions />} />
-                  <Route path="/blog/wine-tasting-guide" element={<WineTastingGuide />} />
-                  <Route path="/blog/wine-vocabulary-quiz" element={<WineVocabularyQuiz />} />
+                    {/* Blog */}
+                    <Route path="/blog" element={<BlogIndex />} />
+                    <Route path="/blog/how-to-become-winemaker" element={<HowToBecomeWinemaker />} />
+                    <Route path="/blog/wset-level-2-questions" element={<WSETLevel2Questions />} />
+                    <Route path="/blog/wine-tasting-guide" element={<WineTastingGuide />} />
+                    <Route path="/blog/wine-vocabulary-quiz" element={<WineVocabularyQuiz />} />
 
-                  {/* Games */}
-                  <Route path="/games/guess-what" element={<GuessWhatPage />} />
-                  <Route path="/swirdle" element={<Swirdle />} />
-                  <Route path="/play" element={<GamePage />} />
-                  <Route path="/game/:slug" element={<GamePage />} />
+                    {/* Games */}
+                    <Route path="/games/guess-what" element={<GuessWhatPage />} />
+                    <Route path="/swirdle" element={<Swirdle />} />
+                    {/* ⬇️ NEW: Swirdle Leaderboard */}
+                    <Route path="/swirdle/leaderboard" element={<SwirdleLeaderboardPage />} />
+                    <Route path="/play" element={<GamePage />} />
+                    <Route path="/game/:slug" element={<GamePage />} />
 
-                  {/* Shorts */}
-                  <Route path="/shorts" element={<ShortsPage />} />
-                  <Route path="/shorts/:slug" element={<ShortDetailPage />} />
+                    {/* Shorts */}
+                    <Route path="/shorts" element={<ShortsPage />} />
+                    <Route path="/shorts/:slug" element={<ShortDetailPage />} />
 
-                  {/* Daily Quiz */}
-                  <Route path="/daily-quiz" element={<DailyQuizPage />} />
-                  <Route path="/trial-quiz" element={<Navigate to="/daily-quiz" replace />} />
+                    {/* Daily Quiz */}
+                    <Route path="/daily-quiz" element={<DailyQuizPage />} />
+                    <Route path="/trial-quiz" element={<Navigate to="/daily-quiz" replace />} />
 
-                  {/* Vocab */}
-                  <Route path="/vocab" element={<VinoVocabPage />} />
+                    {/* Vocab */}
+                    <Route path="/vocab" element={<VinoVocabPage />} />
 
-                  {/* Admin (guarded) */}
-                  <Route
-                    path="/admin/vocab"
-                    element={
-                      <RequireAdmin>
-                        <VocabChallengeManager />
-                      </RequireAdmin>
-                    }
-                  />
-                  
-                  export default function App() {
-  return (
-    <Router>
-      {/* If you already have a Suspense wrapper, keep yours and just add the Route below */}
-      <Suspense fallback={null}>
-        <Routes>
-          {/* ...your existing routes... */}
+                    {/* Admin (guarded) */}
+                    <Route
+                      path="/admin/vocab"
+                      element={
+                        <RequireAdmin>
+                          <VocabChallengeManager />
+                        </RequireAdmin>
+                      }
+                    />
+                    <Route
+                      path="/admin/quizzes"
+                      element={
+                        <RequireAdmin>
+                          <QuizManager />
+                        </RequireAdmin>
+                      }
+                    />
+                    <Route
+                      path="/admin/trial-quizzes"
+                      element={
+                        <RequireAdmin>
+                          <TrialQuizManager />
+                        </RequireAdmin>
+                      }
+                    />
+                    <Route
+                      path="/admin/swirdle"
+                      element={
+                        <RequireAdmin>
+                          <SwirdleAdmin />
+                        </RequireAdmin>
+                      }
+                    />
 
-          {/* ⬇️ add this new route */}
-          <Route path="/swirdle/leaderboard" element={<SwirdleLeaderboardPage />} />
-        </Routes>
-      </Suspense>
-    </Router>
-  );
-}
+                    {/* Options */}
+                    <Route path="/wine-options/solo" element={<SoloWineOptions />} />
+                    <Route path="/wine-options/multiplayer" element={<WineOptionsGame />} />
 
-                  
-                  <Route
-                    path="/admin/quizzes"
-                    element={
-                      <RequireAdmin>
-                        <QuizManager />
-                      </RequireAdmin>
-                    }
-                  />
-                  <Route
-                    path="/admin/trial-quizzes"
-                    element={
-                      <RequireAdmin>
-                        <TrialQuizManager />
-                      </RequireAdmin>
-                    }
-                  />
-                  <Route
-                    path="/admin/swirdle"
-                    element={
-                      <RequireAdmin>
-                        <SwirdleAdmin />
-                      </RequireAdmin>
-                    }
-                  />
+                    {/* Dashboard / Account */}
+                    <Route
+                      path="/dashboard"
+                      element={
+                        <RequireAuth>
+                          <Dashboard />
+                        </RequireAuth>
+                      }
+                    />
+                    <Route path="/Dashboard" element={<Navigate to="/dashboard" replace />} />
+                    <Route
+                      path="/account"
+                      element={
+                        <>
+                          <AutoResumeOnAccount />
+                          <AccountPage />
+                        </>
+                      }
+                    />
 
-                  {/* Options */}
-                  <Route path="/wine-options/solo" element={<SoloWineOptions />} />
-                  <Route path="/wine-options/multiplayer" element={<WineOptionsGame />} />
+                    {/* Pricing */}
+                    <Route path="/pricing" element={<PricingPage />} />
 
-                  {/* Dashboard / Account */}
-                  <Route
-                    path="/dashboard"
-                    element={
-                      <RequireAuth>
-                        <Dashboard />
-                      </RequireAuth>
-                    }
-                  />
-                  <Route path="/Dashboard" element={<Navigate to="/dashboard" replace />} />
-                  <Route
-                    path="/account"
-                    element={
-                      <>
-                        <AutoResumeOnAccount />
-                        <AccountPage />
-                      </>
-                    }
-                  />
+                    {/* Legacy demo */}
+                    <Route path="/demo" element={<BrandedDemo />} />
 
-                  {/* Pricing */}
-                  <Route path="/pricing" element={<PricingPage />} />
-
-                  {/* Legacy demo */}
-                  <Route path="/demo" element={<BrandedDemo />} />
-
-                  {/* 404 */}
-                  <Route path="*" element={<Navigate to="/" replace />} />
-                </Routes>
+                    {/* 404 */}
+                    <Route path="*" element={<Navigate to="/" replace />} />
+                  </Routes>
+                </Suspense>
               </Layout>
 
               <Toaster />
