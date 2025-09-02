@@ -6,13 +6,15 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
-import { User, Trophy, Calendar, Mail, LogOut, Crown } from 'lucide-react';
+import { User, Trophy, Calendar, Mail, LogOut, Crown, Image as ImageIcon } from 'lucide-react';
 
 import { useAuth } from '@/context/AuthContext';
 import { usePoints } from '@/context/PointsContext';
 import { useAnalytics } from '@/context/AnalyticsContext';
 import { toast } from 'sonner';
 import { supabase, setSessionFromHash } from '@/lib/supabase';
+
+import MyBadgesStrip from '@/components/MyBadgesStrip';
 
 /* ------------------------------ Helpers ---------------------------------- */
 function adelaideNow(): Date {
@@ -45,11 +47,6 @@ async function bestEffortJoinMember() {
       p_plan: 'free',
       p_start_trial: true,
       p_locale: (navigator.language || 'en').slice(0, 2),
-      // Optional fields when/if you collect them:
-      // p_first_name: undefined,
-      // p_country: undefined,
-      // p_accept_tos: undefined,
-      // p_accept_notifications: undefined,
     });
 
     // Don’t hang the page if the RPC is slow
@@ -84,7 +81,6 @@ function useFinalizeAuthIfNeeded() {
         const code = url.searchParams.get('code');
 
         if (hasHashToken) {
-          // Use the helper you already export from lib/supabase
           await setSessionFromHash(); // sets session + cleans hash
           await bestEffortJoinMember();
           history.replaceState({}, document.title, pathname + search.replace(/\??$/, ''));
@@ -162,6 +158,67 @@ export default function AccountPage() {
       cancelled = true;
     };
   }, [user?.id]);
+
+  // simple profile editor state
+  const [profileLoading, setProfileLoading] = useState(false);
+  const [displayName, setDisplayName] = useState<string>('');
+  const [avatarUrl, setAvatarUrl] = useState<string>('');
+
+  // load existing profile fields
+  useEffect(() => {
+    let stop = false;
+    (async () => {
+      if (!user?.id) {
+        setDisplayName('');
+        setAvatarUrl('');
+        return;
+      }
+      try {
+        setProfileLoading(true);
+        const { data, error } = await supabase
+          .from('profiles')
+          .select('display_name, avatar_url')
+          .eq('user_id', user.id)
+          .maybeSingle();
+        if (error) throw error;
+        if (!stop) {
+          setDisplayName(data?.display_name ?? '');
+          setAvatarUrl(data?.avatar_url ?? '');
+        }
+      } catch (e) {
+        console.warn('profile load failed:', e);
+      } finally {
+        if (!stop) setProfileLoading(false);
+      }
+    })();
+    return () => { stop = true; };
+  }, [user?.id]);
+
+  const handleSaveProfile = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!user?.id) return;
+    try {
+      setProfileLoading(true);
+      const { error } = await supabase
+        .from('profiles')
+        .upsert(
+          {
+            user_id: user.id,
+            display_name: displayName?.trim() || null,
+            avatar_url: avatarUrl?.trim() || null,
+          },
+          { onConflict: 'user_id' }
+        );
+      if (error) throw error;
+      toast.success('Profile updated');
+      track?.('profile_updated');
+    } catch (err) {
+      console.error('save profile error:', err);
+      toast.error('Could not save profile');
+    } finally {
+      setProfileLoading(false);
+    }
+  };
 
   // Send magic link from here (forces correct redirect)
   const handleSignIn = async (e: React.FormEvent) => {
@@ -286,32 +343,41 @@ export default function AccountPage() {
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <div className="rounded border p-3">
-              <div className="text-xs text-gray-500">Email</div>
-              <div className="font-medium">{user.email}</div>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 items-center">
+            <div className="flex items-center gap-3">
+              <div className="h-12 w-12 rounded-full bg-gray-100 overflow-hidden flex items-center justify-center">
+                {avatarUrl ? (
+                  <img src={avatarUrl} alt="" className="h-12 w-12 object-cover" />
+                ) : (
+                  <span className="text-xl">👤</span>
+                )}
+              </div>
+              <div className="min-w-0">
+                <div className="font-semibold truncate">{displayName || user.email}</div>
+                <div className="text-xs text-gray-500 truncate">{user.email}</div>
+              </div>
             </div>
             <div className="rounded border p-3">
               <div className="text-xs text-gray-500">User ID</div>
-              <div className="font-mono text-xs break-all">{user.id}</div>
+              <div className="font-mono text-[11px] break-all">{user.id}</div>
             </div>
-          </div>
-          <div className="flex gap-2">
-            <Link to="/dashboard" className="inline-flex items-center rounded border px-3 py-2 text-sm">
-              <Trophy className="w-4 h-4 mr-2" />
-              Go to Dashboard
-            </Link>
-            <Button variant="outline" onClick={async () => { await handleSignOut(); }}>
-              <LogOut className="w-4 h-4 mr-2" />
-              Sign out
-            </Button>
+            <div className="flex gap-2 justify-start sm:justify-end">
+              <Link to="/dashboard" className="inline-flex items-center rounded border px-3 py-2 text-sm">
+                <Trophy className="w-4 h-4 mr-2" />
+                Dashboard
+              </Link>
+              <Button variant="outline" onClick={async () => { await handleSignOut(); }}>
+                <LogOut className="w-4 h-4 mr-2" />
+                Sign out
+              </Button>
+            </div>
           </div>
         </CardContent>
       </Card>
 
-      {/* Points & Trial */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        <Card>
+      {/* Points & Trial + quick links */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <Card className="lg:col-span-1">
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <Trophy className="w-5 h-5" />
@@ -325,10 +391,22 @@ export default function AccountPage() {
               <Progress value={Math.min(100, Number(totalPoints || 0) % 100)} />
               <div className="text-xs mt-1 text-gray-500">Next reward at +100</div>
             </div>
+
+            <div className="mt-4 flex gap-2">
+              <Link to="/swirdle" className="inline-flex items-center rounded border px-3 py-2 text-sm">
+                Play Swirdle
+              </Link>
+              <Link to="/leaderboard" className="inline-flex items-center rounded border px-3 py-2 text-sm">
+                Leaderboard
+              </Link>
+              <Link to="/badges" className="inline-flex items-center rounded border px-3 py-2 text-sm">
+                Badges
+              </Link>
+            </div>
           </CardContent>
         </Card>
 
-        <Card>
+        <Card className="lg:col-span-1">
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <Calendar className="w-5 h-5" />
@@ -336,7 +414,6 @@ export default function AccountPage() {
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-2">
-            {/* trial state */}
             {trialLoading ? (
               <div className="text-sm text-gray-500">Loading trial status…</div>
             ) : trialError ? (
@@ -363,7 +440,58 @@ export default function AccountPage() {
             )}
           </CardContent>
         </Card>
+
+        {/* My badges strip */}
+        <Card className="lg:col-span-1">
+          <CardHeader>
+            <CardTitle>Recent Badges</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <MyBadgesStrip limit={8} />
+          </CardContent>
+        </Card>
       </div>
+
+      {/* Complete your profile */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <ImageIcon className="w-5 h-5" />
+            Complete your profile
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <form onSubmit={handleSaveProfile} className="space-y-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <label className="text-sm font-medium">Display name</label>
+                <Input
+                  value={displayName}
+                  onChange={(e) => setDisplayName(e.target.value)}
+                  placeholder="How should we show your name?"
+                />
+              </div>
+              <div className="space-y-2">
+                <label className="text-sm font-medium">Avatar URL</label>
+                <Input
+                  value={avatarUrl}
+                  onChange={(e) => setAvatarUrl(e.target.value)}
+                  placeholder="https://…"
+                />
+              </div>
+            </div>
+
+            <div className="flex gap-2">
+              <Button type="submit" disabled={profileLoading}>
+                {profileLoading ? 'Saving…' : 'Save profile'}
+              </Button>
+              <Link to="/badges" className="inline-flex items-center rounded border px-3 py-2 text-sm">
+                View badges
+              </Link>
+            </div>
+          </form>
+        </CardContent>
+      </Card>
     </div>
   );
 }
