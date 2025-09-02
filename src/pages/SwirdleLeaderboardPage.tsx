@@ -3,6 +3,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { Award, Crown, Loader2 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/context/AuthContext';
+import RecentBadgesStrip from '@/components/RecentBadgesStrip';
 
 type Row = {
   user_id: string;
