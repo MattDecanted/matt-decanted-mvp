@@ -195,7 +195,6 @@ function App() {
                     <Route path="/play" element={<GamePage />} />
                     <Route path="/game/:slug" element={<GamePage />} />
 
-                     {/* Badges */}
                     <Route path="/badges" element={<BadgesPage />} />
                     <Route path="/account/badges" element={<AccountBadges />} />
 
