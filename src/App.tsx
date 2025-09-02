@@ -39,6 +39,7 @@ import GamePage from '@/pages/GamePage';
 
 import Dashboard from '@/pages/Dashboard';
 import BadgesPage from '@/pages/BadgesPage';
+
 import AccountBadges from '@/pages/AccountBadges';
 
 import BlogIndex from '@/pages/blog/BlogIndex';
