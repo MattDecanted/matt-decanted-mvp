@@ -1,5 +1,5 @@
 // src/main.tsx
-import '@/styles/globals.css'; // <- global Tailwind layers + design tokens
+import '@/styles/global.css'; // <- global Tailwind layers + design tokens
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import App from './App';
