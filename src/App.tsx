@@ -1,75 +1,71 @@
 // src/App.tsx
-import React, { Suspense, lazy, useEffect, useState } from 'react';
-import { BrowserRouter as Router, Routes, Route, Navigate, useLocation } from 'react-router-dom';
+import React, { Suspense, lazy, useEffect, useState } from "react";
+import { BrowserRouter as Router, Routes, Route, Navigate, useLocation } from "react-router-dom";
 
-// ⬇️ lazy import for Swirdle Leaderboard page
-const SwirdleLeaderboardPage = lazy(() => import('@/pages/SwirdleLeaderboardPage'));
+// ✅ Lazy where useful (keeps initial bundle small)
+const SwirdleLeaderboardPage = lazy(() => import("@/pages/SwirdleLeaderboardPage"));
 
 // UI / Providers
-import { Toaster } from '@/components/ui/sonner';
-import { AuthProvider, useAuth } from '@/context/AuthContext';
-import { PointsProvider } from '@/context/PointsContext';
-import { AnalyticsProvider } from '@/context/AnalyticsContext';
+import { Toaster } from "@/components/ui/sonner";
+import { AuthProvider, useAuth } from "@/context/AuthContext";
+import { PointsProvider } from "@/context/PointsContext";
+import { AnalyticsProvider } from "@/context/AnalyticsContext";
 
 // Layout & Pages
-import Layout from '@/components/Layout';
-import Home from '@/pages/Home';
-import About from '@/pages/About';
-import SignIn from '@/pages/SignIn';
-import ResetPassword from '@/pages/ResetPassword';
-import Activate from '@/pages/Activate';
+import Layout from "@/components/Layout";
+import Home from "@/pages/Home";
+import About from "@/pages/About";
+import SignIn from "@/pages/SignIn";
+import ResetPassword from "@/pages/ResetPassword";
+import Activate from "@/pages/Activate";
 
-import GuessWhatPage from '@/pages/GuessWhatPage';
-import ShortsPage from '@/pages/ShortsPage';
-import ShortDetailPage from '@/pages/ShortDetailPage';
-import AccountPage from '@/pages/AccountPage';
-import PricingPage from '@/pages/PricingPage';
+import GuessWhatPage from "@/pages/GuessWhatPage";
+import ShortsPage from "@/pages/ShortsPage";
+import ShortDetailPage from "@/pages/ShortDetailPage";
+import AccountPage from "@/pages/AccountPage";
+import PricingPage from "@/pages/PricingPage";
 
-import DailyQuizPage from '@/pages/DailyQuiz';
-import VinoVocabPage from '@/pages/VinoVocabPage';
-import BrandedDemo from '@/pages/BrandedDemo';
-import VocabChallengeManager from '@/pages/admin/VocabChallengeManager';
-import QuizManager from '@/pages/admin/QuizManager';
-import TrialQuizManager from '@/pages/admin/TrialQuizManager';
-import Swirdle from '@/pages/Swirdle';
-import SwirdleAdmin from '@/pages/admin/SwirdleAdmin';
-import WineOptionsGame from '@/pages/WineOptionsGame';
-import SoloWineOptions from '@/pages/SoloWineOptions';
-import GamePage from '@/pages/GamePage';
+import DailyQuizPage from "@/pages/DailyQuiz";
+import VinoVocabPage from "@/pages/VinoVocabPage";
+import BrandedDemo from "@/pages/BrandedDemo";
+import VocabChallengeManager from "@/pages/admin/VocabChallengeManager";
+import QuizManager from "@/pages/admin/QuizManager";
+import TrialQuizManager from "@/pages/admin/TrialQuizManager";
+import Swirdle from "@/pages/Swirdle";
+import SwirdleAdmin from "@/pages/admin/SwirdleAdmin";
+import WineOptionsGame from "@/pages/WineOptionsGame";
+import SoloWineOptions from "@/pages/SoloWineOptions";
+import GamePage from "@/pages/GamePage";
 
-import Dashboard from '@/pages/Dashboard';
-import BadgesPage from '@/pages/BadgesPage';
-import Terms from '@/pages/Terms';
+import Dashboard from "@/pages/Dashboard";
+import BadgesPage from "@/pages/BadgesPage";
+import Terms from "@/pages/Terms";
 
-import AccountBadges from '@/pages/AccountBadges';
+import AccountBadges from "@/pages/AccountBadges";
 
-import BlogIndex from '@/pages/blog/BlogIndex';
-import HowToBecomeWinemaker from '@/pages/blog/HowToBecomeWinemaker';
-import WSETLevel2Questions from '@/pages/blog/WSETLevel2Questions';
-import WineTastingGuide from '@/pages/blog/WineTastingGuide';
-import WineVocabularyQuiz from '@/pages/blog/WineVocabularyQuiz';
+import BlogIndex from "@/pages/blog/BlogIndex";
+import HowToBecomeWinemaker from "@/pages/blog/HowToBecomeWinemaker";
+import WSETLevel2Questions from "@/pages/blog/WSETLevel2Questions";
+import WineTastingGuide from "@/pages/blog/WineTastingGuide";
+import WineVocabularyQuiz from "@/pages/blog/WineVocabularyQuiz";
 
-import DebugAuth from '@/pages/DebugAuth';
-import { supabase } from '@/lib/supabase';
+import DebugAuth from "@/pages/DebugAuth";
+import { supabase } from "@/lib/supabase";
 
-// ✅ Auth callback + optional URL debugger
-import AuthCallbackPage from '@/pages/AuthCallbackPage';
+// Auth callback
+import AuthCallbackPage from "@/pages/AuthCallbackPage";
 
-// ✅ NEW: Onboarding page (created in Step 5)
-import Onboarding from '@/pages/Onboarding';
+// Onboarding + modules
+import Onboarding from "@/pages/Onboarding";
+import ModulesIndex from "@/pages/ModulesIndex";
+import ModuleDetail from "@/pages/ModuleDetail";
 
-// ✅ NEW: Modules pages
-import ModulesIndex from '@/pages/ModulesIndex';
-import ModuleDetail from '@/pages/ModuleDetail';
+// Admin
+import ContentGateManager from "@/pages/admin/ContentGateManager";
+import UsersManager from "@/pages/admin/UsersManager";
 
-// ✅ NEW: Admin Content Gate Manager
-import ContentGateManager from '@/pages/admin/ContentGateManager';
-
-// ✅ NEW: Admin Users Manager
-import UsersManager from '@/pages/admin/UsersManager';
-
-const FN_SUBMIT = '/.netlify/functions/trial-quiz-attempt';
-const PENDING_KEY = 'md_trial_pending';
+const FN_SUBMIT = "/.netlify/functions/trial-quiz-attempt";
+const PENDING_KEY = "md_trial_pending";
 
 /* ---------- Auto resume pending trial-quiz posts on Account ---------- */
 function AutoResumeOnAccount() {
@@ -86,11 +82,11 @@ function AutoResumeOnAccount() {
         if (!pending?.quiz_id || !Array.isArray(pending?.selections)) return;
 
         await fetch(FN_SUBMIT, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             quiz_id: pending.quiz_id,
-            locale: 'en',
+            locale: "en",
             user_id: uid,
             selections: pending.selections,
           }),
@@ -109,15 +105,12 @@ function AutoResumeOnAccount() {
 function RequireAuth({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuth();
   const location = useLocation();
-
   if (loading) return <div className="p-8">Loading...</div>;
   if (!user) return <Navigate to="/signin" replace state={{ from: location }} />;
   return <>{children}</>;
 }
 
-/** ✅ NEW: Onboarding guard
- * Sends signed-in users to /onboarding until they have an alias AND terms_accepted_at.
- */
+/** Onboarding guard: needs alias + terms_accepted_at */
 function RequireOnboarded({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuth();
   const location = useLocation();
@@ -126,34 +119,41 @@ function RequireOnboarded({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     let active = true;
     (async () => {
-      if (loading) { setOk(null); return; }
-      if (!user) { setOk(false); return; }
+      if (loading) {
+        setOk(null);
+        return;
+      }
+      if (!user) {
+        setOk(false);
+        return;
+      }
 
       const { data, error } = await supabase
-        .from('profiles')
-        .select('alias, terms_accepted_at')
-        .eq('id', user.id)
+        .from("profiles")
+        .select("alias, terms_accepted_at")
+        .eq("id", user.id)
         .single();
 
       if (!active) return;
 
       if (error) {
-        console.error('profiles check failed:', error);
+        console.error("profiles check failed:", error);
         setOk(false);
         return;
       }
 
       const needsOnboarding = !data?.alias || !data?.terms_accepted_at;
-      if (needsOnboarding && location.pathname !== '/onboarding') {
+      if (needsOnboarding && location.pathname !== "/onboarding") {
         setOk(false);
-        // imperative redirect avoids rendering children flash
-        window.location.replace('/onboarding');
+        window.location.replace("/onboarding"); // avoid child flash
       } else {
         setOk(true);
       }
     })();
 
-    return () => { active = false; };
+    return () => {
+      active = false;
+    };
   }, [user, loading, location.pathname]);
 
   if (ok === null) {
@@ -169,10 +169,9 @@ function RequireOnboarded({ children }: { children: React.ReactNode }) {
 function RequireAdmin({ children }: { children: React.ReactNode }) {
   const { user, profile, loading } = useAuth();
   const location = useLocation();
-
   if (loading) return <div className="p-8">Loading...</div>;
   if (!user) return <Navigate to="/signin" replace state={{ from: location }} />;
-  if ((profile as any)?.role !== 'admin') return <Navigate to="/dashboard" replace />;
+  if ((profile as any)?.role !== "admin") return <Navigate to="/dashboard" replace />;
   return <>{children}</>;
 }
 
@@ -186,14 +185,14 @@ class AppErrorBoundary extends React.Component<{ children: React.ReactNode }, { 
     return { error };
   }
   componentDidCatch(error: any, info: any) {
-    console.error('App crash:', error, info);
+    console.error("App crash:", error, info);
   }
   render() {
     if (this.state.error) {
       return (
         <div style={{ padding: 24 }}>
           <h1 className="text-xl font-bold">Something went wrong</h1>
-          <pre style={{ whiteSpace: 'pre-wrap' }}>
+          <pre style={{ whiteSpace: "pre-wrap" }}>
             {String(this.state.error?.message || this.state.error)}
           </pre>
         </div>
@@ -205,11 +204,12 @@ class AppErrorBoundary extends React.Component<{ children: React.ReactNode }, { 
 
 function App() {
   useEffect(() => {
-    window.addEventListener('error', (e) =>
-      console.error('[window.error]', (e as any).error || (e as any).message)
+    // Helpful diagnostics in production
+    window.addEventListener("error", (e) =>
+      console.error("[window.error]", (e as any).error || (e as any).message)
     );
-    window.addEventListener('unhandledrejection', (e: any) =>
-      console.error('[unhandledrejection]', e?.reason || e)
+    window.addEventListener("unhandledrejection", (e: any) =>
+      console.error("[unhandledrejection]", e?.reason || e)
     );
   }, []);
 
@@ -218,26 +218,30 @@ function App() {
       <AuthProvider>
         <PointsProvider>
           <Router>
-            {/* ✅ Dedicated auth route OUTSIDE Layout (avoid header/layout interfering) */}
+            {/* 🔒 Keep auth callback route outside Layout to avoid visual flash */}
             <Routes>
               <Route path="/auth/callback" element={<AuthCallbackPage />} />
             </Routes>
 
             <AppErrorBoundary>
-              <Layout>
-                {/* Wrap lazy pages (leaderboard) */}
-                <Suspense fallback={<div className="p-6">Loading…</div>}>
+              {/* 🌐 Global Suspense protects ALL lazy chunks on any route */}
+              <Suspense
+                fallback={
+                  <div className="min-h-screen flex items-center justify-center">
+                    <div className="h-8 w-8 animate-spin rounded-full border-2 border-gray-300 border-t-transparent" />
+                  </div>
+                }
+              >
+                <Layout>
                   <Routes>
-                    {/* Optional no-op so wildcard doesn't catch it inside Layout */}
+                    {/* Avoid double render inside Layout */}
                     <Route path="/auth/callback" element={<></>} />
 
-                    {/* ✅ NEW: Onboarding (public but typically reached when signed in) */}
+                    {/* Onboarding */}
                     <Route path="/onboarding" element={<Onboarding />} />
 
-                    {/* Home (public) */}
+                    {/* Public */}
                     <Route path="/" element={<Home />} />
-
-                    {/* Core info & auth (public) */}
                     <Route path="/about" element={<About />} />
                     <Route path="/signin" element={<SignIn />} />
                     <Route path="/sign-in" element={<Navigate to="/signin" replace />} />
@@ -245,17 +249,17 @@ function App() {
                     <Route path="/reset-password" element={<ResetPassword />} />
                     <Route path="/terms" element={<Terms />} />
 
-                    {/* Debug (public) */}
+                    {/* Debug */}
                     <Route path="/debug/auth" element={<DebugAuth />} />
 
-                    {/* Blog (public) */}
+                    {/* Blog */}
                     <Route path="/blog" element={<BlogIndex />} />
                     <Route path="/blog/how-to-become-winemaker" element={<HowToBecomeWinemaker />} />
                     <Route path="/blog/wset-level-2-questions" element={<WSETLevel2Questions />} />
                     <Route path="/blog/wine-tasting-guide" element={<WineTastingGuide />} />
                     <Route path="/blog/wine-vocabulary-quiz" element={<WineVocabularyQuiz />} />
 
-                    {/* Games (some public, some gated) */}
+                    {/* Games */}
                     <Route
                       path="/games/guess-what"
                       element={
@@ -276,10 +280,9 @@ function App() {
                         </RequireAuth>
                       }
                     />
-                    {/* ⬇️ NEW: Swirdle Leaderboard (public view is fine) */}
                     <Route path="/swirdle/leaderboard" element={<SwirdleLeaderboardPage />} />
-                    {/* Convenience redirect */}
                     <Route path="/leaderboard" element={<Navigate to="/swirdle/leaderboard" replace />} />
+
                     <Route
                       path="/play"
                       element={
@@ -314,7 +317,7 @@ function App() {
                       }
                     />
 
-                    {/* Shorts (public list + gated detail handled in page) */}
+                    {/* Shorts (public list + detail) */}
                     <Route path="/shorts" element={<ShortsPage />} />
                     <Route path="/shorts/:slug" element={<ShortDetailPage />} />
 
@@ -365,7 +368,7 @@ function App() {
                       }
                     />
 
-                    {/* Admin (guarded) */}
+                    {/* Admin */}
                     <Route
                       path="/admin/vocab"
                       element={
@@ -398,7 +401,6 @@ function App() {
                         </RequireAdmin>
                       }
                     />
-                    {/* ✅ NEW: Admin Content Gate Manager */}
                     <Route
                       path="/admin/content"
                       element={
@@ -407,7 +409,6 @@ function App() {
                         </RequireAdmin>
                       }
                     />
-                    {/* ✅ NEW: Admin Users Manager */}
                     <Route
                       path="/admin/users"
                       element={
@@ -470,8 +471,8 @@ function App() {
                     {/* 404 */}
                     <Route path="*" element={<Navigate to="/" replace />} />
                   </Routes>
-                </Suspense>
-              </Layout>
+                </Layout>
+              </Suspense>
 
               <Toaster />
             </AppErrorBoundary>
