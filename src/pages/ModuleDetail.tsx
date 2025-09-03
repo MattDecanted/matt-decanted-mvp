@@ -1,3 +1,4 @@
+// src/pages/ModuleDetail.tsx
 import React, { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import { supabase } from "@/lib/supabase";
@@ -5,6 +6,7 @@ import { useAuth } from "@/context/AuthContext";
 import { Gate, LockBadge } from "@/components/LockGate";
 import type { Tier } from "@/lib/entitlements";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import PointsProgressChip from "@/components/PointsProgressChip";
 
 type ModuleRow = {
   slug: string;
@@ -53,9 +55,12 @@ export default function ModuleDetail() {
 
   return (
     <div className="max-w-3xl mx-auto p-6 space-y-4">
-      <div className="flex items-start justify-between">
+      <div className="flex items-start justify-between gap-3">
         <h1 className="text-2xl font-semibold">{row.title}</h1>
-        <LockBadge requiredTier={row.required_tier} requiredPoints={row.required_points} />
+        <div className="flex flex-col items-end gap-1">
+          <LockBadge requiredTier={row.required_tier} requiredPoints={row.required_points} />
+          <PointsProgressChip userPoints={userPoints} requiredPoints={row.required_points} />
+        </div>
       </div>
       <p className="text-sm text-gray-600">{row.summary ?? "Module overview goes here."}</p>
 
