@@ -6,6 +6,12 @@
 [build.environment]
   NODE_VERSION = "18"
 
+[functions]
+  # Use esbuild for smaller/faster function bundles
+  node_bundler = "esbuild"
+  # Keep these dependencies external so Netlify installs them
+  external_node_modules = ["parse-multipart-data", "stripe"]
+
 # Single Page App: send all routes to index.html
 [[redirects]]
   from = "/*"
