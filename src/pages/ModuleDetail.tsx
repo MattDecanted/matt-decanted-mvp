@@ -3,7 +3,8 @@ import { useParams } from "react-router-dom";
 import { supabase } from "@/lib/supabase";
 import { useAuth } from "@/context/AuthContext";
 import { Gate, LockBadge } from "@/components/LockGate";
-import { Tier } from "@/lib/entitlements";
+import type { Tier } from "@/lib/entitlements";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
 type ModuleRow = {
   slug: string;
@@ -16,11 +17,12 @@ type ModuleRow = {
 
 export default function ModuleDetail() {
   const { slug } = useParams();
-  const { profile, pointsTotal } = useAuth() as any;
+  const { profile } = useAuth() as any;
+  const userTier: Tier = (profile?.membership_tier || "free") as Tier;
+
   const [row, setRow] = useState<ModuleRow | null>(null);
   const [loading, setLoading] = useState(true);
-  const userTier: Tier = (profile?.membership_tier || 'free') as Tier;
-  const userPoints = Number(pointsTotal ?? 0);
+  const [userPoints, setUserPoints] = useState<number>(0);
 
   useEffect(() => {
     (async () => {
@@ -30,7 +32,18 @@ export default function ModuleDetail() {
         .select("slug, title, summary, required_points, required_tier, is_active")
         .eq("slug", slug)
         .single();
-      if (!error && data) setRow(data as any);
+      if (!error && data) setRow(data as ModuleRow);
+
+      const { data: me } = await supabase.auth.getUser();
+      const uid = me?.user?.id;
+      if (uid) {
+        const { data: pt } = await supabase
+          .from("user_points_totals_v1")
+          .select("total_points")
+          .eq("user_id", uid)
+          .maybeSingle();
+        setUserPoints(Number(pt?.total_points ?? 0));
+      }
       setLoading(false);
     })();
   }, [slug]);
@@ -51,12 +64,30 @@ export default function ModuleDetail() {
         userPoints={userPoints}
         requiredTier={row.required_tier}
         requiredPoints={row.required_points}
+        fallback={
+          <div className="rounded-md border p-4 bg-gray-50">
+            <div className="mb-2 font-medium">This module is locked.</div>
+            <div className="text-sm text-gray-600">
+              Earn points via the Daily Quiz or upgrade your membership to unlock.
+            </div>
+            <div className="mt-3 flex gap-2">
+              <a className="rounded-md border px-3 py-2 text-sm" href="/daily-quiz">Earn points</a>
+              <a className="rounded-md bg-black text-white px-3 py-2 text-sm" href="/pricing">Upgrade</a>
+            </div>
+          </div>
+        }
       >
         {/* 🔓 Unlocked module body placeholder */}
-        <div className="rounded-md border p-4 bg-white">
-          <div className="font-medium mb-2">Module Content</div>
-          <p className="text-sm text-gray-700">Lesson videos, text, and quizzes will appear here.</p>
-        </div>
+        <Card>
+          <CardHeader>
+            <CardTitle>Module Content</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-2">
+            <p className="text-sm text-gray-700">
+              Lessons, videos, and assessments will appear here.
+            </p>
+          </CardContent>
+        </Card>
       </Gate>
     </div>
   );
