@@ -492,14 +492,17 @@ function ShortForm({
       if (error) { alert(error.message); return; }
     }
 
-    // upsert gate meta by slug
-    await supabase.from("content_shorts").upsert({
-      slug: form.slug,
-      required_points: gateForm.required_points,
-      required_tier: gateForm.required_tier,
-      is_active: gateForm.is_active,
-    }, { onConflict: "slug" });
-
+await supabase.from("content_shorts").upsert(
+  {
+    slug: form.slug,
+    title: form.title,        // ⬅️ add this
+    summary: null,            // ⬅️ optional, safe default
+    required_points: gateForm.required_points,
+    required_tier: gateForm.required_tier,
+    is_active: gateForm.is_active,
+  },
+  { onConflict: "slug" }
+);
     await onSaved();
   }
 
