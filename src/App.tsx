@@ -39,6 +39,7 @@ import GamePage from '@/pages/GamePage';
 
 import Dashboard from '@/pages/Dashboard';
 import BadgesPage from '@/pages/BadgesPage';
+import Terms from '@/pages/Terms';
 
 import AccountBadges from '@/pages/AccountBadges';
 
@@ -232,6 +233,7 @@ function App() {
                     <Route path="/sign-in" element={<Navigate to="/signin" replace />} />
                     <Route path="/activate" element={<Activate />} />
                     <Route path="/reset-password" element={<ResetPassword />} />
+                    <Route path="/terms" element={<Terms />} />
 
                     {/* Debug (public) */}
                     <Route path="/debug/auth" element={<DebugAuth />} />
