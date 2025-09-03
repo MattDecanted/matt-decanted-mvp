@@ -1,248 +1,244 @@
-// src/pages/admin/AdminDashboard.tsx
-import * as React from "react";
+import React, { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { supabase } from "@/lib/supabase";
 import {
-  Shield, Calendar, ListChecks, Brain,
-  BookOpen, Users, Sparkles, ChevronRight, RefreshCcw
+  Users, BookOpen, FileText, Mail, TrendingUp, MessageSquare,
+  Video, Download, Globe, Brain, Film, CheckCircle2
 } from "lucide-react";
-
-type Cnt = { today: number; total: number };
-
-function todayAU(): string {
-  // If you use local server time, simple UTC date is fine for MVP
-  const d = new Date();
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  return `${y}-${m}-${day}`;
-}
+import { supabase } from "@/lib/supabase";
 
 export default function AdminDashboard() {
-  const [loading, setLoading] = React.useState(true);
-  const [err, setErr] = React.useState<string | null>(null);
+  const [stats, setStats] = useState({
+    users: 0,
+    subs: 0,
+    shorts: 0,
+    shortQuizzes: 0,
+    languages: 1,
+  });
 
-  const [swirdle, setSwirdle] = React.useState<Cnt>({ today: 0, total: 0 });
-  const [quiz, setQuiz] = React.useState<Cnt>({ today: 0, total: 0 });
-  const [vocab, setVocab] = React.useState<Cnt>({ today: 0, total: 0 });
-  const [users, setUsers] = React.useState<number>(0);
+  useEffect(() => {
+    let active = true;
+    (async () => {
+      // Users
+      const prof = await supabase.from("profiles").select("id", { count: "exact", head: true });
+      const users = prof?.count ?? 0;
 
-  const tdy = todayAU();
+      // Subscribers (assumes profiles.membership_tier IN ('pro','vip'))
+      const subsRes = await supabase
+        .from("profiles")
+        .select("id", { count: "exact", head: true })
+        .in("membership_tier", ["pro", "vip"]);
+      const subs = subsRes?.count ?? 0;
 
-  async function load() {
-    setLoading(true);
-    setErr(null);
-    try {
-      // Swirdle words
-      {
-        const { count: total } = await supabase
-          .from("swirdle_words")
-          .select("id", { count: "exact", head: true });
-        const { count: today } = await supabase
-          .from("swirdle_words")
-          .select("id", { count: "exact", head: true })
-          .eq("date_scheduled", tdy)
-          .eq("is_published", true);
-        setSwirdle({ today: today ?? 0, total: total ?? 0 });
-      }
-      // Daily quizzes
-      {
-        const { count: total } = await supabase
-          .from("daily_quizzes")
-          .select("id", { count: "exact", head: true });
-        const { count: today } = await supabase
-          .from("daily_quizzes")
-          .select("id", { count: "exact", head: true })
-          .eq("date_scheduled", tdy)
-          .eq("is_published", true);
-        setQuiz({ today: today ?? 0, total: total ?? 0 });
-      }
-      // Vino vocab challenges
-      {
-        const { count: total } = await supabase
-          .from("vocab_challenges")
-          .select("id", { count: "exact", head: true });
-        const { count: today } = await supabase
-          .from("vocab_challenges")
-          .select("id", { count: "exact", head: true })
-          .eq("date", tdy);
-        setVocab({ today: today ?? 0, total: total ?? 0 });
-      }
-      // Users (profiles)
-      {
-        const { count } = await supabase
-          .from("profiles")
-          .select("id", { count: "exact", head: true });
-        setUsers(count ?? 0);
-      }
-    } catch (e: any) {
-      setErr(e?.message ?? String(e));
-    } finally {
-      setLoading(false);
-    }
-  }
+      // Shorts
+      const shortsRes = await supabase.from("shorts").select("id", { count: "exact", head: true });
+      const shorts = shortsRes?.count ?? 0;
 
-  React.useEffect(() => {
-    void load();
+      // Short quizzes
+      const qb = await supabase
+        .from("quiz_bank")
+        .select("id", { count: "exact", head: true })
+        .eq("kind", "short");
+      const shortQuizzes = qb?.count ?? 0;
+
+      // Languages (distinct locales present in shorts_i18n)
+      const locales = await supabase.from("shorts_i18n").select("locale");
+      const languages = locales.data ? new Set(locales.data.map((x: any) => x.locale)).size : 1;
+
+      if (active) setStats({ users, subs, shorts, shortQuizzes, languages });
+    })();
+    return () => { active = false; };
   }, []);
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        <div className="flex items-center gap-3 mb-6">
-          <div className="inline-flex items-center justify-center w-10 h-10 rounded-full bg-brand-purple/10 text-brand-purple">
-            <Shield className="w-5 h-5" />
-          </div>
-          <div>
-            <h1 className="text-2xl font-bold">Admin Dashboard</h1>
-            <p className="text-sm text-gray-500">Today: {tdy}</p>
-          </div>
-          <button
-            onClick={load}
-            className="ml-auto inline-flex items-center gap-2 rounded-lg border px-3 py-1.5 text-sm hover:bg-gray-50"
-          >
-            <RefreshCcw className="w-4 h-4" /> Refresh
-          </button>
+    <div className="min-h-screen py-12 bg-gray-50">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+        <div className="mb-8">
+          <h1 className="text-3xl font-bold text-gray-900 mb-2">Admin Dashboard</h1>
+          <p className="text-gray-600">Manage your wine education platform</p>
         </div>
 
-        {err && (
-          <div className="mb-6 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
-            {err}
+        {/* KPI / Stats */}
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-6 mb-8">
+          <div className="bg-white rounded-lg shadow-lg p-6">
+            <div className="flex items-center">
+              <div className="w-12 h-12 bg-blue-100 rounded-lg flex items-center justify-center">
+                <Users className="w-6 h-6 text-blue-600" />
+              </div>
+              <div className="ml-4">
+                <p className="text-sm font-medium text-gray-600">Total Users</p>
+                <p className="text-2xl font-bold text-gray-900 tabular-nums">{stats.users}</p>
+              </div>
+            </div>
           </div>
-        )}
 
-        {/* Summary cards */}
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          <StatCard
-            title="Swirdle words"
-            icon={<Brain className="w-4 h-4" />}
-            today={swirdle.today}
-            total={swirdle.total}
-          />
-          <StatCard
-            title="Daily quizzes"
-            icon={<ListChecks className="w-4 h-4" />}
-            today={quiz.today}
-            total={quiz.total}
-          />
-          <StatCard
-            title="Vino Vocab"
-            icon={<BookOpen className="w-4 h-4" />}
-            today={vocab.today}
-            total={vocab.total}
-          />
-          <StatCard
-            title="Users (profiles)"
-            icon={<Users className="w-4 h-4" />}
-            today={0}
-            total={users}
-          />
-        </div>
-
-        {/* Quick actions */}
-        <div className="mt-8 grid gap-4 md:grid-cols-2">
-          <AdminLink
-            to="/admin/swirdle"
-            title="Manage Swirdle"
-            desc="Schedule words, set hints, publish today."
-          />
-          <AdminLink
-            to="/admin/quizzes"
-            title="Manage Daily Quiz"
-            desc="Create & schedule daily quiz questions."
-          />
-          <AdminLink
-            to="/admin/vocab"
-            title="Manage Vino Vocab"
-            desc="Set today’s vocab term, options & points."
-          />
-          <AdminLink
-            to="/account"
-            title="Members & roles"
-            desc="Inspect users, set admin, confirm trial status."
-          />
-        </div>
-
-        {/* Schedule helper */}
-        <div className="mt-8 card p-5">
-          <div className="flex items-center gap-2 mb-2">
-            <Calendar className="w-4 h-4 text-brand-blue" />
-            <h2 className="font-semibold">What should be live today?</h2>
+          <div className="bg-white rounded-lg shadow-lg p-6">
+            <div className="flex items-center">
+              <div className="w-12 h-12 bg-green-100 rounded-lg flex items-center justify-center">
+                <TrendingUp className="w-6 h-6 text-green-600" />
+              </div>
+              <div className="ml-4">
+                <p className="text-sm font-medium text-gray-600">Active Subscribers</p>
+                <p className="text-2xl font-bold text-gray-900 tabular-nums">{stats.subs}</p>
+              </div>
+            </div>
           </div>
-          <ul className="list-disc pl-5 text-sm text-gray-700 space-y-1">
-            <li>
-              <strong>Swirdle:</strong> {swirdle.today > 0 ? "✓ a word is published" : "• no word published yet"}
-            </li>
-            <li>
-              <strong>Daily Quiz:</strong> {quiz.today > 0 ? "✓ a quiz is published" : "• no quiz published yet"}
-            </li>
-            <li>
-              <strong>Vino Vocab:</strong> {vocab.today > 0 ? "✓ challenge set" : "• no challenge set"}
-            </li>
-          </ul>
-          <p className="mt-3 text-xs text-gray-500">
-            Counts are scoped to <em>{tdy}</em>. Use the manager pages above to create/publish items.
-          </p>
+
+          <div className="bg-white rounded-lg shadow-lg p-6">
+            <div className="flex items-center">
+              <div className="w-12 h-12 bg-amber-100 rounded-lg flex items-center justify-center">
+                <Film className="w-6 h-6 text-amber-600" />
+              </div>
+              <div className="ml-4">
+                <p className="text-sm font-medium text-gray-600">Shorts</p>
+                <p className="text-2xl font-bold text-gray-900 tabular-nums">{stats.shorts}</p>
+              </div>
+            </div>
+          </div>
+
+          <div className="bg-white rounded-lg shadow-lg p-6">
+            <div className="flex items-center">
+              <div className="w-12 h-12 bg-purple-100 rounded-lg flex items-center justify-center">
+                <CheckCircle2 className="w-6 h-6 text-purple-600" />
+              </div>
+              <div className="ml-4">
+                <p className="text-sm font-medium text-gray-600">Short Quizzes</p>
+                <p className="text-2xl font-bold text-gray-900 tabular-nums">{stats.shortQuizzes}</p>
+              </div>
+            </div>
+          </div>
+
+          <div className="bg-white rounded-lg shadow-lg p-6">
+            <div className="flex items-center">
+              <div className="w-12 h-12 bg-teal-100 rounded-lg flex items-center justify-center">
+                <Globe className="w-6 h-6 text-teal-600" />
+              </div>
+              <div className="ml-4">
+                <p className="text-sm font-medium text-gray-600">Languages</p>
+                <p className="text-2xl font-bold text-gray-900 tabular-nums">{stats.languages}</p>
+              </div>
+            </div>
+          </div>
         </div>
 
-        {/* Flair */}
-        <div className="mt-8 text-center text-sm text-gray-500">
-          <Sparkles className="inline w-4 h-4 mr-1" />
-          Keep it tidy. One word a day.
+        {/* Quick Actions (Bolt style) */}
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+
+          <div className="bg-white rounded-lg shadow-lg p-6">
+            <div className="flex items-center mb-4">
+              <div className="w-10 h-10 bg-blue-100 rounded-lg flex items-center justify-center">
+                <BookOpen className="w-5 h-5 text-blue-600" />
+              </div>
+              <h3 className="ml-3 text-lg font-semibold text-gray-900">
+                Shorts Management
+              </h3>
+            </div>
+            <p className="text-gray-600 mb-4">
+              Create and manage micro-lessons (5–15 minutes) and quizzes.
+            </p>
+            <Link
+              to="/admin/shorts"
+              className="w-full bg-blue-600 hover:bg-blue-700 text-white py-2 px-4 rounded-lg font-medium transition-colors block text-center"
+            >
+              Manage Shorts
+            </Link>
+          </div>
+
+          <div className="bg-white rounded-lg shadow-lg p-6">
+            <div className="flex items-center mb-4">
+              <div className="w-10 h-10 bg-emerald-100 rounded-lg flex items-center justify-center">
+                <Globe className="w-5 h-5 text-emerald-600" />
+              </div>
+              <h3 className="ml-3 text-lg font-semibold text-gray-900">
+                Translation Management
+              </h3>
+            </div>
+            <p className="text-gray-600 mb-4">
+              Localize titles, blurbs, and alt links for 5–6 languages.
+            </p>
+            <Link
+              to="/admin/translations"
+              className="w-full bg-emerald-600 hover:bg-emerald-700 text-white py-2 px-4 rounded-lg font-medium transition-colors block text-center"
+            >
+              Manage Translations
+            </Link>
+          </div>
+
+          <div className="bg-white rounded-lg shadow-lg p-6">
+            <div className="flex items-center mb-4">
+              <div className="w-10 h-10 bg-indigo-100 rounded-lg flex items-center justify-center">
+                <Download className="w-5 h-5 text-indigo-600" />
+              </div>
+              <h3 className="ml-3 text-lg font-semibold text-gray-900">
+                Reports & Analytics
+              </h3>
+            </div>
+            <p className="text-gray-600 mb-4">
+              See engagement on Shorts and quizzes.
+            </p>
+            <Link
+              to="/admin/analytics"
+              className="w-full bg-indigo-600 hover:bg-indigo-700 text-white py-2 px-4 rounded-lg font-medium transition-colors block text-center"
+            >
+              View Analytics
+            </Link>
+          </div>
+
+          {/* keep a few Bolt tiles for parity / future */}
+          <div className="bg-white rounded-lg shadow-lg p-6">
+            <div className="flex items-center mb-4">
+              <div className="w-10 h-10 bg-purple-100 rounded-lg flex items-center justify-center">
+                <MessageSquare className="w-5 h-5 text-purple-600" />
+              </div>
+              <h3 className="ml-3 text-lg font-semibold text-gray-900">
+                Community Management
+              </h3>
+            </div>
+            <p className="text-gray-600 mb-4">Manage discussions and events</p>
+            <Link
+              to="/admin/community"
+              className="w-full bg-purple-600 hover:bg-purple-700 text-white py-2 px-4 rounded-lg font-medium transition-colors block text-center"
+            >
+              Manage Community
+            </Link>
+          </div>
+
+          <div className="bg-white rounded-lg shadow-lg p-6">
+            <div className="flex items-center mb-4">
+              <div className="w-10 h-10 bg-amber-100 rounded-lg flex items-center justify-center">
+                <Video className="w-5 h-5 text-amber-600" />
+              </div>
+              <h3 className="ml-3 text-lg font-semibold text-gray-900">
+                Media Library
+              </h3>
+            </div>
+            <p className="text-gray-600 mb-4">Manage videos and PDFs</p>
+            <Link
+              to="/admin/media"
+              className="w-full bg-amber-600 hover:bg-amber-700 text-white py-2 px-4 rounded-lg font-medium transition-colors block text-center"
+            >
+              Manage Media
+            </Link>
+          </div>
+
+          <div className="bg-white rounded-lg shadow-lg p-6">
+            <div className="flex items-center mb-4">
+              <div className="w-10 h-10 bg-fuchsia-100 rounded-lg flex items-center justify-center">
+                <Brain className="w-5 h-5 text-fuchsia-600" />
+              </div>
+              <h3 className="ml-3 text-lg font-semibold text-gray-900">
+                Swirdle Management
+              </h3>
+            </div>
+            <p className="text-gray-600 mb-4">Daily wine word puzzles</p>
+            <Link
+              to="/admin/swirdle"
+              className="w-full bg-fuchsia-600 hover:bg-fuchsia-700 text-white py-2 px-4 rounded-lg font-medium transition-colors block text-center"
+            >
+              Manage Swirdle
+            </Link>
+          </div>
         </div>
       </div>
-
-      {loading && (
-        <div className="fixed inset-0 bg-white/40 backdrop-blur-sm flex items-center justify-center">
-          <div className="animate-spin h-8 w-8 rounded-full border-2 border-gray-300 border-t-transparent" />
-        </div>
-      )}
     </div>
-  );
-}
-
-function StatCard({
-  title,
-  icon,
-  today,
-  total,
-}: {
-  title: string;
-  icon: React.ReactNode;
-  today: number;
-  total: number;
-}) {
-  return (
-    <div className="card p-4">
-      <div className="flex items-center justify-between">
-        <div className="text-sm text-gray-500">{title}</div>
-        <div className="text-gray-400">{icon}</div>
-      </div>
-      <div className="mt-2 flex items-end justify-between">
-        <div>
-          <div className="text-2xl font-semibold">{total}</div>
-          <div className="text-xs text-gray-500">Total</div>
-        </div>
-        <div className="text-right">
-          <div className="text-lg font-semibold">{today}</div>
-          <div className="text-xs text-gray-500">Today</div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function AdminLink({ to, title, desc }: { to: string; title: string; desc: string }) {
-  return (
-    <Link
-      to={to}
-      className="card p-4 flex items-start justify-between hover:bg-gray-50 transition-colors"
-    >
-      <div>
-        <div className="font-medium">{title}</div>
-        <div className="text-sm text-gray-600">{desc}</div>
-      </div>
-      <ChevronRight className="w-5 h-5 text-gray-400" />
-    </Link>
   );
 }
