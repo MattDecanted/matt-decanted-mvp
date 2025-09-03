@@ -30,7 +30,7 @@ type ShortQuiz = {
   ref_id: string; // short.id
   question: string;
   options: string[] | null; // null for true/false
-  correct_index: number | null; // for MCQ; for T/F store 0/1 or keep null and compare to explanation/correct_answer
+  correct_index: number | null; // for MCQ; for T/F store 0/1
   points_award: number;
   order_index: number | null;
   created_at: string;
@@ -85,10 +85,11 @@ export default function ShortsManager() {
     setLoading(true);
     try {
       // Shorts
-      const { data: s } = await supabase
+      const { data: s, error: sErr } = await supabase
         .from("shorts")
         .select("*")
         .order("created_at", { ascending: false });
+      if (sErr) throw sErr;
       const allShorts = (s || []) as Short[];
       setShorts(allShorts);
 
@@ -96,10 +97,11 @@ export default function ShortsManager() {
       const slugs = allShorts.map((x) => x.slug);
       let gatesMap: Record<string, GateMeta> = {};
       if (slugs.length) {
-        const { data: g } = await supabase
+        const { data: g, error: gErr } = await supabase
           .from("content_shorts")
           .select("slug, required_points, required_tier, is_active")
           .in("slug", slugs);
+        if (gErr) throw gErr;
         (g || []).forEach((row: any) => {
           gatesMap[row.slug] = {
             slug: row.slug,
@@ -115,12 +117,13 @@ export default function ShortsManager() {
       const ids = allShorts.map((x) => x.id);
       let qMap: Record<string, ShortQuiz[]> = {};
       if (ids.length) {
-        const { data: q } = await supabase
+        const { data: q, error: qErr } = await supabase
           .from("quiz_bank")
           .select("*")
           .eq("kind", "short")
           .in("ref_id", ids)
           .order("order_index", { ascending: true });
+        if (qErr) throw qErr;
         (q || []).forEach((row: any) => {
           const k = row.ref_id as string;
           if (!qMap[k]) qMap[k] = [];
@@ -132,10 +135,11 @@ export default function ShortsManager() {
       // I18n
       let iMap: Record<string, ShortI18n[]> = {};
       if (ids.length) {
-        const { data: i18 } = await supabase
+        const { data: i18, error: iErr } = await supabase
           .from("shorts_i18n")
           .select("*")
           .in("short_id", ids);
+        if (iErr) throw iErr;
         (i18 || []).forEach((row: any) => {
           const k = row.short_id as string;
           if (!iMap[k]) iMap[k] = [];
@@ -180,6 +184,7 @@ export default function ShortsManager() {
           <button
             onClick={() => { setEditingShort(null); setShowShortForm(true); }}
             className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg font-medium transition-colors flex items-center"
+            type="button"
           >
             <Plus className="w-5 h-5 mr-2" />
             New Short
@@ -340,6 +345,7 @@ export default function ShortsManager() {
                                     <button
                                       className="text-blue-600 hover:bg-blue-50 px-2 py-1 rounded text-xs"
                                       onClick={() => { setI18nShort(s); setEditingI18n(t); setShowI18nForm(true); }}
+                                      type="button"
                                     >
                                       Edit
                                     </button>
@@ -349,6 +355,7 @@ export default function ShortsManager() {
                                         await supabase.from("shorts_i18n").delete().eq("id", t.id);
                                         await loadAll();
                                       }}
+                                      type="button"
                                     >
                                       Delete
                                     </button>
@@ -595,7 +602,7 @@ function QuizForm({
       ref_id: shortId,
       question,
       options: type === "multiple_choice" ? options.filter(o => o.trim()) : null,
-      correct_index: type === "multiple_choice" ? (correctIdx ?? 0) : 0, // 0 = True, 1 = False for TF
+      correct_index: type === "multiple_choice" ? (correctIdx ?? 0) : 0, // 0 = True, 1 = False
       points_award: points,
       order_index: order,
     };
@@ -622,201 +629,4 @@ function QuizForm({
                     onChange={(e) => {
                       const t = e.target.value as "multiple_choice" | "true_false";
                       setType(t);
-                      if (t === "true_false") { setOptions(["true", "false"]); setCorrectIdx(0); }
-                      else { setOptions(["", "", "", ""]); setCorrectIdx(null); }
-                    }}>
-              <option value="multiple_choice">Multiple Choice</option>
-              <option value="true_false">True/False</option>
-            </select>
-          </Field>
-          <Field label="Points Award">
-            <input type="number" min={0} className="w-full px-3 py-2 border rounded-md"
-                   value={points} onChange={(e) => setPoints(Number(e.target.value || 0))} />
-          </Field>
-          <Field label="Order">
-            <input type="number" min={1} className="w-full px-3 py-2 border rounded-md"
-                   value={order} onChange={(e) => setOrder(Number(e.target.value || 1))} />
-          </Field>
-        </div>
-
-        {type === "multiple_choice" ? (
-          <div>
-            <div className="flex justify-between items-center mb-2">
-              <label className="block text-sm font-medium text-gray-700">Options</label>
-              <button type="button" className="text-purple-600 text-sm"
-                      onClick={() => setOptions([...options, ""])}>+ Add Option</button>
-            </div>
-            <div className="space-y-2">
-              {options.map((opt, i) => (
-                <div key={i} className="flex items-center gap-2">
-                  <span className="w-5 text-xs text-gray-500">{String.fromCharCode(65 + i)}.</span>
-                  <input className="flex-1 px-3 py-2 border rounded-md" value={opt}
-                         onChange={(e) => updateOption(i, e.target.value)} />
-                  {options.length > 2 && (
-                    <button type="button" className="text-red-600 p-1"
-                            onClick={() => setOptions(options.filter((_, idx) => idx !== i))}>
-                      <X className="w-4 h-4" />
-                    </button>
-                  )}
-                </div>
-              ))}
-            </div>
-
-            <Field label="Correct Answer" className="mt-3">
-              <select className="w-full px-3 py-2 border rounded-md" required
-                      value={String(correctIdx ?? "")}
-                      onChange={(e) => setCorrectIdx(Number(e.target.value))}>
-                <option value="">Select…</option>
-                {options.map((opt, i) =>
-                  opt.trim() ? <option key={i} value={i}>{String.fromCharCode(65 + i)}. {opt}</option> : null
-                )}
-              </select>
-            </Field>
-          </div>
-        ) : (
-          <Field label="Correct Answer">
-            <select className="w-full px-3 py-2 border rounded-md" value={String(correctIdx ?? 0)}
-                    onChange={(e) => setCorrectIdx(Number(e.target.value))}>
-              <option value="0">True</option>
-              <option value="1">False</option>
-            </select>
-          </Field>
-        )}
-
-        <div className="flex gap-3 pt-4">
-          <button type="submit" className="flex-1 bg-purple-600 hover:bg-purple-700 text-white py-2 px-4 rounded-lg font-medium">
-            {quiz ? "Update" : "Create"} Quiz
-          </button>
-          <button type="button" onClick={onClose} className="flex-1 border border-gray-300 text-gray-700 hover:bg-gray-50 py-2 px-4 rounded-lg font-medium">
-            Cancel
-          </button>
-        </div>
-      </form>
-    </Modal>
-  );
-}
-
-// Add/Edit translation for a short (incl. alt links)
-function I18nForm({
-  shortItem, record, onClose, onSaved,
-}: {
-  shortItem: Short;
-  record: ShortI18n | null;
-  onClose(): void;
-  onSaved(): void;
-}) {
-  const [locale, setLocale] = useState(record?.locale || "ko");
-  const [title, setTitle] = useState(record?.title_i18n || "");
-  const [blurb, setBlurb] = useState(record?.blurb_i18n || "");
-  const [videoAlt, setVideoAlt] = useState(record?.video_url_alt || "");
-  const [pdfAlt, setPdfAlt] = useState(record?.pdf_url_alt || "");
-
-  async function save(e: React.FormEvent) {
-    e.preventDefault();
-    const payload = {
-      short_id: shortItem.id,
-      locale,
-      title_i18n: title || null,
-      blurb_i18n: blurb || null,
-      video_url_alt: videoAlt || null,
-      pdf_url_alt: pdfAlt || null,
-    };
-    if (record?.id) {
-      await supabase.from("shorts_i18n").update(payload).eq("id", record.id);
-    } else {
-      await supabase.from("shorts_i18n").upsert([payload], { onConflict: "short_id,locale" });
-    }
-    await onSaved();
-  }
-
-  return (
-    <Modal title={`Translations for: ${shortItem.title}`} onClose={onClose} wide>
-      <form onSubmit={save} className="space-y-4">
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <Field label="Language">
-            <select className="w-full px-3 py-2 border rounded-md" value={locale} onChange={(e) => setLocale(e.target.value)}>
-              {LANGS.filter(l => l.code !== "en").map(l => (
-                <option key={l.code} value={l.code}>{l.flag} {l.name}</option>
-              ))}
-            </select>
-          </Field>
-          <Field label="Localized Title">
-            <input className="w-full px-3 py-2 border rounded-md" value={title} onChange={(e) => setTitle(e.target.value)} />
-          </Field>
-          <Field label="Alt Video URL">
-            <input className="w-full px-3 py-2 border rounded-md" value={videoAlt} onChange={(e) => setVideoAlt(e.target.value)} placeholder="https://youtu.be/..." />
-          </Field>
-        </div>
-
-        <Field label="Localized Blurb">
-          <textarea className="w-full px-3 py-2 border rounded-md" rows={3} value={blurb} onChange={(e) => setBlurb(e.target.value)} />
-        </Field>
-
-        <Field label="Alt PDF URL">
-          <input className="w-full px-3 py-2 border rounded-md" value={pdfAlt} onChange={(e) => setPdfAlt(e.target.value)} placeholder="https://example.com/guide.pdf" />
-        </Field>
-
-        <div className="flex gap-3 pt-4">
-          <button type="submit" className="flex-1 bg-teal-600 hover:bg-teal-700 text-white py-2 px-4 rounded-lg font-medium">
-            Save Translation
-          <button
-  type="button"
-  onClick={onClose}
-  className="flex-1 border border-gray-300 text-gray-700 hover:bg-gray-50 py-2 px-4 rounded-lg font-medium"
->
-  Cancel
-</button>
-</div>
-</form>
-</div>
-</div>
-);
-}; // closes the component that contains the form/modal
-
-/* ---------- Generic Modal + fields ---------- */
-function Modal({
-  title, onClose, children, wide,
-}: React.PropsWithChildren<{ title: string; onClose(): void; wide?: boolean }>) {
-  return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-      <div className={`bg-white rounded-lg p-6 w-full ${wide ? "max-w-4xl" : "max-w-lg"} max-h-[90vh] overflow-y-auto`}>
-        <div className="flex justify-between items-center mb-4">
-          <h3 className="text-lg font-semibold text-gray-900">{title}</h3>
-          <button onClick={onClose} className="text-gray-400 hover:text-gray-600"><X className="w-5 h-5" /></button>
-        </div>
-        {children}
-      </div>
-    </div>
-  );
-}
-
-function Field({ label, className, children }: React.PropsWithChildren<{ label: string; className?: string }>) {
-  return (
-    <div className={className}>
-      <label className="block text-sm font-medium text-gray-700 mb-1">{label}</label>
-      {children}
-    </div>
-  );
-}
-function CheckRow({ label, checked, onChange }: { label: string; checked: boolean; onChange(v: boolean): void }) {
-  return (
-    <label className="flex items-center gap-2 text-sm text-gray-700">
-      <input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} />
-      {label}
-    </label>
-  );
-}
-
-function EmptyState() {
-  return (
-    <div className="text-center py-12 bg-white rounded-lg shadow-lg">
-      <Video className="w-16 h-16 text-gray-400 mx-auto mb-4" />
-      <h3 className="text-xl font-semibold text-gray-900 mb-2">No shorts yet</h3>
-      <p className="text-gray-600 mb-4">Create your first short to get started</p>
-      <Link to="#" className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-3 rounded-lg font-medium transition-colors">
-        New Short
-      </Link>
-    </div>
-  );
-}
-export default ShortsManager;
+                      if (t === "true_false") { setOptions(["true", "false"]);
