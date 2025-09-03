@@ -12,6 +12,9 @@ import SkeletonRows from "@/components/SkeletonRows";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import CrownChip from "@/components/CrownChip";
+import CornerRibbon from "@/components/CornerRibbon";
+import UpgradeModal from "@/components/UpgradeModal";
 
 type ShortRow = {
   id: string;
@@ -38,10 +41,11 @@ export default function ShortsPage() {
   const [gates, setGates] = React.useState<Record<string, ShortGate>>({});
   const [userPoints, setUserPoints] = React.useState<number>(0);
 
+  const [upgradeOpen, setUpgradeOpen] = React.useState(false);
+
   React.useEffect(() => {
     (async () => {
       setLoading(true);
-      // list of published shorts
       const { data: shorts } = await supabase
         .from("shorts")
         .select("id, slug, title, preview, is_published")
@@ -49,7 +53,6 @@ export default function ShortsPage() {
         .order("created_at", { ascending: false });
       setRows((shorts || []) as ShortRow[]);
 
-      // gating meta (by slug)
       const { data: meta } = await supabase
         .from("content_shorts")
         .select("slug, required_points, required_tier, is_active");
@@ -62,7 +65,6 @@ export default function ShortsPage() {
       }));
       setGates(map);
 
-      // points
       let pts = Number(totalPoints ?? 0);
       if (!pts && user?.id) {
         const { data: pt } = await supabase
@@ -79,7 +81,6 @@ export default function ShortsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // compute if anything is locked & how many points short for the easiest lock
   const lockDeltas = React.useMemo(() => {
     const deltas: number[] = [];
     rows.forEach((r) => {
@@ -101,34 +102,20 @@ export default function ShortsPage() {
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-semibold">Short Videos</h1>
         <div className="text-sm text-gray-600">
-          {user ? (
-            <span className="tabular-nums">{userPoints}</span>
-          ) : (
-            <Link className="underline" to="/signin">Sign in</Link>
-          )}{" "}
-          points
+          {user ? <span className="tabular-nums">{userPoints}</span> : <Link className="underline" to="/signin">Sign in</Link>} points
         </div>
       </div>
 
-      {/* Sticky upsell when there are locked items */}
       {lockDeltas.length > 0 && (
         <div className="sticky top-2 z-[1]">
           <div className="rounded-lg border bg-white px-4 py-3 flex items-center justify-between">
             <div className="text-sm">
               <span className="font-medium">Some videos are locked.</span>{" "}
-              {user ? (
-                <>Earn <span className="tabular-nums">{lockDeltas[0]}</span> more points to unlock the easiest one.</>
-              ) : (
-                <>Sign in to start earning points.</>
-              )}
+              {user ? <>Earn <span className="tabular-nums">{lockDeltas[0]}</span> more points to unlock the easiest one.</> : <>Sign in to start earning points.</>}
             </div>
             <div className="flex gap-2">
-              <Button variant="outline" asChild>
-                <a href="/daily-quiz">Earn points</a>
-              </Button>
-              <Button asChild>
-                <a href="/pricing">Upgrade</a>
-              </Button>
+              <Button variant="outline" asChild><a href="/daily-quiz">Earn points</a></Button>
+              <Button onClick={() => setUpgradeOpen(true)}>Upgrade</Button>
             </div>
           </div>
         </div>
@@ -146,13 +133,21 @@ export default function ShortsPage() {
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           {rows.map((s) => {
-            const g = gates[s.slug] || { required_points: 0, required_tier: "free", is_active: true };
+            const g = gates[s.slug] || { required_points: 0, required_tier: "free" as Tier, is_active: true };
+            const premiumTier = g.required_tier !== "free" ? (g.required_tier as "pro" | "vip") : null;
+
             return (
-              <Card key={s.id}>
+              <Card key={s.id} className="relative overflow-hidden">
+                {/* Corner ribbon for tier-locked items */}
+                {premiumTier && <CornerRibbon label={premiumTier.toUpperCase()} />}
+
                 <CardContent className="p-4 space-y-3">
                   <div className="flex items-start justify-between gap-3">
                     <div>
-                      <div className="font-medium">{s.title}</div>
+                      <div className="font-medium flex items-center gap-2">
+                        {s.title}
+                        {premiumTier && <CrownChip tier={premiumTier} />}
+                      </div>
                       <div className="mt-1">
                         {s.preview && <Badge variant="outline">Preview</Badge>}
                       </div>
@@ -164,12 +159,12 @@ export default function ShortsPage() {
                   </div>
 
                   <div className="flex gap-2">
-                    <Button asChild>
-                      <Link to={`/shorts/${s.slug}`}>Open</Link>
-                    </Button>
-                    <Button asChild variant="outline">
-                      <a href="/daily-quiz">Earn points</a>
-                    </Button>
+                    <Button asChild><Link to={`/shorts/${s.slug}`}>Open</Link></Button>
+                    {premiumTier ? (
+                      <Button variant="outline" onClick={() => setUpgradeOpen(true)}>Upgrade</Button>
+                    ) : (
+                      <Button variant="outline" asChild><a href="/daily-quiz">Earn points</a></Button>
+                    )}
                   </div>
                 </CardContent>
               </Card>
@@ -177,6 +172,8 @@ export default function ShortsPage() {
           })}
         </div>
       )}
+
+      <UpgradeModal open={upgradeOpen} onClose={() => setUpgradeOpen(false)} />
     </div>
   );
 }
