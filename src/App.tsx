@@ -1,5 +1,5 @@
 // src/App.tsx
-import React, { Suspense, lazy } from 'react';
+import React, { Suspense, lazy, useEffect, useState } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 
 // ⬇️ lazy import for Swirdle Leaderboard page
@@ -54,12 +54,15 @@ import { supabase } from '@/lib/supabase';
 // ✅ Auth callback + optional URL debugger
 import AuthCallbackPage from '@/pages/AuthCallbackPage';
 
+// ✅ NEW: Onboarding page (created in Step 5)
+import Onboarding from '@/pages/Onboarding';
+
 const FN_SUBMIT = '/.netlify/functions/trial-quiz-attempt';
 const PENDING_KEY = 'md_trial_pending';
 
 /* ---------- Auto resume pending trial-quiz posts on Account ---------- */
 function AutoResumeOnAccount() {
-  React.useEffect(() => {
+  useEffect(() => {
     (async () => {
       try {
         const { data } = await supabase.auth.getUser();
@@ -91,7 +94,7 @@ function AutoResumeOnAccount() {
   return null;
 }
 
-/* ---------- Route guards (simplified) ---------- */
+/* ---------- Route guards ---------- */
 function RequireAuth({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuth();
   const location = useLocation();
@@ -99,6 +102,57 @@ function RequireAuth({ children }: { children: React.ReactNode }) {
   if (loading) return <div className="p-8">Loading...</div>;
   if (!user) return <Navigate to="/signin" replace state={{ from: location }} />;
   return <>{children}</>;
+}
+
+/** ✅ NEW: Onboarding guard
+ * Sends signed-in users to /onboarding until they have an alias AND terms_accepted_at.
+ */
+function RequireOnboarded({ children }: { children: React.ReactNode }) {
+  const { user, loading } = useAuth();
+  const location = useLocation();
+  const [ok, setOk] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    (async () => {
+      if (loading) { setOk(null); return; }
+      if (!user) { setOk(false); return; }
+
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('alias, terms_accepted_at')
+        .eq('id', user.id)
+        .single();
+
+      if (!active) return;
+
+      if (error) {
+        console.error('profiles check failed:', error);
+        setOk(false);
+        return;
+      }
+
+      const needsOnboarding = !data?.alias || !data?.terms_accepted_at;
+      if (needsOnboarding && location.pathname !== '/onboarding') {
+        setOk(false);
+        // imperative redirect avoids rendering children flash
+        window.location.replace('/onboarding');
+      } else {
+        setOk(true);
+      }
+    })();
+
+    return () => { active = false; };
+  }, [user, loading, location.pathname]);
+
+  if (ok === null) {
+    return (
+      <div className="p-6">
+        <div className="h-8 w-8 animate-spin rounded-full border-2 border-gray-300 border-t-transparent" />
+      </div>
+    );
+  }
+  return <>{ok ? children : null}</>;
 }
 
 function RequireAdmin({ children }: { children: React.ReactNode }) {
@@ -139,7 +193,7 @@ class AppErrorBoundary extends React.Component<{ children: React.ReactNode }, { 
 }
 
 function App() {
-  React.useEffect(() => {
+  useEffect(() => {
     window.addEventListener('error', (e) =>
       console.error('[window.error]', (e as any).error || (e as any).message)
     );
@@ -166,10 +220,13 @@ function App() {
                     {/* Optional no-op so wildcard doesn't catch it inside Layout */}
                     <Route path="/auth/callback" element={<></>} />
 
-                    {/* Home */}
+                    {/* ✅ NEW: Onboarding (public but typically reached when signed in) */}
+                    <Route path="/onboarding" element={<Onboarding />} />
+
+                    {/* Home (public) */}
                     <Route path="/" element={<Home />} />
 
-                    {/* Core info & auth */}
+                    {/* Core info & auth (public) */}
                     <Route path="/about" element={<About />} />
                     <Route path="/signin" element={<SignIn />} />
                     <Route path="/sign-in" element={<Navigate to="/signin" replace />} />
@@ -179,37 +236,100 @@ function App() {
                     {/* Debug (public) */}
                     <Route path="/debug/auth" element={<DebugAuth />} />
 
-                    {/* Blog */}
+                    {/* Blog (public) */}
                     <Route path="/blog" element={<BlogIndex />} />
                     <Route path="/blog/how-to-become-winemaker" element={<HowToBecomeWinemaker />} />
                     <Route path="/blog/wset-level-2-questions" element={<WSETLevel2Questions />} />
                     <Route path="/blog/wine-tasting-guide" element={<WineTastingGuide />} />
                     <Route path="/blog/wine-vocabulary-quiz" element={<WineVocabularyQuiz />} />
 
-                    {/* Games */}
-                    <Route path="/games/guess-what" element={<GuessWhatPage />} />
-                    <Route path="/swirdle" element={<Swirdle />} />
-                    {/* ⬇️ NEW: Swirdle Leaderboard */}
+                    {/* Games (some public, some gated) */}
+                    <Route
+                      path="/games/guess-what"
+                      element={
+                        <RequireAuth>
+                          <RequireOnboarded>
+                            <GuessWhatPage />
+                          </RequireOnboarded>
+                        </RequireAuth>
+                      }
+                    />
+                    <Route
+                      path="/swirdle"
+                      element={
+                        <RequireAuth>
+                          <RequireOnboarded>
+                            <Swirdle />
+                          </RequireOnboarded>
+                        </RequireAuth>
+                      }
+                    />
+                    {/* ⬇️ NEW: Swirdle Leaderboard (public view is fine) */}
                     <Route path="/swirdle/leaderboard" element={<SwirdleLeaderboardPage />} />
                     {/* Convenience redirect */}
                     <Route path="/leaderboard" element={<Navigate to="/swirdle/leaderboard" replace />} />
-                    <Route path="/play" element={<GamePage />} />
-                    <Route path="/game/:slug" element={<GamePage />} />
+                    <Route
+                      path="/play"
+                      element={
+                        <RequireAuth>
+                          <RequireOnboarded>
+                            <GamePage />
+                          </RequireOnboarded>
+                        </RequireAuth>
+                      }
+                    />
+                    <Route
+                      path="/game/:slug"
+                      element={
+                        <RequireAuth>
+                          <RequireOnboarded>
+                            <GamePage />
+                          </RequireOnboarded>
+                        </RequireAuth>
+                      }
+                    />
 
                     {/* Badges */}
                     <Route path="/badges" element={<BadgesPage />} />
-                    <Route path="/account/badges" element={<AccountBadges />} />
+                    <Route
+                      path="/account/badges"
+                      element={
+                        <RequireAuth>
+                          <RequireOnboarded>
+                            <AccountBadges />
+                          </RequireOnboarded>
+                        </RequireAuth>
+                      }
+                    />
 
-                    {/* Shorts */}
+                    {/* Shorts (public) */}
                     <Route path="/shorts" element={<ShortsPage />} />
                     <Route path="/shorts/:slug" element={<ShortDetailPage />} />
 
-                    {/* Daily Quiz */}
-                    <Route path="/daily-quiz" element={<DailyQuizPage />} />
+                    {/* Daily Quiz (gated) */}
+                    <Route
+                      path="/daily-quiz"
+                      element={
+                        <RequireAuth>
+                          <RequireOnboarded>
+                            <DailyQuizPage />
+                          </RequireOnboarded>
+                        </RequireAuth>
+                      }
+                    />
                     <Route path="/trial-quiz" element={<Navigate to="/daily-quiz" replace />} />
 
-                    {/* Vocab */}
-                    <Route path="/vocab" element={<VinoVocabPage />} />
+                    {/* Vocab (gated) */}
+                    <Route
+                      path="/vocab"
+                      element={
+                        <RequireAuth>
+                          <RequireOnboarded>
+                            <VinoVocabPage />
+                          </RequireOnboarded>
+                        </RequireAuth>
+                      }
+                    />
 
                     {/* Admin (guarded) */}
                     <Route
@@ -245,16 +365,36 @@ function App() {
                       }
                     />
 
-                    {/* Options */}
-                    <Route path="/wine-options/solo" element={<SoloWineOptions />} />
-                    <Route path="/wine-options/multiplayer" element={<WineOptionsGame />} />
+                    {/* Wine Options (gated) */}
+                    <Route
+                      path="/wine-options/solo"
+                      element={
+                        <RequireAuth>
+                          <RequireOnboarded>
+                            <SoloWineOptions />
+                          </RequireOnboarded>
+                        </RequireAuth>
+                      }
+                    />
+                    <Route
+                      path="/wine-options/multiplayer"
+                      element={
+                        <RequireAuth>
+                          <RequireOnboarded>
+                            <WineOptionsGame />
+                          </RequireOnboarded>
+                        </RequireAuth>
+                      }
+                    />
 
                     {/* Dashboard / Account */}
                     <Route
                       path="/dashboard"
                       element={
                         <RequireAuth>
-                          <Dashboard />
+                          <RequireOnboarded>
+                            <Dashboard />
+                          </RequireOnboarded>
                         </RequireAuth>
                       }
                     />
@@ -269,10 +409,10 @@ function App() {
                       }
                     />
 
-                    {/* Pricing */}
+                    {/* Pricing (public) */}
                     <Route path="/pricing" element={<PricingPage />} />
 
-                    {/* Legacy demo */}
+                    {/* Legacy demo (public) */}
                     <Route path="/demo" element={<BrandedDemo />} />
 
                     {/* 404 */}
