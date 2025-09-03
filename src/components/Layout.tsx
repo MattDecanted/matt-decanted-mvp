@@ -1,3 +1,4 @@
+// src/components/Layout.tsx
 import * as React from "react";
 import { NavLink, Link, useLocation } from "react-router-dom";
 import { Globe, Trophy, Flame, Menu, X } from "lucide-react";
@@ -102,14 +103,14 @@ export default function Layout({ children }: { children: React.ReactNode }) {
               <NavLink to="/blog" className={linkClass}>
                 Blog
               </NavLink>
+              <NavLink to="/shorts" className={linkClass}>
+                Shorts
+              </NavLink>
+              <NavLink to="/modules" className={linkClass}>
+                Modules
+              </NavLink>
               <NavLink to="/play" className={linkClass}>
                 Challenges
-              </NavLink>
-              <NavLink to="/courses" className={linkClass}>
-                Courses
-              </NavLink>
-              <NavLink to="/community" className={linkClass}>
-                Community
               </NavLink>
               <NavLink to="/about" className={linkClass}>
                 About
@@ -191,6 +192,81 @@ export default function Layout({ children }: { children: React.ReactNode }) {
             </button>
           </div>
         </div>
+
+        {/* Mobile menu panel */}
+        {open && (
+          <div className="md:hidden border-t border-gray-200 bg-white">
+            <div className="px-4 py-3 flex flex-col gap-1">
+              <NavLink to="/blog" className={linkClass} onClick={() => setOpen(false)}>
+                Blog
+              </NavLink>
+              <NavLink to="/shorts" className={linkClass} onClick={() => setOpen(false)}>
+                Shorts
+              </NavLink>
+              <NavLink to="/modules" className={linkClass} onClick={() => setOpen(false)}>
+                Modules
+              </NavLink>
+              <NavLink to="/play" className={linkClass} onClick={() => setOpen(false)}>
+                Challenges
+              </NavLink>
+              <NavLink to="/about" className={linkClass} onClick={() => setOpen(false)}>
+                About
+              </NavLink>
+              <NavLink to="/dashboard" className={linkClass} onClick={() => setOpen(false)}>
+                Dashboard
+              </NavLink>
+
+              <div className="my-2 h-px bg-gray-200" />
+
+              {/* Points pill (mobile) */}
+              <Link
+                to={user ? "/account" : "/signin"}
+                className="inline-flex items-center gap-2 rounded-md border border-gray-200 bg-white px-2.5 py-2 text-xs text-gray-800"
+                onClick={() => setOpen(false)}
+              >
+                <Trophy className="w-3.5 h-3.5 text-amber-500" />
+                <span className="tabular-nums">
+                  {pointsLoading ? "…" : displayPoints}
+                </span>
+                <span className="mx-1 h-3 w-px bg-gray-200" />
+                <Flame className="w-3.5 h-3.5 text-orange-500" />
+                <span className="tabular-nums">0</span>
+              </Link>
+
+              {/* Auth actions (mobile) */}
+              <div className="mt-2 flex items-center gap-2">
+                {user ? (
+                  <button
+                    onClick={() => {
+                      setOpen(false);
+                      signOut();
+                    }}
+                    className="flex-1 inline-flex items-center justify-center rounded-md border border-green-600 bg-white px-3 py-2 text-xs font-semibold text-green-700 hover:bg-green-50"
+                  >
+                    Sign out
+                  </button>
+                ) : (
+                  <>
+                    <Link
+                      to="/signin"
+                      onClick={() => setOpen(false)}
+                      className="flex-1 inline-flex items-center justify-center rounded-md border border-gray-300 bg-white px-3 py-2 text-xs font-semibold text-gray-800 hover:bg-gray-50"
+                    >
+                      Sign in
+                    </Link>
+                    <Link
+                      to="/pricing"
+                      onClick={() => setOpen(false)}
+                      className="flex-1 inline-flex items-center justify-center rounded-md bg-brand-orange px-3 py-2 text-xs font-semibold text-white shadow hover:opacity-95"
+                    >
+                      Sign Up
+                    </Link>
+                  </>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* 🍊 Orange underline BELOW the header nav (darker + soft vertical edges) */}
         <div
