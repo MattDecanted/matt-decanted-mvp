@@ -18,6 +18,38 @@ const ALIAS_MIN = 3;
 const ALIAS_MAX = 20;
 const aliasPattern = /^[a-zA-Z0-9_]+$/;
 
+// Countries we care about now (can add later)
+const COUNTRIES = [
+  { code: "AU", name: "Australia" },
+  { code: "US", name: "United States" },
+  { code: "CA", name: "Canada" },
+  { code: "NZ", name: "New Zealand" },
+  { code: "GB", name: "United Kingdom" },
+  { code: "KR", name: "South Korea" },
+  { code: "CN", name: "China" },
+];
+
+const AU_STATES = [
+  "ACT","NSW","NT","QLD","SA","TAS","VIC","WA"
+];
+
+const US_STATES = [
+  "AL","AK","AZ","AR","CA","CO","CT","DE","FL","GA","HI","ID","IL","IN","IA","KS","KY","LA",
+  "ME","MD","MA","MI","MN","MS","MO","MT","NE","NV","NH","NJ","NM","NY","NC","ND",
+  "OH","OK","OR","PA","RI","SC","SD","TN","TX","UT","VT","VA","WA","WV","WI","WY","DC"
+];
+
+function detectCountryCode(): string | null {
+  try {
+    // Lightweight guess based on browser locale
+    const loc = Intl.DateTimeFormat().resolvedOptions().locale || "";
+    const m = loc.match(/-([A-Z]{2})$/i);
+    return m ? m[1].toUpperCase() : null;
+  } catch {
+    return null;
+  }
+}
+
 export default function Onboarding() {
   const { user } = useAuth();
   const [profile, setProfile] = useState<Profile | null>(null);
@@ -34,11 +66,14 @@ export default function Onboarding() {
   const [msg, setMsg] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
 
-  // Load current profile
+  const isAU = country === "Australia";
+  const isUS = country === "United States";
+
   useEffect(() => {
     let active = true;
     (async () => {
       if (!user) { setLoading(false); return; }
+
       const { data, error } = await supabase
         .from("profiles")
         .select("*")
@@ -46,12 +81,19 @@ export default function Onboarding() {
         .single();
 
       if (!active) return;
+
       if (error) setErr(error.message);
       if (data) {
         const p = data as Profile;
         setProfile(p);
         setAlias(p.alias ?? "");
-        setCountry(p.country ?? "");
+
+        // Country: prefer existing; else detect; else default AU
+        const detected = detectCountryCode();
+        const detectedName =
+          detected && COUNTRIES.find(c => c.code === detected)?.name;
+
+        setCountry(p.country ?? detectedName ?? "Australia");
         setStateRegion(p.state ?? "");
         setAccepted(Boolean(p.terms_accepted_at));
         setMarketing(Boolean(p.marketing_opt_in));
@@ -68,6 +110,8 @@ export default function Onboarding() {
     if (!aliasPattern.test(alias)) return "Use letters, numbers, or underscore only.";
     return null;
   }, [alias]);
+
+  const canSave = !aliasIssues && accepted && !saving;
 
   async function checkAlias() {
     setAliasOK(null);
@@ -92,7 +136,7 @@ export default function Onboarding() {
       if (aliasIssues) throw new Error(aliasIssues);
       if (!accepted) throw new Error("You must accept the Terms & Conditions.");
 
-      // If user changed alias, ensure it's still free; DB index is final guard.
+      // Only re-check if alias changed
       if (!profile?.alias || profile.alias.toLowerCase() !== alias.toLowerCase()) {
         const { data, error } = await supabase.rpc("check_alias_available", { p_alias: alias });
         if (error) throw error;
@@ -103,8 +147,8 @@ export default function Onboarding() {
         .from("profiles")
         .update({
           alias: alias.trim(),
-          country: country.trim() || null,
-          state: stateRegion.trim() || null,
+          country: country || null,
+          state: stateRegion || null,
           marketing_opt_in: marketing,
           terms_accepted_at: new Date().toISOString(),
         })
@@ -136,6 +180,7 @@ export default function Onboarding() {
       {err && <div className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">{err}</div>}
       {msg && <div className="rounded-md border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-700">{msg}</div>}
 
+      {/* Alias */}
       <div className="space-y-2">
         <label className="block text-sm font-medium">Alias (public)</label>
         <div className="flex gap-2">
@@ -158,27 +203,51 @@ export default function Onboarding() {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-        <div>
-          <label className="block text-sm font-medium">Country</label>
+      {/* Country */}
+      <div className="space-y-2">
+        <label className="block text-sm font-medium">Country</label>
+        <select
+          className="w-full rounded-md border px-3 py-2 bg-white"
+          value={country}
+          onChange={(e) => {
+            setCountry(e.target.value);
+            setStateRegion(""); // reset state on country change
+          }}
+        >
+          {COUNTRIES.map(c => (
+            <option key={c.code} value={c.name}>{c.name}</option>
+          ))}
+          {/* Allow a manual 'Other' choice */}
+          <option value="">Other / Not listed</option>
+        </select>
+      </div>
+
+      {/* State / Region */}
+      <div className="space-y-2">
+        <label className="block text-sm font-medium">State / Region</label>
+        {(isAU || isUS) ? (
+          <select
+            className="w-full rounded-md border px-3 py-2 bg-white"
+            value={stateRegion}
+            onChange={(e) => setStateRegion(e.target.value)}
+          >
+            <option value="">{isAU ? "Select a state/territory" : "Select a state"}</option>
+            {(isAU ? AU_STATES : US_STATES).map(s => (
+              <option key={s} value={s}>{s}</option>
+            ))}
+          </select>
+        ) : (
           <input
             className="w-full rounded-md border px-3 py-2"
-            placeholder="Australia"
-            value={country}
-            onChange={(e) => setCountry(e.target.value)}
-          />
-        </div>
-        <div>
-          <label className="block text-sm font-medium">State / Region</label>
-          <input
-            className="w-full rounded-md border px-3 py-2"
-            placeholder="SA"
+            placeholder="e.g. SA, Ontario, Seoul…"
             value={stateRegion}
             onChange={(e) => setStateRegion(e.target.value)}
           />
-        </div>
+        )}
+        <div className="text-xs text-gray-500">Used for regional stats and localised challenges.</div>
       </div>
 
+      {/* Marketing opt-in */}
       <div className="flex items-center gap-2">
         <input
           id="marketing"
@@ -192,6 +261,7 @@ export default function Onboarding() {
         </label>
       </div>
 
+      {/* Terms */}
       <div className="flex items-start gap-2">
         <input
           id="tcs"
@@ -205,12 +275,14 @@ export default function Onboarding() {
         </label>
       </div>
 
+      {/* Actions */}
       <div className="flex gap-3">
         <button
           type="button"
-          disabled={saving}
+          disabled={!canSave}
           onClick={save}
           className="rounded-md bg-black text-white px-4 py-2 disabled:opacity-50"
+          title={!accepted ? "Please accept the Terms first" : aliasIssues ? aliasIssues : "Save your profile"}
         >
           {saving ? "Saving…" : "Save & Continue"}
         </button>
