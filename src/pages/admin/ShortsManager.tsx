@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import {
   BookOpen, Plus, Edit, Trash2, Eye, HelpCircle,
-  CheckCircle, X, Video, FileText, Globe, Lock
+  CheckCircle, X, FileText, Globe, Lock
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 
@@ -625,8 +625,292 @@ function QuizForm({
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <Field label="Type">
-            <select className="w-full px-3 py-2 border rounded-md" value={type}
-                    onChange={(e) => {
-                      const t = e.target.value as "multiple_choice" | "true_false";
-                      setType(t);
-                      if (t === "true_false") { setOptions(["true", "false"]);
+            <select
+              className="w-full px-3 py-2 border rounded-md"
+              value={type}
+              onChange={(e) => {
+                const t = e.target.value as "multiple_choice" | "true_false";
+                setType(t);
+                if (t === "true_false") {
+                  setOptions(["true", "false"]);
+                  setCorrectIdx(0);
+                } else {
+                  setOptions((prev) => {
+                    const next = (prev?.length ? prev : ["", "", "", ""]).slice(0, 4);
+                    while (next.length < 4) next.push("");
+                    return next;
+                  });
+                  setCorrectIdx(0);
+                }
+              }}
+            >
+              <option value="multiple_choice">Multiple choice</option>
+              <option value="true_false">True / False</option>
+            </select>
+          </Field>
+
+          <Field label="Points">
+            <input type="number" min={0} className="w-full px-3 py-2 border rounded-md"
+                   value={points} onChange={(e) => setPoints(Number(e.target.value || 0))} />
+          </Field>
+
+          <Field label="Order">
+            <input type="number" min={1} className="w-full px-3 py-2 border rounded-md"
+                   value={order} onChange={(e) => setOrder(Number(e.target.value || 1))} />
+          </Field>
+        </div>
+
+        {type === "multiple_choice" ? (
+          <div className="space-y-2">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              {options.map((opt, i) => (
+                <div key={i} className="flex items-center gap-2">
+                  <input
+                    className="flex-1 px-3 py-2 border rounded-md"
+                    placeholder={`Option ${i + 1}`}
+                    value={opt}
+                    onChange={(e) => updateOption(i, e.target.value)}
+                  />
+                  <label className="flex items-center gap-1 text-sm">
+                    <input
+                      type="radio"
+                      name="correct"
+                      checked={correctIdx === i}
+                      onChange={() => setCorrectIdx(i)}
+                    />
+                    Correct
+                  </label>
+                </div>
+              ))}
+            </div>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                className="px-3 py-1 border rounded"
+                onClick={() => setOptions((prev) => ([...prev, ""]))}
+              >
+                + Add option
+              </button>
+              <button
+                type="button"
+                className="px-3 py-1 border rounded"
+                onClick={() => setOptions((prev) => prev.slice(0, Math.max(1, prev.length - 1)))}
+              >
+                − Remove last
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div className="space-y-2">
+            <label className="flex items-center gap-2 text-sm">
+              <input
+                type="radio"
+                name="tf"
+                checked={correctIdx === 0}
+                onChange={() => setCorrectIdx(0)}
+              />
+              True
+            </label>
+            <label className="flex items-center gap-2 text-sm">
+              <input
+                type="radio"
+                name="tf"
+                checked={correctIdx === 1}
+                onChange={() => setCorrectIdx(1)}
+              />
+              False
+            </label>
+          </div>
+        )}
+
+        <div className="flex gap-3 pt-4">
+          <button type="submit" className="flex-1 bg-blue-600 hover:bg-blue-700 text-white py-2 px-4 rounded-lg font-medium">
+            <CheckCircle className="w-4 h-4 inline mr-2" />
+            {quiz ? "Update Quiz" : "Create Quiz"}
+          </button>
+          <button type="button" onClick={onClose} className="flex-1 border border-gray-300 text-gray-700 hover:bg-gray-50 py-2 px-4 rounded-lg font-medium">
+            Cancel
+          </button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+/* ---------- Translations form ---------- */
+function I18nForm({
+  shortItem, record, onClose, onSaved,
+}: {
+  shortItem: Short;
+  record: ShortI18n | null;
+  onClose(): void;
+  onSaved(): void;
+}) {
+  const [form, setForm] = useState({
+    locale: record?.locale ?? "en",
+    title_i18n: record?.title_i18n ?? "",
+    blurb_i18n: record?.blurb_i18n ?? "",
+    video_url_alt: record?.video_url_alt ?? "",
+    pdf_url_alt: record?.pdf_url_alt ?? "",
+  });
+
+  async function save(e: React.FormEvent) {
+    e.preventDefault();
+    if (record?.id) {
+      await supabase.from("shorts_i18n").update({
+        locale: form.locale,
+        title_i18n: form.title_i18n || null,
+        blurb_i18n: form.blurb_i18n || null,
+        video_url_alt: form.video_url_alt || null,
+        pdf_url_alt: form.pdf_url_alt || null,
+      }).eq("id", record.id);
+    } else {
+      await supabase.from("shorts_i18n").insert([{
+        short_id: shortItem.id,
+        locale: form.locale,
+        title_i18n: form.title_i18n || null,
+        blurb_i18n: form.blurb_i18n || null,
+        video_url_alt: form.video_url_alt || null,
+        pdf_url_alt: form.pdf_url_alt || null,
+      }]);
+    }
+    await onSaved();
+  }
+
+  return (
+    <Modal title={`${record ? "Edit" : "Add"} Translation — ${shortItem.title}`} onClose={onClose}>
+      <form onSubmit={save} className="space-y-4">
+        <Field label="Language">
+          <select
+            className="w-full px-3 py-2 border rounded-md"
+            value={form.locale}
+            onChange={(e) => setForm({ ...form, locale: e.target.value })}
+          >
+            {LANGS.map((l) => (
+              <option key={l.code} value={l.code}>
+                {l.flag} {l.name} ({l.code})
+              </option>
+            ))}
+          </select>
+        </Field>
+
+        <Field label="Translated Title">
+          <input
+            className="w-full px-3 py-2 border rounded-md"
+            value={form.title_i18n}
+            onChange={(e) => setForm({ ...form, title_i18n: e.target.value })}
+          />
+        </Field>
+
+        <Field label="Translated Blurb">
+          <textarea
+            rows={3}
+            className="w-full px-3 py-2 border rounded-md"
+            value={form.blurb_i18n}
+            onChange={(e) => setForm({ ...form, blurb_i18n: e.target.value })}
+          />
+        </Field>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <Field label="Alt Video URL">
+            <input
+              className="w-full px-3 py-2 border rounded-md"
+              value={form.video_url_alt}
+              onChange={(e) => setForm({ ...form, video_url_alt: e.target.value })}
+            />
+          </Field>
+          <Field label="Alt PDF URL">
+            <input
+              className="w-full px-3 py-2 border rounded-md"
+              value={form.pdf_url_alt}
+              onChange={(e) => setForm({ ...form, pdf_url_alt: e.target.value })}
+            />
+          </Field>
+        </div>
+
+        <div className="flex gap-3 pt-4">
+          <button type="submit" className="flex-1 bg-blue-600 hover:bg-blue-700 text-white py-2 px-4 rounded-lg font-medium">
+            <CheckCircle className="w-4 h-4 inline mr-2" />
+            {record ? "Update Translation" : "Create Translation"}
+          </button>
+          <button type="button" onClick={onClose} className="flex-1 border border-gray-300 text-gray-700 hover:bg-gray-50 py-2 px-4 rounded-lg font-medium">
+            Cancel
+          </button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+/* ---------- Generic UI bits ---------- */
+function Modal({
+  title, children, onClose, wide,
+}: {
+  title: string;
+  children: React.ReactNode;
+  onClose(): void;
+  wide?: boolean;
+}) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center">
+      <div className="absolute inset-0 bg-black/40" onClick={onClose} />
+      <div className={`relative bg-white rounded-xl shadow-xl p-6 mx-4 w-full ${wide ? "max-w-3xl" : "max-w-xl"}`}>
+        <div className="flex items-start justify-between mb-4">
+          <h3 className="text-lg font-semibold">{title}</h3>
+          <button onClick={onClose} className="p-1 rounded hover:bg-gray-100" type="button" aria-label="Close">
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+function Field({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <label className="block">
+      <span className="block text-sm font-medium text-gray-700 mb-1">{label}</span>
+      {children}
+    </label>
+  );
+}
+
+function CheckRow({
+  label, checked, onChange,
+}: {
+  label: string;
+  checked: boolean;
+  onChange(v: boolean): void;
+}) {
+  return (
+    <label className="flex items-center gap-2 text-sm">
+      <input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} />
+      {label}
+    </label>
+  );
+}
+
+function EmptyState() {
+  return (
+    <div className="bg-white rounded-lg shadow p-10 text-center">
+      <div className="mx-auto mb-3 w-12 h-12 rounded-full bg-blue-50 flex items-center justify-center">
+        <BookOpen className="w-6 h-6 text-blue-600" />
+      </div>
+      <h3 className="text-lg font-semibold">No shorts yet</h3>
+      <p className="text-sm text-gray-600 mt-1">
+        Click <span className="font-medium">“New Short”</span> to create your first micro-lesson.
+      </p>
+      <div className="mt-4">
+        <Link
+          to="#"
+          onClick={(e) => { e.preventDefault(); /* noop – button exists in header */ }}
+          className="inline-flex items-center bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg"
+        >
+          <Plus className="w-4 h-4 mr-2" />
+          New Short
+        </Link>
+      </div>
+    </div>
+  );
+}
