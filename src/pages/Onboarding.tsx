@@ -1,7 +1,9 @@
 // src/pages/Onboarding.tsx
 import React, { useEffect, useMemo, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { supabase } from "@/lib/supabase";
 import { useAuth } from "@/context/AuthContext";
+import { toast } from "sonner";
 
 type Profile = {
   id: string;
@@ -10,7 +12,6 @@ type Profile = {
   country: string | null;
   state: string | null;
   terms_accepted_at: string | null;
-  terms_version?: string | null; // ⬅️ NEW (optional TS field)
   marketing_opt_in: boolean | null;
   stripe_customer_id: string | null;
 };
@@ -19,7 +20,6 @@ const ALIAS_MIN = 3;
 const ALIAS_MAX = 20;
 const aliasPattern = /^[a-zA-Z0-9_]+$/;
 
-// Countries we care about now (can add later)
 const COUNTRIES = [
   { code: "AU", name: "Australia" },
   { code: "US", name: "United States" },
@@ -66,10 +66,9 @@ async function createStripeCustomerIfNeeded(alias: string) {
 /** ---- suggest alternates when a collision happens ---- */
 function suggestAliases(base: string): string[] {
   const clean = (base || "").replace(/[^A-Za-z0-9_]/g, "").slice(0, ALIAS_MAX);
-  const rnd = () => Math.floor(10 + Math.random() * 89); // 2 digits
-  const rnd3 = () => Math.floor(100 + Math.random() * 900); // 3 digits
-  const baseShort =
-    clean.length > ALIAS_MAX - 3 ? clean.slice(0, ALIAS_MAX - 3) : clean;
+  const rnd = () => Math.floor(10 + Math.random() * 89);
+  const rnd3 = () => Math.floor(100 + Math.random() * 900);
+  const baseShort = clean.length > ALIAS_MAX - 3 ? clean.slice(0, ALIAS_MAX - 3) : clean;
 
   const options = new Set<string>();
   if (clean) {
@@ -80,10 +79,8 @@ function suggestAliases(base: string): string[] {
   return Array.from(options).slice(0, 3);
 }
 
-// ⬅️ NEW: bump this whenever /terms content changes
-const TERMS_VERSION = "2025-09-03";
-
 export default function Onboarding() {
+  const navigate = useNavigate();
   const { user } = useAuth();
   const [profile, setProfile] = useState<Profile | null>(null);
 
@@ -99,7 +96,12 @@ export default function Onboarding() {
   const [msg, setMsg] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
 
-  // hold suggestions to render buttons on collision
+  // email verify nudge
+  const [emailAddr, setEmailAddr] = useState<string>("");
+  const [emailVerified, setEmailVerified] = useState<boolean>(true);
+  const [resending, setResending] = useState(false);
+
+  // alias suggestions on collision
   const [aliasSuggestions, setAliasSuggestions] = useState<string[]>([]);
 
   const isAU = country === "Australia";
@@ -109,6 +111,15 @@ export default function Onboarding() {
     let active = true;
     (async () => {
       if (!user) { setLoading(false); return; }
+
+      // auth user info (email + verification)
+      const { data: uinfo } = await supabase.auth.getUser();
+      const u = uinfo?.user;
+      setEmailAddr(u?.email || "");
+      // supabase-js v2 exposes email_confirmed_at
+      setEmailVerified(Boolean((u as any)?.email_confirmed_at));
+
+      // profile
       const { data, error } = await supabase
         .from("profiles")
         .select("*")
@@ -123,10 +134,8 @@ export default function Onboarding() {
         setProfile(p);
         setAlias(p.alias ?? "");
 
-        // Country: prefer existing; else detect; else default AU
         const detected = detectCountryCode();
-        const detectedName =
-          detected && COUNTRIES.find((c) => c.code === detected)?.name;
+        const detectedName = detected && COUNTRIES.find(c => c.code === detected)?.name;
 
         setCountry(p.country ?? detectedName ?? "Australia");
         setStateRegion(p.state ?? "");
@@ -188,12 +197,10 @@ export default function Onboarding() {
           state: stateRegion || null,
           marketing_opt_in: marketing,
           terms_accepted_at: new Date().toISOString(),
-          terms_version: TERMS_VERSION, // ⬅️ NEW
         })
         .eq("id", user?.id);
 
       if (upErr) {
-        // Detect unique violation (Postgres 23505) and suggest alternates
         const code = (upErr as any)?.code || (upErr as any)?.details?.code;
         if (code === "23505" || String(upErr?.message || "").toLowerCase().includes("duplicate key")) {
           setErr("That alias was just claimed by someone else. Try one of these:");
@@ -203,8 +210,11 @@ export default function Onboarding() {
         }
       } else {
         setMsg("Profile saved.");
+        toast.success("Onboarding complete — welcome!");
         // Create Stripe customer (non-blocking)
         createStripeCustomerIfNeeded(alias.trim());
+        // Bounce into app
+        navigate("/dashboard", { replace: true });
       }
     } catch (e: any) {
       setErr(e.message || "Something went wrong.");
@@ -213,7 +223,6 @@ export default function Onboarding() {
     }
   }
 
-  // Quick-apply a suggestion and save immediately
   async function acceptSuggestion(s: string) {
     setAlias(s);
     setAliasOK(null);
@@ -222,12 +231,32 @@ export default function Onboarding() {
     save();
   }
 
+  async function resendVerification() {
+    if (!emailAddr) return;
+    setResending(true);
+    try {
+      const { error } = await supabase.auth.resend({
+        type: "signup",
+        email: emailAddr,
+        options: { emailRedirectTo: `${window.location.origin}/auth/callback` },
+      });
+      if (error) throw error;
+      toast.success("Verification email sent.");
+    } catch (e: any) {
+      toast.error(e?.message || "Failed to resend verification email.");
+    } finally {
+      setResending(false);
+    }
+  }
+
   if (!user) return <div className="p-6">Please sign in to continue.</div>;
-  if (loading) return (
-    <div className="p-6">
-      <div className="h-8 w-8 animate-spin rounded-full border-2 border-gray-300 border-t-transparent" />
-    </div>
-  );
+  if (loading) {
+    return (
+      <div className="p-6">
+        <div className="h-8 w-8 animate-spin rounded-full border-2 border-gray-300 border-t-transparent" />
+      </div>
+    );
+  }
 
   return (
     <div className="max-w-xl mx-auto p-6 space-y-6">
@@ -235,6 +264,21 @@ export default function Onboarding() {
       <p className="text-sm text-gray-600">
         Set your public alias for the leaderboard, add your location, and accept the Terms &amp; Conditions.
       </p>
+
+      {/* Verify email nudge */}
+      {!emailVerified && (
+        <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+          Please verify your email <span className="font-medium">{emailAddr}</span> to secure your account.
+          <button
+            onClick={resendVerification}
+            className="ml-2 underline"
+            disabled={resending}
+            title="Resend verification email"
+          >
+            {resending ? "Sending…" : "Resend verification email"}
+          </button>
+        </div>
+      )}
 
       {err && (
         <div className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">
