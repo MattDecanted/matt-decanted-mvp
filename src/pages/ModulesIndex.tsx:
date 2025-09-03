@@ -1,0 +1,83 @@
+import React, { useEffect, useState } from "react";
+import { supabase } from "@/lib/supabase";
+import { useAuth } from "@/context/AuthContext";
+import { Gate, LockBadge } from "@/components/LockGate";
+import { Tier } from "@/lib/entitlements";
+
+// Shape matches DB
+type ModuleRow = {
+  slug: string;
+  title: string;
+  summary: string | null;
+  required_points: number;
+  required_tier: Tier;
+  is_active: boolean;
+};
+
+export default function ModulesIndex() {
+  const { profile, pointsTotal } = useAuth() as any; // assumes your AuthContext exposes profile + points
+  const [rows, setRows] = useState<ModuleRow[]>([]);
+  const [loading, setLoading] = useState(true);
+  const userTier: Tier = (profile?.membership_tier || 'free') as Tier;
+  const userPoints = Number(pointsTotal ?? 0);
+
+  useEffect(() => {
+    (async () => {
+      setLoading(true);
+      const { data, error } = await supabase
+        .from("content_modules")
+        .select("slug, title, summary, required_points, required_tier, is_active")
+        .eq("is_active", true)
+        .order("created_at", { ascending: false });
+      if (!error && data) setRows(data as any);
+      setLoading(false);
+    })();
+  }, []);
+
+  if (loading) return <div className="p-6">Loading…</div>;
+
+  return (
+    <div className="max-w-4xl mx-auto p-6 space-y-4">
+      <h1 className="text-2xl font-semibold">Modules</h1>
+      <p className="text-sm text-gray-600">Learn with structured modules. Some items may be locked based on your tier and points.</p>
+
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        {rows.map((m) => (
+          <div key={m.slug} className="rounded-lg border p-4 bg-white">
+            <div className="flex items-start justify-between">
+              <div>
+                <div className="font-medium">{m.title}</div>
+                <div className="text-sm text-gray-600 mt-1">{m.summary ?? "Coming soon…"}</div>
+              </div>
+              <LockBadge requiredTier={m.required_tier} requiredPoints={m.required_points} />
+            </div>
+
+            <div className="mt-3">
+              <Gate
+                userTier={userTier}
+                userPoints={userPoints}
+                requiredTier={m.required_tier}
+                requiredPoints={m.required_points}
+                fallback={
+                  <button
+                    className="rounded-md border px-3 py-2 text-sm"
+                    onClick={() => (window.location.href = "/pricing")}
+                  >
+                    Unlock options
+                  </button>
+                }
+              >
+                <a
+                  className="inline-block rounded-md bg-black text-white px-3 py-2 text-sm"
+                  href={`/modules/${m.slug}`}
+                >
+                  Open module
+                </a>
+              </Gate>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
