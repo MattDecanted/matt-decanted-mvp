@@ -1,3 +1,4 @@
+// src/pages/ShortDetailPage.tsx
 import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -14,12 +15,53 @@ import { toast } from 'sonner';
 /** 🔒 Entitlements */
 import { Gate, LockBadge } from '@/components/LockGate';
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
-import PointsProgressChip from "@/components/PointsProgressChip";
+import PointsProgressChip from '@/components/PointsProgressChip';
 import type { Tier } from '@/lib/entitlements';
-import { useShortProgress } from "@/hooks/useLocalProgress";
-import { useQuizKeyboard } from "@/hooks/useQuizKeyboard";
-import PointsGainBubble from "@/components/PointsGainBubble";
-import LevelUpBanner from "@/components/LevelUpBanner";
+import { useShortProgress } from '@/hooks/useLocalProgress';
+import { useQuizKeyboard } from '@/hooks/useQuizKeyboard';
+import PointsGainBubble from '@/components/PointsGainBubble';
+import LevelUpBanner from '@/components/LevelUpBanner';
+
+import { useTranslation } from 'react-i18next';
+
+/* ---------------- i18n helpers & types ---------------- */
+function normLang(input?: string) {
+  return (input || 'en').toLowerCase();
+}
+function getLocaleCandidates(langRaw?: string) {
+  const lang = normLang(langRaw);
+  const [base] = lang.split('-');
+  return Array.from(new Set([lang, base, 'en']));
+}
+function pickByPreference<T extends { locale: string }>(
+  rows: T[] | null | undefined,
+  candidates: string[]
+): T | undefined {
+  if (!rows?.length) return undefined;
+  const byLocale = new Map(rows.map(r => [normLang(r.locale), r]));
+  for (const c of candidates) {
+    const hit = byLocale.get(normLang(c));
+    if (hit) return hit;
+  }
+  return undefined;
+}
+
+type ShortI18nRow = {
+  short_id: string;
+  locale: string;
+  title?: string | null;
+  description?: string | null;
+  video_url?: string | null;
+  pdf_url?: string | null;
+};
+type QuizI18nRow = {
+  quiz_id: string;
+  locale: string;
+  prompt?: string | null;
+  options?: string[] | null;
+  explanation?: string | null;
+};
+/* ------------------------------------------------------ */
 
 type Short = {
   id: string;
@@ -35,6 +77,7 @@ type Question = {
   options: string[];
   correct_index: number;
   points_award: number;
+  explanation?: string | null;
 };
 
 type QuizState = {
@@ -54,7 +97,12 @@ export default function ShortDetailPage() {
   const { slug } = useParams<{ slug: string }>();
   const navigate = useNavigate();
 
-  const [short, setShort] = useState<Short | null>(null);
+  const [short, setShort] = useState<Short | (Short & {
+    display_title?: string;
+    display_video_url?: string;
+    display_pdf_url?: string | null;
+  }) | null>(null);
+
   const [questions, setQuestions] = useState<Question[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -73,7 +121,9 @@ export default function ShortDetailPage() {
   /** 🎉 UI: “+points” bubble + level-up banner */
   const [justGained, setJustGained] = useState<number>(0);
   const [levelOpen, setLevelOpen] = useState(false);
-  const [levelMsg, setLevelMsg] = useState<string>("You just crossed a points gate and unlocked more learning content.");
+  const [levelMsg, setLevelMsg] = useState<string>(
+    'You just crossed a points gate and unlocked more learning content.'
+  );
 
   /** 🔒 Entitlement state */
   const [meta, setMeta] = useState<ShortMeta>({
@@ -90,6 +140,7 @@ export default function ShortDetailPage() {
   const { track } = useAnalytics();
 
   const optionsWrapRef = useRef<HTMLDivElement>(null);
+  const { i18n } = useTranslation();
 
   useEffect(() => {
     if (slug) {
@@ -101,6 +152,9 @@ export default function ShortDetailPage() {
   async function loadAll(currSlug: string) {
     setLoading(true);
     try {
+      const candidates = getLocaleCandidates(i18n.language);
+
+      // 1) Load base short
       const { data: shortData, error: shortError } = await supabase
         .from('shorts')
         .select('*')
@@ -108,14 +162,35 @@ export default function ShortDetailPage() {
         .eq('is_published', true)
         .single();
       if (shortError) throw shortError;
-      setShort(shortData as Short);
 
-      const { data: metaData, error: metaErr } = await supabase
+      // 2) i18n overrides (title/desc + alt media)
+      const { data: i18nRows } = await supabase
+        .from('content_shorts_i18n')
+        .select('short_id, locale, title, description, video_url, pdf_url')
+        .eq('short_id', (shortData as Short).id)
+        .in('locale', candidates as string[]);
+
+      const chosen = pickByPreference<ShortI18nRow>(i18nRows as any, candidates);
+
+      const mergedShort: Short & {
+        display_title?: string;
+        display_video_url?: string;
+        display_pdf_url?: string | null;
+      } = {
+        ...(shortData as Short),
+        display_title: (chosen?.title ?? (shortData as Short).title) || '',
+        display_video_url: chosen?.video_url ?? (shortData as Short).video_url,
+        display_pdf_url: chosen?.pdf_url ?? null,
+      };
+      setShort(mergedShort);
+
+      // 3) gating meta
+      const { data: metaData } = await supabase
         .from('content_shorts')
         .select('required_points, required_tier, is_active')
         .eq('slug', currSlug)
         .single();
-      if (!metaErr && metaData) {
+      if (metaData) {
         setMeta({
           required_points: Number(metaData.required_points ?? 0),
           required_tier: (metaData.required_tier ?? 'free') as Tier,
@@ -125,15 +200,52 @@ export default function ShortDetailPage() {
         setMeta({ required_points: 0, required_tier: 'free', is_active: true });
       }
 
+      // 4) base quiz questions
       const { data: questionsData, error: questionsError } = await supabase
         .from('quiz_bank')
-        .select('*')
+        .select('id, question, options, correct_index, points_award, created_at, explanation')
         .eq('kind', 'short')
         .eq('ref_id', (shortData as Short).id)
         .order('created_at', { ascending: true });
       if (questionsError) throw questionsError;
-      setQuestions((questionsData || []) as Question[]);
 
+      let qs = (questionsData || []) as Question[];
+
+      // 5) i18n for questions (prompt/options/explanation)
+      if (qs.length) {
+        const ids = qs.map(q => q.id);
+        const { data: qi18nRows } = await supabase
+          .from('quiz_bank_i18n')
+          .select('quiz_id, locale, prompt, options, explanation')
+          .in('quiz_id', ids)
+          .in('locale', candidates as string[]);
+
+        const byQuiz: Record<string, QuizI18nRow> = {};
+        ids.forEach(id => {
+          const all = (qi18nRows || []).filter(r => r.quiz_id === id);
+          const best = pickByPreference<QuizI18nRow>(all as any, candidates);
+          if (best) byQuiz[id] = best;
+        });
+
+        qs = qs.map(q => {
+          const tr = byQuiz[q.id];
+          return tr
+            ? {
+                ...q,
+                question: tr.prompt ?? q.question,
+                options:
+                  Array.isArray(tr.options) && tr.options.length
+                    ? (tr.options as string[])
+                    : q.options,
+                explanation: tr.explanation ?? q.explanation,
+              }
+            : q;
+        });
+      }
+
+      setQuestions(qs);
+
+      // 6) Determine user points (prefer context)
       let pointsNow = Number(totalPoints ?? 0);
       if (!pointsNow && user?.id) {
         const { data: pt, error: ptErr } = await supabase
@@ -179,7 +291,7 @@ export default function ShortDetailPage() {
     if (quizState.currentQuestion < questions.length - 1) {
       setQuizState(prev => ({
         ...prev,
-        currentQuestion: prev.currentQuestion + 1
+        currentQuestion: prev.currentQuestion + 1,
       }));
     } else {
       finishQuiz();
@@ -199,8 +311,7 @@ export default function ShortDetailPage() {
   }, [quizState.currentQuestion, quizState.showResults, quizState.answers]);
 
   // Keyboard shortcuts: 1–9 to select, Enter/→ to Next
-  const optsCount =
-    questions[quizState.currentQuestion]?.options?.length ?? 0;
+  const optsCount = questions[quizState.currentQuestion]?.options?.length ?? 0;
   useQuizKeyboard({
     enabled: videoWatched && !quizState.showResults && optsCount > 0,
     optionsCount: optsCount,
@@ -223,7 +334,6 @@ export default function ShortDetailPage() {
         const mod = await import('canvas-confetti');
         mod.default({ particleCount: 120, spread: 70, origin: { y: 0.6 } });
         toast.success('New content unlocked! 🎉');
-        // Open banner
         setLevelMsg(`You reached ${newPoints} points and unlocked content (gate: ${nextGate}).`);
         setLevelOpen(true);
       }
@@ -243,7 +353,7 @@ export default function ShortDetailPage() {
       correctCount,
     }));
 
-    // Award points = sum of points_award for correct answers
+    // Award points = sum(points_award) for correct answers
     if (correctCount > 0 && user) {
       setSubmitting(true);
       try {
@@ -253,19 +363,20 @@ export default function ShortDetailPage() {
 
         const prev = userPoints;
 
-        await supabase
-          .from('points_ledger')
-          .insert([{
+        await supabase.from('points_ledger').insert([
+          {
             user_id: user.id,
             points: pointsAwarded,
             reason: 'Video Quiz',
             meta: {
               short_id: short!.id,
-              short_title: short!.title,
+              short_title:
+                (short as any).display_title || (short as Short).title,
               correct_count: correctCount,
               total_questions: questions.length,
             },
-          }]);
+          },
+        ]);
 
         // Float-in chip
         setJustGained(pointsAwarded);
@@ -320,10 +431,10 @@ export default function ShortDetailPage() {
         <Card>
           <CardContent className="p-8 text-center">
             <h3 className="text-lg font-semibold mb-2">Video Not Found</h3>
-            <p className="text-muted-foreground mb-4">This video may have been removed or is not available.</p>
-            <Button onClick={() => navigate('/shorts')}>
-              Back to Shorts
-            </Button>
+            <p className="text-muted-foreground mb-4">
+              This video may have been removed or is not available.
+            </p>
+            <Button onClick={() => navigate('/shorts')}>Back to Shorts</Button>
           </CardContent>
         </Card>
       </div>
@@ -348,7 +459,10 @@ export default function ShortDetailPage() {
             <Clock className="h-3 w-3" />
             <span>~5 min</span>
           </Badge>
-          <LockBadge requiredTier={meta.required_tier} requiredPoints={meta.required_points} />
+          <LockBadge
+            requiredTier={meta.required_tier}
+            requiredPoints={meta.required_points}
+          />
           {short.preview && <Badge variant="outline">Preview</Badge>}
         </div>
       </div>
@@ -356,7 +470,9 @@ export default function ShortDetailPage() {
       {/* Video Section (🔒 gated) */}
       <Card>
         <CardHeader>
-          <CardTitle className="text-2xl">{short.title}</CardTitle>
+          <CardTitle className="text-2xl">
+            {(short as any).display_title || short.title}
+          </CardTitle>
         </CardHeader>
 
         <CardContent className="space-y-6">
@@ -365,20 +481,23 @@ export default function ShortDetailPage() {
             userPoints={userPoints}
             requiredTier={meta.required_tier}
             requiredPoints={meta.required_points}
-            telemetry={{ kind: "short", slug }}
+            telemetry={{ kind: 'short', slug }}
             fallback={
               <div className="text-center space-y-4">
                 <p className="text-sm text-muted-foreground">
-                  This short is locked. Earn more points by playing Daily Quiz or upgrade your membership.
+                  This short is locked. Earn more points by playing Daily Quiz or
+                  upgrade your membership.
                 </p>
                 <div className="flex items-center justify-center gap-2">
-                  <Button variant="outline" onClick={() => navigate('/daily-quiz')}>Earn Points</Button>
+                  <Button variant="outline" onClick={() => navigate('/daily-quiz')}>
+                    Earn Points
+                  </Button>
                   <Button onClick={() => navigate('/pricing')}>Upgrade</Button>
                 </div>
               </div>
             }
           >
-            {/* Video Player Placeholder */}
+            {/* Video Player Placeholder (replace with real player using `(short as any).display_video_url`) */}
             <div className="relative w-full h-0" style={{ paddingBottom: '56.25%' }}>
               <div className="absolute inset-0 bg-black rounded-lg flex items-center justify-center">
                 {watchProgress === 0 ? (
@@ -407,9 +526,24 @@ export default function ShortDetailPage() {
               </div>
             </div>
 
+            {/* Optional: per-locale PDF */}
+            {(short as any).display_pdf_url && (
+              <a
+                href={(short as any).display_pdf_url}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex items-center rounded-md border px-3 py-2 text-sm"
+              >
+                Download PDF
+              </a>
+            )}
+
             {/* Video description */}
             <div className="text-muted-foreground">
-              <p>This is a placeholder video player. In a real implementation, integrate with YouTube/Vimeo or your own player.</p>
+              <p>
+                This is a placeholder video player. In a real implementation, integrate with
+                YouTube/Vimeo or your own player.
+              </p>
             </div>
           </Gate>
         </CardContent>
@@ -421,7 +555,7 @@ export default function ShortDetailPage() {
         userPoints={userPoints}
         requiredTier={meta.required_tier}
         requiredPoints={meta.required_points}
-        telemetry={{ kind: "short", slug }}
+        telemetry={{ kind: 'short', slug }}
       >
         {videoWatched && questions.length > 0 && (
           <Card>
@@ -441,8 +575,14 @@ export default function ShortDetailPage() {
                   {/* Progress */}
                   <div className="space-y-2">
                     <div className="flex justify-between text-sm text-muted-foreground">
-                      <span>Question {quizState.currentQuestion + 1} of {questions.length}</span>
-                      <span className="hidden sm:inline">Tip: press <kbd className="px-1 border rounded">1</kbd>–<kbd className="px-1 border rounded">4</kbd> to answer, <kbd className="px-1 border rounded">Enter</kbd> to continue</span>
+                      <span>
+                        Question {quizState.currentQuestion + 1} of {questions.length}
+                      </span>
+                      <span className="hidden sm:inline">
+                        Tip: press <kbd className="px-1 border rounded">1</kbd>–
+                        <kbd className="px-1 border rounded">4</kbd> to answer,{' '}
+                        <kbd className="px-1 border rounded">Enter</kbd> to continue
+                      </span>
                     </div>
                     <Progress
                       value={((quizState.currentQuestion + 1) / questions.length) * 100}
@@ -458,13 +598,14 @@ export default function ShortDetailPage() {
 
                     <div className="grid gap-3" ref={optionsWrapRef}>
                       {questions[quizState.currentQuestion].options.map((option, index) => {
-                        const selected = quizState.answers[quizState.currentQuestion] === index;
+                        const selected =
+                          quizState.answers[quizState.currentQuestion] === index;
                         return (
                           <Button
                             key={index}
                             data-opt-index={index}
-                            data-opt-selected={selected ? "true" : "false"}
-                            variant={selected ? "default" : "outline"}
+                            data-opt-selected={selected ? 'true' : 'false'}
+                            variant={selected ? 'default' : 'outline'}
                             className="h-auto p-4 text-left justify-start"
                             onClick={() => handleAnswerSelect(index)}
                           >
@@ -480,9 +621,13 @@ export default function ShortDetailPage() {
                   <div className="flex justify-end">
                     <Button
                       onClick={handleNext}
-                      disabled={quizState.answers[quizState.currentQuestion] === undefined}
+                      disabled={
+                        quizState.answers[quizState.currentQuestion] === undefined
+                      }
                     >
-                      {quizState.currentQuestion === questions.length - 1 ? 'Finish' : 'Next'}
+                      {quizState.currentQuestion === questions.length - 1
+                        ? 'Finish'
+                        : 'Next'}
                     </Button>
                   </div>
                 </>
@@ -502,21 +647,22 @@ export default function ShortDetailPage() {
                   {/* Score */}
                   <div className="bg-muted/50 rounded-lg p-4">
                     <div className="text-2xl font-bold text-primary mb-1">
-                      {
-                        questions.reduce((sum, q, i) =>
-                          sum + (quizState.answers[i] === q.correct_index ? Number(q.points_award ?? 0) : 0), 0)
-                      } points earned
+                      {questions.reduce(
+                        (sum, q, i) =>
+                          sum +
+                          (quizState.answers[i] === q.correct_index
+                            ? Number(q.points_award ?? 0)
+                            : 0),
+                        0
+                      )}{' '}
+                      points earned
                     </div>
                     <div className="text-sm text-muted-foreground">
                       {Math.round((quizState.correctCount / questions.length) * 100)}% accuracy
                     </div>
                   </div>
 
-                  <Button
-                    onClick={() => navigate('/shorts')}
-                    size="lg"
-                    disabled={submitting}
-                  >
+                  <Button onClick={() => navigate('/shorts')} size="lg" disabled={submitting}>
                     {submitting ? 'Saving...' : 'Continue Learning'}
                   </Button>
                 </div>
@@ -530,7 +676,9 @@ export default function ShortDetailPage() {
             <CardContent className="p-8 text-center">
               <Trophy className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
               <h3 className="text-lg font-semibold mb-2">Great Job!</h3>
-              <p className="text-muted-foreground mb-4">You've completed this video. Check out more content to keep learning!</p>
+              <p className="text-muted-foreground mb-4">
+                You've completed this video. Check out more content to keep learning!
+              </p>
               <Button onClick={() => navigate('/shorts')}>More Videos</Button>
             </CardContent>
           </Card>
