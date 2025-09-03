@@ -179,31 +179,55 @@ function RequireAdmin({ children }: { children: React.ReactNode }) {
 }
 
 /* ---------- Error boundary ---------- */
-class AppErrorBoundary extends React.Component<{ children: React.ReactNode }, { error: any }> {
+class AppErrorBoundary extends React.Component<
+  { children: React.ReactNode },
+  { error: any; info: React.ErrorInfo | null }
+> {
   constructor(props: any) {
     super(props);
-    this.state = { error: null };
+    this.state = { error: null, info: null };
   }
   static getDerivedStateFromError(error: any) {
-    return { error };
+    return { error, info: null };
   }
-  componentDidCatch(error: any, info: any) {
-    console.error("App crash:", error, info);
+  componentDidCatch(error: any, info: React.ErrorInfo) {
+    this.setState({ info });
+    // Always log to console for Netlify prod debugging
+    // (shows real stack even with minified error codes)
+    console.error('[AppErrorBoundary]', error, info?.componentStack);
   }
   render() {
     if (this.state.error) {
+      const showDetails =
+        import.meta.env.DEV || String(import.meta.env.VITE_DEBUG_ERRORS) === '1';
       return (
-        <div style={{ padding: 24 }}>
-          <h1 className="text-xl font-bold">Something went wrong</h1>
-          <pre style={{ whiteSpace: "pre-wrap" }}>
-            {String(this.state.error?.message || this.state.error)}
-          </pre>
+        <div style={{ padding: 24, maxWidth: 900, margin: '0 auto' }}>
+          <h1 className="text-xl font-bold mb-2">Something went wrong</h1>
+          {!showDetails ? (
+            <p className="text-sm text-gray-600">
+              An error occurred. Enable details by setting <code>VITE_DEBUG_ERRORS=1</code> and redeploying.
+            </p>
+          ) : (
+            <>
+              <h2 className="font-semibold mt-4 mb-1">Error</h2>
+              <pre style={{ whiteSpace: 'pre-wrap' }}>
+                {String(this.state.error?.stack || this.state.error?.message || this.state.error)}
+              </pre>
+              {this.state.info?.componentStack && (
+                <>
+                  <h2 className="font-semibold mt-4 mb-1">Component stack</h2>
+                  <pre style={{ whiteSpace: 'pre-wrap' }}>{this.state.info.componentStack}</pre>
+                </>
+              )}
+            </>
+          )}
         </div>
       );
     }
     return this.props.children as React.ReactNode;
   }
 }
+
 
 function App() {
   useEffect(() => {
@@ -321,9 +345,8 @@ function App() {
                     />
 
                     {/* Shorts (public list + detail) */}
-                    <Route path="/shorts" element={<ShortsPage />} />
-                    <Route path="/shorts/:slug" element={<ShortDetailPage />} />
-
+                    <Route path="/shorts" element={<PageBoundary><ShortsPage /></PageBoundary>} />
+<Route path="/shorts/:slug" element={<PageBoundary><ShortDetailPage /></PageBoundary>} />
                     {/* Modules (gated) */}
                     <Route
                       path="/modules"
