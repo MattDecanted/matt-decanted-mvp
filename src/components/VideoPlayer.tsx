@@ -1,5 +1,8 @@
 // src/components/VideoPlayer.tsx
-import React from "react";
+import React, { Suspense } from "react";
+import type { CSSProperties } from "react";
+
+// Use the package's lazy entry
 import ReactPlayer from "react-player/lazy";
 
 type Props = {
@@ -12,6 +15,7 @@ type Props = {
   height?: string | number;
   light?: boolean | string; // thumbnail URL or true
   onEnded?: () => void;
+  style?: CSSProperties;
 };
 
 export default function VideoPlayer({
@@ -24,20 +28,30 @@ export default function VideoPlayer({
   height = "100%",
   light = false,
   onEnded,
+  style,
 }: Props) {
   return (
     <div className="relative w-full overflow-hidden rounded-2xl shadow">
-      <ReactPlayer
-        url={url}
-        playing={playing}
-        controls={controls}
-        loop={loop}
-        muted={muted}
-        width={width}
-        height={height}
-        light={light}
-        onEnded={onEnded}
-      />
+      <Suspense
+        fallback={
+          <div className="aspect-video flex items-center justify-center">
+            <div className="h-8 w-8 animate-spin rounded-full border-2 border-gray-300 border-t-transparent" />
+          </div>
+        }
+      >
+        <ReactPlayer
+          url={url}
+          playing={playing}
+          controls={controls}
+          loop={loop}
+          muted={muted}
+          width={width}
+          height={height}
+          light={light}
+          onEnded={onEnded}
+          style={style}
+        />
+      </Suspense>
     </div>
   );
 }
