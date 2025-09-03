@@ -12,6 +12,8 @@ import SkeletonRows from "@/components/SkeletonRows";
 import CrownChip from "@/components/CrownChip";
 import CornerRibbon from "@/components/CornerRibbon";
 import UpgradeModal from "@/components/UpgradeModal";
+import { useEntitlement } from "@/hooks/useEntitlement";
+import { getLastModuleSlug } from "@/hooks/useLocalProgress";
 
 type ModuleRow = {
   slug: string;
@@ -30,6 +32,7 @@ export default function ModulesIndex() {
   const [loading, setLoading] = useState(true);
   const [userPoints, setUserPoints] = useState<number>(0);
   const [upgradeOpen, setUpgradeOpen] = useState(false);
+  const lastModule = getLastModuleSlug();
 
   useEffect(() => {
     (async () => {
@@ -71,6 +74,14 @@ export default function ModulesIndex() {
         Structured learning modules. Some items may be locked based on your membership and points.
       </p>
 
+      {/* Continue banner */}
+      {lastModule && (
+        <div className="rounded-lg border bg-white px-4 py-3 flex items-center justify-between">
+          <div className="text-sm">Continue where you left off?</div>
+          <Button asChild><a href={`/modules/${lastModule}`}>Resume</a></Button>
+        </div>
+      )}
+
       {rows.length === 0 ? (
         <EmptyState
           title="No modules yet"
@@ -82,6 +93,12 @@ export default function ModulesIndex() {
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           {rows.map((m) => {
             const premiumTier = m.required_tier !== "free" ? (m.required_tier as "pro" | "vip") : null;
+            const { locked } = useEntitlement({
+              userTier,
+              userPoints,
+              requiredTier: m.required_tier,
+              requiredPoints: m.required_points,
+            });
 
             return (
               <Card key={m.slug} className="relative overflow-hidden">
@@ -129,7 +146,7 @@ export default function ModulesIndex() {
                       href={`/modules/${m.slug}`}
                       className="inline-block rounded-md bg-black text-white px-3 py-2 text-sm"
                     >
-                      Open module
+                      {locked ? "View" : "Open module"}
                     </a>
                   </Gate>
                 </CardContent>
