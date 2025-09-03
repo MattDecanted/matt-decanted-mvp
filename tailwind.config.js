@@ -10,8 +10,8 @@ export default {
     './pages/**/*.{ts,tsx}',
     './components/**/*.{ts,tsx}',
     './app/**/*.{ts,tsx}',
-    // (optional) include brand css folder if you keep extra styles there
-    './src/styles/**/*.{css}',
+    // ✅ fixed glob
+    './src/styles/**/*.css',
   ],
 
   // ✅ Keep these classes from being purged (we use them across the app)
@@ -41,16 +41,37 @@ export default {
       },
 
       colors: {
-        /* shadcn-style tokens wired to CSS vars (keep as-is if you use them) */
+        /* shadcn-style tokens wired to CSS vars */
         background: 'hsl(var(--background))',
         foreground: 'hsl(var(--foreground))',
-        card: { DEFAULT: 'hsl(var(--card-hsl))', foreground: 'hsl(var(--card-foreground))' },
-        popover: { DEFAULT: 'hsl(var(--popover))', foreground: 'hsl(var(--popover-foreground))' },
-        primary: { DEFAULT: 'hsl(var(--primary))', foreground: 'hsl(var(--primary-foreground))' },
-        secondary: { DEFAULT: 'hsl(var(--secondary))', foreground: 'hsl(var(--secondary-foreground))' },
-        muted: { DEFAULT: 'hsl(var(--muted))', foreground: 'hsl(var(--muted-foreground))' },
-        accent: { DEFAULT: 'hsl(var(--accent-hsl))', foreground: 'hsl(var(--accent-foreground))' },
-        destructive: { DEFAULT: 'hsl(var(--destructive))', foreground: 'hsl(var(--destructive-foreground))' },
+        card: {
+          DEFAULT: 'hsl(var(--card-hsl))',
+          foreground: 'hsl(var(--card-foreground))',
+        },
+        popover: {
+          DEFAULT: 'hsl(var(--popover))',
+          foreground: 'hsl(var(--popover-foreground))',
+        },
+        primary: {
+          DEFAULT: 'hsl(var(--primary))',
+          foreground: 'hsl(var(--primary-foreground))',
+        },
+        secondary: {
+          DEFAULT: 'hsl(var(--secondary))',
+          foreground: 'hsl(var(--secondary-foreground))',
+        },
+        muted: {
+          DEFAULT: 'hsl(var(--muted))',
+          foreground: 'hsl(var(--muted-foreground))',
+        },
+        accent: {
+          DEFAULT: 'hsl(var(--accent-hsl))',
+          foreground: 'hsl(var(--accent-foreground))',
+        },
+        destructive: {
+          DEFAULT: 'hsl(var(--destructive))',
+          foreground: 'hsl(var(--destructive-foreground))',
+        },
         border: 'hsl(var(--border))',
         input: 'hsl(var(--input))',
         ring: 'hsl(var(--ring))',
@@ -64,17 +85,16 @@ export default {
 
         /* === Matt Decanted brand palette === */
         brand: {
-          // semantic aliases
-          primary: '#1F40C6',   // main brand blue (links/CTA variants)
-          orange:  '#FF9500',   // highlight / Sign Up / top accent
-          blue:    '#3B82F6',   // secondary CTA / info
-          purple:  '#8B5CF6',   // member-only / premium
-          green:   '#10B981',   // success
-          navy:    '#1E293B',   // dark/footer
-          soft:    '#F3F4F6',   // light cards / backgrounds
-          wine:    '#7F1D1D',   // wine accent (optional)
-          ink:     '#111827',   // primary text
-          paper:   '#FAFAFA',   // page background
+          primary: '#1F40C6', // main brand blue
+          orange: '#FF9500',  // highlight
+          blue: '#3B82F6',    // secondary
+          purple: '#8B5CF6',  // premium
+          green: '#10B981',   // success
+          navy: '#1E293B',    // dark/footer
+          soft: '#F3F4F6',    // light bg
+          wine: '#7F1D1D',    // wine accent
+          ink: '#111827',     // text
+          paper: '#FAFAFA',   // page bg
         },
       },
 
