@@ -1,185 +1,182 @@
-import React, { useState, useEffect } from 'react';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
-import { Play, Clock, Trophy, Lock } from 'lucide-react';
-import { Link } from 'react-router-dom';
-import { useAuth } from '@/context/AuthContext';
-import { usePoints } from '@/context/PointsContext';
-import { supabase } from '@/lib/supabase';
-import PaywallModal from '@/components/PaywallModal';
+// src/pages/ShortsPage.tsx
+import * as React from "react";
+import { Link } from "react-router-dom";
+import { supabase } from "@/lib/supabase";
+import { useAuth } from "@/context/AuthContext";
+import { usePoints } from "@/context/PointsContext";
+import type { Tier } from "@/lib/entitlements";
+import { LockBadge } from "@/components/LockGate";
+import PointsProgressChip from "@/components/PointsProgressChip";
+import EmptyState from "@/components/EmptyState";
+import SkeletonRows from "@/components/SkeletonRows";
+import { Card, CardContent } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 
-interface Short {
+type ShortRow = {
   id: string;
   slug: string;
   title: string;
-  video_url: string;
   preview: boolean;
   is_published: boolean;
-}
+};
+
+type ShortGate = {
+  slug: string;
+  required_points: number;
+  required_tier: Tier;
+  is_active: boolean;
+};
 
 export default function ShortsPage() {
-  const [shorts, setShorts] = useState<Short[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [showPaywall, setShowPaywall] = useState(false);
+  const { user, profile } = useAuth() as any;
+  const userTier: Tier = (profile?.membership_tier || "free") as Tier;
 
-  const { user } = useAuth();
-  const { isTrialUser } = usePoints();
+  const { totalPoints, refreshPoints } = (usePoints() as any) || {};
+  const [loading, setLoading] = React.useState(true);
+  const [rows, setRows] = React.useState<ShortRow[]>([]);
+  const [gates, setGates] = React.useState<Record<string, ShortGate>>({});
+  const [userPoints, setUserPoints] = React.useState<number>(0);
 
-  useEffect(() => {
-    loadShorts();
+  React.useEffect(() => {
+    (async () => {
+      setLoading(true);
+      // list of published shorts
+      const { data: shorts } = await supabase
+        .from("shorts")
+        .select("id, slug, title, preview, is_published")
+        .eq("is_published", true)
+        .order("created_at", { ascending: false });
+      setRows((shorts || []) as ShortRow[]);
+
+      // gating meta (by slug)
+      const { data: meta } = await supabase
+        .from("content_shorts")
+        .select("slug, required_points, required_tier, is_active");
+      const map: Record<string, ShortGate> = {};
+      (meta || []).forEach((m: any) => (map[m.slug] = {
+        slug: m.slug,
+        required_points: Number(m.required_points ?? 0),
+        required_tier: (m.required_tier ?? "free") as Tier,
+        is_active: Boolean(m.is_active ?? true),
+      }));
+      setGates(map);
+
+      // points
+      let pts = Number(totalPoints ?? 0);
+      if (!pts && user?.id) {
+        const { data: pt } = await supabase
+          .from("user_points_totals_v1")
+          .select("total_points")
+          .eq("user_id", user.id)
+          .maybeSingle();
+        pts = Number(pt?.total_points ?? 0);
+      }
+      setUserPoints(pts);
+      if (refreshPoints) refreshPoints();
+      setLoading(false);
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const loadShorts = async () => {
-    try {
-      const { data, error } = await supabase
-        .from('shorts')
-        .select('*')
-        .eq('is_published', true)
-        .order('created_at', { ascending: true });
-
-      if (error) throw error;
-      setShorts(data || []);
-    } catch (error) {
-      console.error('Error loading shorts:', error);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleVideoClick = (short: Short) => {
-    if (!user) {
-      setShowPaywall(true);
-      return;
-    }
-
-    if (!isTrialUser && !short.preview) {
-      setShowPaywall(true);
-      return;
-    }
-
-    // Allow access
-  };
-
-  if (loading) {
-    return (
-      <div className="space-y-6">
-        <div className="text-center space-y-2">
-          <h1 className="text-3xl font-bold">Learning Shorts</h1>
-          <p className="text-muted-foreground">Quick 5-minute videos with follow-up quizzes</p>
-        </div>
-
-        <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {[1, 2, 3].map((i) => (
-            <Card key={i} className="animate-pulse">
-              <CardHeader>
-                <div className="w-full h-48 bg-muted rounded-lg"></div>
-              </CardHeader>
-              <CardContent>
-                <div className="h-4 bg-muted rounded mb-2"></div>
-                <div className="h-4 bg-muted rounded w-2/3"></div>
-              </CardContent>
-            </Card>
-          ))}
-        </div>
-      </div>
-    );
-  }
+  // compute if anything is locked & how many points short for the easiest lock
+  const lockDeltas = React.useMemo(() => {
+    const deltas: number[] = [];
+    rows.forEach((r) => {
+      const g = gates[r.slug];
+      if (!g || !g.is_active) return;
+      const tierOK =
+        userTier === "vip" ||
+        (userTier === "pro" && (g.required_tier === "pro" || g.required_tier === "free")) ||
+        (userTier === "free" && g.required_tier === "free");
+      const pointsNeed = Math.max(0, Number(g.required_points || 0) - (userPoints || 0));
+      const locked = !tierOK || pointsNeed > 0;
+      if (locked) deltas.push(pointsNeed);
+    });
+    return deltas.sort((a, b) => a - b);
+  }, [rows, gates, userTier, userPoints]);
 
   return (
-    <div className="space-y-6">
-      <div className="text-center space-y-2">
-        <h1 className="text-3xl font-bold">Learning Shorts</h1>
-        <p className="text-muted-foreground">
-          Quick 5-minute videos with follow-up quizzes to earn points
-        </p>
+    <div className="max-w-5xl mx-auto p-6 space-y-6">
+      <div className="flex items-center justify-between">
+        <h1 className="text-2xl font-semibold">Short Videos</h1>
+        <div className="text-sm text-gray-600">
+          {user ? (
+            <span className="tabular-nums">{userPoints}</span>
+          ) : (
+            <Link className="underline" to="/signin">Sign in</Link>
+          )}{" "}
+          points
+        </div>
       </div>
 
-      <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
-        {shorts.map((short) => {
-          const canAccess = user && (isTrialUser || short.preview);
-          const isLocked = !canAccess;
-
-          return (
-            <Card key={short.id} className="group hover:shadow-lg transition-all duration-300">
-              <CardHeader className="p-0">
-                <div className="relative">
-                  <div className="w-full h-48 bg-gradient-to-br from-primary/20 to-blue-500/20 rounded-t-lg flex items-center justify-center">
-                    <div className="relative">
-                      {isLocked && (
-                        <div className="absolute inset-0 bg-black/50 rounded-full flex items-center justify-center">
-                          <Lock className="h-6 w-6 text-white" />
-                        </div>
-                      )}
-                      <div className="w-16 h-16 bg-primary rounded-full flex items-center justify-center group-hover:scale-110 transition-transform">
-                        <Play className="h-8 w-8 text-primary-foreground ml-1" />
-                      </div>
-                    </div>
-                  </div>
-                  
-                  <div className="absolute top-3 left-3 flex space-x-2">
-                    <Badge variant="secondary" className="flex items-center space-x-1">
-                      <Clock className="h-3 w-3" />
-                      <span>~5 min</span>
-                    </Badge>
-                    {short.preview && (
-                      <Badge variant="outline" className="bg-background/80">
-                        Preview
-                      </Badge>
-                    )}
-                  </div>
-
-                  <div className="absolute top-3 right-3">
-                    <Badge className="flex items-center space-x-1">
-                      <Trophy className="h-3 w-3" />
-                      <span>10 pts</span>
-                    </Badge>
-                  </div>
-                </div>
-              </CardHeader>
-
-              <CardContent className="p-4">
-                <CardTitle className="text-lg mb-2">{short.title}</CardTitle>
-                <p className="text-sm text-muted-foreground mb-4">
-                  Watch and answer questions to earn points
-                </p>
-
-                {canAccess ? (
-                  <Link to={`/shorts/${short.slug}`}>
-                    <Button className="w-full">
-                      <Play className="h-4 w-4 mr-2" />
-                      Watch Now
-                    </Button>
-                  </Link>
-                ) : (
-                  <Button
-                    className="w-full"
-                    variant="outline"
-                    onClick={() => handleVideoClick(short)}
-                  >
-                    <Lock className="h-4 w-4 mr-2" />
-                    {user ? 'Unlock' : 'Sign In to Watch'}
-                  </Button>
-                )}
-              </CardContent>
-            </Card>
-          );
-        })}
-      </div>
-
-      {shorts.length === 0 && (
-        <div className="text-center py-12">
-          <Play className="h-16 w-16 text-muted-foreground mx-auto mb-4" />
-          <h3 className="text-lg font-semibold mb-2">No Videos Available</h3>
-          <p className="text-muted-foreground">Check back soon for new learning content!</p>
+      {/* Sticky upsell when there are locked items */}
+      {lockDeltas.length > 0 && (
+        <div className="sticky top-2 z-[1]">
+          <div className="rounded-lg border bg-white px-4 py-3 flex items-center justify-between">
+            <div className="text-sm">
+              <span className="font-medium">Some videos are locked.</span>{" "}
+              {user ? (
+                <>Earn <span className="tabular-nums">{lockDeltas[0]}</span> more points to unlock the easiest one.</>
+              ) : (
+                <>Sign in to start earning points.</>
+              )}
+            </div>
+            <div className="flex gap-2">
+              <Button variant="outline" asChild>
+                <a href="/daily-quiz">Earn points</a>
+              </Button>
+              <Button asChild>
+                <a href="/pricing">Upgrade</a>
+              </Button>
+            </div>
+          </div>
         </div>
       )}
 
-      <PaywallModal
-        isOpen={showPaywall}
-        onClose={() => setShowPaywall(false)}
-        feature="Learning Shorts"
-      />
+      {loading ? (
+        <SkeletonRows />
+      ) : rows.length === 0 ? (
+        <EmptyState
+          title="No videos yet"
+          description="New content is being prepared. In the meantime, earn points with the Daily Quiz."
+          ctaText="Play Daily Quiz"
+          ctaHref="/daily-quiz"
+        />
+      ) : (
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          {rows.map((s) => {
+            const g = gates[s.slug] || { required_points: 0, required_tier: "free", is_active: true };
+            return (
+              <Card key={s.id}>
+                <CardContent className="p-4 space-y-3">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <div className="font-medium">{s.title}</div>
+                      <div className="mt-1">
+                        {s.preview && <Badge variant="outline">Preview</Badge>}
+                      </div>
+                    </div>
+                    <div className="flex flex-col items-end gap-1">
+                      <LockBadge requiredTier={g.required_tier} requiredPoints={g.required_points} />
+                      <PointsProgressChip userPoints={userPoints} requiredPoints={g.required_points} />
+                    </div>
+                  </div>
+
+                  <div className="flex gap-2">
+                    <Button asChild>
+                      <Link to={`/shorts/${s.slug}`}>Open</Link>
+                    </Button>
+                    <Button asChild variant="outline">
+                      <a href="/daily-quiz">Earn points</a>
+                    </Button>
+                  </div>
+                </CardContent>
+              </Card>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }
