@@ -1,5 +1,5 @@
 // src/pages/ShortDetailPage.tsx
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -17,6 +17,8 @@ import { Gate, LockBadge } from '@/components/LockGate';
 import PointsProgressChip from "@/components/PointsProgressChip";
 import type { Tier } from '@/lib/entitlements';
 import { useShortProgress } from "@/hooks/useLocalProgress";
+import { useQuizKeyboard } from "@/hooks/useQuizKeyboard";
+import PointsGainBubble from "@/components/PointsGainBubble";
 
 type Short = {
   id: string;
@@ -67,6 +69,9 @@ export default function ShortDetailPage() {
   });
   const [submitting, setSubmitting] = useState(false);
 
+  /** 🎉 “+points” bubble */
+  const [justGained, setJustGained] = useState<number>(0);
+
   /** 🔒 Entitlement state */
   const [meta, setMeta] = useState<ShortMeta>({
     required_points: 0,
@@ -80,6 +85,8 @@ export default function ShortDetailPage() {
 
   const { refreshPoints, totalPoints } = (usePoints() as any) || {};
   const { track } = useAnalytics();
+
+  const optionsWrapRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (slug) {
@@ -176,9 +183,31 @@ export default function ShortDetailPage() {
     }
   };
 
+  // Auto-focus the first (or selected) option when the question changes
+  useEffect(() => {
+    if (!optionsWrapRef.current || quizState.showResults) return;
+    const selectedIdx = quizState.answers[quizState.currentQuestion];
+    const sel = optionsWrapRef.current.querySelector<HTMLButtonElement>(
+      selectedIdx !== undefined
+        ? `button[data-opt-selected="true"]`
+        : `button[data-opt-index="0"]`
+    );
+    sel?.focus();
+  }, [quizState.currentQuestion, quizState.showResults, quizState.answers]);
+
+  // Keyboard shortcuts: 1–9 to select, Enter/→ to Next
+  const optsCount =
+    questions[quizState.currentQuestion]?.options?.length ?? 0;
+  useQuizKeyboard({
+    enabled: videoWatched && !quizState.showResults && optsCount > 0,
+    optionsCount: optsCount,
+    onSelect: handleAnswerSelect,
+    onNext: handleNext,
+    allowNext: quizState.answers[quizState.currentQuestion] !== undefined,
+  });
+
   async function maybeConfettiOnUnlock(prevPoints: number, newPoints: number) {
     try {
-      // Find the next gate above prevPoints
       const { data, error } = await supabase
         .from('content_shorts')
         .select('required_points')
@@ -186,20 +215,13 @@ export default function ShortDetailPage() {
         .order('required_points', { ascending: true })
         .limit(1);
       if (error || !data || data.length === 0) return;
-
       const nextGate = Number(data[0].required_points || 0);
       if (newPoints >= nextGate) {
         const mod = await import('canvas-confetti');
-        mod.default({
-          particleCount: 120,
-          spread: 70,
-          origin: { y: 0.6 }
-        });
+        mod.default({ particleCount: 120, spread: 70, origin: { y: 0.6 } });
         toast.success('New content unlocked! 🎉');
       }
-    } catch {
-      // non-blocking
-    }
+    } catch { /* non-blocking */ }
   }
 
   const finishQuiz = async () => {
@@ -237,7 +259,9 @@ export default function ShortDetailPage() {
             },
           }]);
 
-        toast.success(`Great job! You earned ${pointsAwarded} points!`);
+        // Float-in chip
+        setJustGained(pointsAwarded);
+
         if (typeof refreshPoints === 'function') {
           await refreshPoints();
         }
@@ -253,6 +277,7 @@ export default function ShortDetailPage() {
         // 🎉 confetti if you crossed a content gate
         maybeConfettiOnUnlock(prev, now);
 
+        toast.success(`Great job! You earned ${pointsAwarded} points!`);
         track('short_quiz_complete', {
           short_id: short!.id,
           correct_count: correctCount,
@@ -403,9 +428,11 @@ export default function ShortDetailPage() {
             <CardContent className="space-y-6">
               {!quizState.showResults ? (
                 <>
+                  {/* Progress */}
                   <div className="space-y-2">
                     <div className="flex justify-between text-sm text-muted-foreground">
                       <span>Question {quizState.currentQuestion + 1} of {questions.length}</span>
+                      <span className="hidden sm:inline">Tip: press <kbd className="px-1 border rounded">1</kbd>–<kbd className="px-1 border rounded">4</kbd> to answer, <kbd className="px-1 border rounded">Enter</kbd> to continue</span>
                     </div>
                     <Progress
                       value={((quizState.currentQuestion + 1) / questions.length) * 100}
@@ -413,25 +440,33 @@ export default function ShortDetailPage() {
                     />
                   </div>
 
+                  {/* Current Question */}
                   <div className="space-y-4">
                     <h3 className="text-lg font-medium">
                       {questions[quizState.currentQuestion].question}
                     </h3>
 
-                    <div className="grid gap-3">
-                      {questions[quizState.currentQuestion].options.map((option, index) => (
-                        <Button
-                          key={index}
-                          variant={quizState.answers[quizState.currentQuestion] === index ? "default" : "outline"}
-                          className="h-auto p-4 text-left justify-start"
-                          onClick={() => handleAnswerSelect(index)}
-                        >
-                          {option}
-                        </Button>
-                      ))}
+                    <div className="grid gap-3" ref={optionsWrapRef}>
+                      {questions[quizState.currentQuestion].options.map((option, index) => {
+                        const selected = quizState.answers[quizState.currentQuestion] === index;
+                        return (
+                          <Button
+                            key={index}
+                            data-opt-index={index}
+                            data-opt-selected={selected ? "true" : "false"}
+                            variant={selected ? "default" : "outline"}
+                            className="h-auto p-4 text-left justify-start"
+                            onClick={() => handleAnswerSelect(index)}
+                          >
+                            <span className="mr-2 text-xs opacity-60">{index + 1}.</span>
+                            {option}
+                          </Button>
+                        );
+                      })}
                     </div>
                   </div>
 
+                  {/* Navigation */}
                   <div className="flex justify-end">
                     <Button
                       onClick={handleNext}
@@ -442,6 +477,7 @@ export default function ShortDetailPage() {
                   </div>
                 </>
               ) : (
+                /* Results */
                 <div className="text-center space-y-6">
                   <div className="space-y-2">
                     <div className="w-16 h-16 bg-primary/10 rounded-full flex items-center justify-center mx-auto">
@@ -453,6 +489,7 @@ export default function ShortDetailPage() {
                     </p>
                   </div>
 
+                  {/* Score */}
                   <div className="bg-muted/50 rounded-lg p-4">
                     <div className="text-2xl font-bold text-primary mb-1">
                       {
@@ -489,6 +526,11 @@ export default function ShortDetailPage() {
           </Card>
         )}
       </Gate>
+
+      {/* Float-in “+points” chip */}
+      {justGained > 0 && (
+        <PointsGainBubble amount={justGained} onDone={() => setJustGained(0)} />
+      )}
     </div>
   );
 }
