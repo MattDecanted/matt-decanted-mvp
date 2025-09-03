@@ -63,6 +63,7 @@ import ModuleDetail from "@/pages/ModuleDetail";
 // Admin
 import ContentGateManager from "@/pages/admin/ContentGateManager";
 import UsersManager from "@/pages/admin/UsersManager";
+import AdminDashboard from "@/pages/admin/AdminDashboard";
 
 const FN_SUBMIT = "/.netlify/functions/trial-quiz-attempt";
 const PENDING_KEY = "md_trial_pending";
@@ -377,6 +378,15 @@ function App() {
                         </RequireAdmin>
                       }
                     />
+<Route
+  path="/admin"
+  element={
+    <RequireAdmin>
+      <AdminDashboard />
+    </RequireAdmin>
+  }
+/>    
+                    
                     <Route
                       path="/admin/quizzes"
                       element={
