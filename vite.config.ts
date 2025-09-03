@@ -1,17 +1,19 @@
+// vite.config.ts
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
-import path from "path";
-import { fileURLToPath } from "url";
+import tsconfigPaths from "vite-tsconfig-paths";
 
-// Required to use __dirname in ES modules
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-
+// Simple, Netlify-friendly config
 export default defineConfig({
-  plugins: [react()],
+  plugins: [
+    react(),
+    // Reads "paths" from tsconfig and makes them work in Vite
+    tsconfigPaths(),
+  ],
   resolve: {
+    // Also keep a hard alias for convenience
     alias: {
-      "@": path.resolve(__dirname, "src"), // simplified: no leading ./ needed
+      "@": "/src",
     },
   },
 });
