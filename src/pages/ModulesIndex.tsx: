@@ -1,3 +1,4 @@
+// src/pages/ModulesIndex.tsx
 import React, { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { useAuth } from "@/context/AuthContext";
@@ -5,6 +6,7 @@ import { Gate, LockBadge } from "@/components/LockGate";
 import type { Tier } from "@/lib/entitlements";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import PointsProgressChip from "@/components/PointsProgressChip";
 
 type ModuleRow = {
   slug: string;
@@ -69,10 +71,16 @@ export default function ModulesIndex() {
                     {m.summary ?? "Coming soon…"}
                   </div>
                 </div>
-                <LockBadge
-                  requiredTier={m.required_tier}
-                  requiredPoints={m.required_points}
-                />
+                <div className="flex flex-col items-end gap-1">
+                  <LockBadge
+                    requiredTier={m.required_tier}
+                    requiredPoints={m.required_points}
+                  />
+                  <PointsProgressChip
+                    userPoints={userPoints}
+                    requiredPoints={m.required_points}
+                  />
+                </div>
               </div>
 
               <Gate
