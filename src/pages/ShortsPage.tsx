@@ -15,6 +15,8 @@ import { Button } from "@/components/ui/button";
 import CrownChip from "@/components/CrownChip";
 import CornerRibbon from "@/components/CornerRibbon";
 import UpgradeModal from "@/components/UpgradeModal";
+import { useEntitlement } from "@/hooks/useEntitlement";
+import { getLastShortSlug } from "@/hooks/useLocalProgress";
 
 type ShortRow = {
   id: string;
@@ -42,6 +44,7 @@ export default function ShortsPage() {
   const [userPoints, setUserPoints] = React.useState<number>(0);
 
   const [upgradeOpen, setUpgradeOpen] = React.useState(false);
+  const lastSlug = getLastShortSlug();
 
   React.useEffect(() => {
     (async () => {
@@ -81,20 +84,22 @@ export default function ShortsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // compute deltas via hook
   const lockDeltas = React.useMemo(() => {
-    const deltas: number[] = [];
+    const ds: number[] = [];
     rows.forEach((r) => {
       const g = gates[r.slug];
       if (!g || !g.is_active) return;
-      const tierOK =
-        userTier === "vip" ||
-        (userTier === "pro" && (g.required_tier === "pro" || g.required_tier === "free")) ||
-        (userTier === "free" && g.required_tier === "free");
-      const pointsNeed = Math.max(0, Number(g.required_points || 0) - (userPoints || 0));
-      const locked = !tierOK || pointsNeed > 0;
-      if (locked) deltas.push(pointsNeed);
+      const { locked, pointsDelta } = useEntitlement({
+        userTier,
+        userPoints,
+        requiredTier: g.required_tier,
+        requiredPoints: g.required_points
+      });
+      if (locked) ds.push(pointsDelta);
     });
-    return deltas.sort((a, b) => a - b);
+    return ds.sort((a, b) => a - b);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rows, gates, userTier, userPoints]);
 
   return (
@@ -106,6 +111,15 @@ export default function ShortsPage() {
         </div>
       </div>
 
+      {/* Continue banner */}
+      {lastSlug && (
+        <div className="rounded-lg border bg-white px-4 py-3 flex items-center justify-between">
+          <div className="text-sm">Continue where you left off?</div>
+          <Button asChild><Link to={`/shorts/${lastSlug}`}>Resume</Link></Button>
+        </div>
+      )}
+
+      {/* Sticky upsell when there are locked items */}
       {lockDeltas.length > 0 && (
         <div className="sticky top-2 z-[1]">
           <div className="rounded-lg border bg-white px-4 py-3 flex items-center justify-between">
@@ -134,11 +148,16 @@ export default function ShortsPage() {
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           {rows.map((s) => {
             const g = gates[s.slug] || { required_points: 0, required_tier: "free" as Tier, is_active: true };
+            const { locked } = useEntitlement({
+              userTier,
+              userPoints,
+              requiredTier: g.required_tier,
+              requiredPoints: g.required_points
+            });
             const premiumTier = g.required_tier !== "free" ? (g.required_tier as "pro" | "vip") : null;
 
             return (
               <Card key={s.id} className="relative overflow-hidden">
-                {/* Corner ribbon for tier-locked items */}
                 {premiumTier && <CornerRibbon label={premiumTier.toUpperCase()} />}
 
                 <CardContent className="p-4 space-y-3">
@@ -159,7 +178,7 @@ export default function ShortsPage() {
                   </div>
 
                   <div className="flex gap-2">
-                    <Button asChild><Link to={`/shorts/${s.slug}`}>Open</Link></Button>
+                    <Button asChild><Link to={`/shorts/${s.slug}`}>{locked ? "View" : "Open"}</Link></Button>
                     {premiumTier ? (
                       <Button variant="outline" onClick={() => setUpgradeOpen(true)}>Upgrade</Button>
                     ) : (
