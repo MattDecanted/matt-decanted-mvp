@@ -694,7 +694,7 @@ function QuizForm({
       </form>
     </Modal>
   );
-}
+};
 
 // Add/Edit translation for a short (incl. alt links)
 function I18nForm({
