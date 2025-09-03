@@ -1,19 +1,26 @@
 // vite.config.ts
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
-import tsconfigPaths from "vite-tsconfig-paths";
+import { fileURLToPath, URL } from "node:url";
 
-// Simple, Netlify-friendly config
+// Try to load vite-tsconfig-paths if available
+let tsconfigPaths: any = null;
+try {
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  tsconfigPaths = require("vite-tsconfig-paths").default;
+} catch {
+  console.warn("vite-tsconfig-paths not installed, falling back to manual alias");
+}
+
+// Netlify-friendly config
 export default defineConfig({
   plugins: [
     react(),
-    // Reads "paths" from tsconfig and makes them work in Vite
-    tsconfigPaths(),
-  ],
+    tsconfigPaths ? tsconfigPaths() : undefined, // only use if installed
+  ].filter(Boolean),
   resolve: {
-    // Also keep a hard alias for convenience
     alias: {
-      "@": "/src",
+      "@": fileURLToPath(new URL("./src", import.meta.url)),
     },
   },
 });
