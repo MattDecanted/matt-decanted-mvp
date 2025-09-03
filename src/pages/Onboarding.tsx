@@ -30,7 +30,6 @@ const COUNTRIES = [
 ];
 
 const AU_STATES = ["ACT", "NSW", "NT", "QLD", "SA", "TAS", "VIC", "WA"];
-
 const US_STATES = [
   "AL","AK","AZ","AR","CA","CO","CT","DE","FL","GA","HI","ID","IL","IN","IA","KS","KY","LA",
   "ME","MD","MA","MI","MN","MS","MO","MT","NE","NV","NH","NJ","NM","NY","NC","ND",
@@ -47,24 +46,37 @@ function detectCountryCode(): string | null {
   }
 }
 
-/** ---- NEW: Create Stripe customer (server function) if needed ---- */
+/** ---- Create Stripe customer (server function) if needed ---- */
 async function createStripeCustomerIfNeeded(alias: string) {
   const { data: sess } = await supabase.auth.getSession();
   const token = sess?.session?.access_token;
-  if (!token) return; // not signed in (shouldn't happen here)
-
+  if (!token) return;
   try {
     await fetch("/.netlify/functions/create-stripe-customer", {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${token}`,
-      },
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
       body: JSON.stringify({ name: alias }),
     });
   } catch {
-    // Non-blocking; ignore errors for UX
+    // non-blocking
   }
+}
+
+/** ---- NEW: suggest alternates when a collision happens ---- */
+function suggestAliases(base: string): string[] {
+  const clean = (base || "").replace(/[^A-Za-z0-9_]/g, "").slice(0, ALIAS_MAX);
+  const rnd = () => Math.floor(10 + Math.random() * 89); // 2 digits
+  const rnd3 = () => Math.floor(100 + Math.random() * 900); // 3 digits
+  const baseShort =
+    clean.length > ALIAS_MAX - 3 ? clean.slice(0, ALIAS_MAX - 3) : clean;
+
+  const options = new Set<string>();
+  if (clean) {
+    options.add(clean + rnd());
+    options.add(clean + "_" + rnd3());
+    options.add(baseShort + rnd3());
+  }
+  return Array.from(options).slice(0, 3);
 }
 
 export default function Onboarding() {
@@ -83,6 +95,9 @@ export default function Onboarding() {
   const [msg, setMsg] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
 
+  // NEW: hold suggestions to render buttons on collision
+  const [aliasSuggestions, setAliasSuggestions] = useState<string[]>([]);
+
   const isAU = country === "Australia";
   const isUS = country === "United States";
 
@@ -90,7 +105,6 @@ export default function Onboarding() {
     let active = true;
     (async () => {
       if (!user) { setLoading(false); return; }
-
       const { data, error } = await supabase
         .from("profiles")
         .select("*")
@@ -133,6 +147,7 @@ export default function Onboarding() {
   async function checkAlias() {
     setAliasOK(null);
     setErr(null);
+    setAliasSuggestions([]);
     if (aliasIssues) return;
 
     if (profile?.alias && profile.alias.toLowerCase() === alias.toLowerCase()) {
@@ -149,6 +164,7 @@ export default function Onboarding() {
     setSaving(true);
     setMsg(null);
     setErr(null);
+    setAliasSuggestions([]);
     try {
       if (aliasIssues) throw new Error(aliasIssues);
       if (!accepted) throw new Error("You must accept the Terms & Conditions.");
@@ -171,17 +187,36 @@ export default function Onboarding() {
         })
         .eq("id", user?.id);
 
-      if (upErr) throw upErr;
-
-      setMsg("Profile saved.");
-
-      // ---- NEW: quietly create Stripe customer on the server (optional) ----
-      createStripeCustomerIfNeeded(alias.trim());
+      if (upErr) {
+        // NEW: Detect unique violation (Postgres 23505) and suggest alternates
+        const code = (upErr as any)?.code || (upErr as any)?.details?.code;
+        if (code === "23505" || String(upErr?.message || "").toLowerCase().includes("duplicate key")) {
+          setErr("That alias was just claimed by someone else. Try one of these:");
+          setAliasSuggestions(suggestAliases(alias));
+        } else {
+          throw upErr;
+        }
+      } else {
+        setMsg("Profile saved.");
+        // Create Stripe customer (non-blocking)
+        createStripeCustomerIfNeeded(alias.trim());
+      }
     } catch (e: any) {
       setErr(e.message || "Something went wrong.");
     } finally {
       setSaving(false);
     }
+  }
+
+  // Quick-apply a suggestion and save immediately
+  async function acceptSuggestion(s: string) {
+    setAlias(s);
+    setAliasOK(null);
+    setAliasSuggestions([]);
+    // Optional: re-check, but we can trust DB; still, UX feels snappy:
+    await checkAlias();
+    // If OK (or unknown), attempt save right away:
+    save();
   }
 
   if (!user) return <div className="p-6">Please sign in to continue.</div>;
@@ -198,7 +233,25 @@ export default function Onboarding() {
         Set your public alias for the leaderboard, add your location, and accept the Terms &amp; Conditions.
       </p>
 
-      {err && <div className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">{err}</div>}
+      {err && (
+        <div className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+          {err}
+          {aliasSuggestions.length > 0 && (
+            <div className="mt-2 flex flex-wrap gap-2">
+              {aliasSuggestions.map((s) => (
+                <button
+                  key={s}
+                  type="button"
+                  onClick={() => acceptSuggestion(s)}
+                  className="rounded-md border px-2 py-1 text-xs bg-white hover:bg-gray-50"
+                >
+                  {s}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
       {msg && <div className="rounded-md border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-700">{msg}</div>}
 
       {/* Alias */}
@@ -209,7 +262,7 @@ export default function Onboarding() {
             className="flex-1 rounded-md border px-3 py-2"
             placeholder="e.g. WineWizard_23"
             value={alias}
-            onChange={(e) => { setAlias(e.target.value); setAliasOK(null); }}
+            onChange={(e) => { setAlias(e.target.value); setAliasOK(null); setAliasSuggestions([]); }}
             onBlur={checkAlias}
           />
           <button type="button" onClick={checkAlias} className="rounded-md border px-3 py-2 text-sm">
@@ -232,7 +285,7 @@ export default function Onboarding() {
           value={country}
           onChange={(e) => {
             setCountry(e.target.value);
-            setStateRegion(""); // reset state on country change
+            setStateRegion("");
           }}
         >
           {COUNTRIES.map((c) => (
