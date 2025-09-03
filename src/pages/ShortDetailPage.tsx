@@ -14,6 +14,7 @@ import { toast } from 'sonner';
 
 /** 🔒 Entitlements */
 import { Gate, LockBadge } from '@/components/LockGate';
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 import PointsProgressChip from "@/components/PointsProgressChip";
 import type { Tier } from '@/lib/entitlements';
 import { useShortProgress } from "@/hooks/useLocalProgress";
@@ -357,6 +358,7 @@ export default function ShortDetailPage() {
             userPoints={userPoints}
             requiredTier={meta.required_tier}
             requiredPoints={meta.required_points}
+            telemetry={{ kind: "short", slug }}
             fallback={
               <div className="text-center space-y-4">
                 <p className="text-sm text-muted-foreground">
@@ -412,6 +414,7 @@ export default function ShortDetailPage() {
         userPoints={userPoints}
         requiredTier={meta.required_tier}
         requiredPoints={meta.required_points}
+        telemetry={{ kind: "short", slug }}
       >
         {videoWatched && questions.length > 0 && (
           <Card>
