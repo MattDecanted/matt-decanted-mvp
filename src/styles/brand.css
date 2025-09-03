@@ -1,0 +1,40 @@
+/* src/styles/brand.css */
+/* Brand utilities & small component polish shared across the app.
+   Uses the orange you’ve already hinted at in Layout (≈ #FF8000). */
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* -------- Brand tokens (hex now; can be swapped to CSS vars later) -------- */
+:root {
+  --brand-orange: #ff8000;      /* main */
+  --brand-orange-600: #e67300;  /* hover/darken */
+  --brand-orange-100: #fff1e6;  /* subtle bg */
+}
+
+/* -------- Utilities (map to classes you already use) -------- */
+@layer utilities {
+  .text-brand       { color: var(--brand-orange); }
+  .bg-brand-orange  { background-color: var(--brand-orange); }
+  .hover\:bg-brand-600:hover { background-color: var(--brand-orange-600); }
+  .border-brand     { border-color: var(--brand-orange); }
+  .bg-brand-100     { background-color: var(--brand-orange-100); }
+}
+
+/* -------- Badges, pills, chips (light touch) -------- */
+@layer components {
+  .chip {
+    @apply inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-xs;
+    background: var(--brand-orange-100);
+    color: #7a3d00;
+  }
+
+  /* Primary CTA vibe consistent with header underline */
+  .btn-brand {
+    @apply inline-flex items-center justify-center rounded-md px-4 py-2 font-semibold text-white shadow;
+    background: var(--brand-orange);
+  }
+  .btn-brand:hover { background: var(--brand-orange-600); }
+  .btn-brand:disabled { @apply opacity-60 cursor-not-allowed; }
+}
