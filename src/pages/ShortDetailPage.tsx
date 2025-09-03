@@ -14,6 +14,7 @@ import { toast } from 'sonner';
 
 /** 🔒 Entitlements */
 import { Gate, LockBadge } from '@/components/LockGate';
+import PointsProgressChip from "@/components/PointsProgressChip";
 import type { Tier } from '@/lib/entitlements';
 
 interface Short {
@@ -277,7 +278,10 @@ export default function ShortDetailPage() {
             <Clock className="h-3 w-3" />
             <span>~5 min</span>
           </Badge>
-          <LockBadge requiredTier={meta.required_tier} requiredPoints={meta.required_points} />
+          <div className="flex flex-col items-end gap-1">
+            <LockBadge requiredTier={meta.required_tier} requiredPoints={meta.required_points} />
+            <PointsProgressChip userPoints={userPoints} requiredPoints={meta.required_points} />
+          </div>
           {short.preview && <Badge variant="outline">Preview</Badge>}
         </div>
       </div>
