@@ -7,6 +7,8 @@ import type { Tier } from "@/lib/entitlements";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import PointsProgressChip from "@/components/PointsProgressChip";
+import EmptyState from "@/components/EmptyState";
+import SkeletonRows from "@/components/SkeletonRows";
 
 type ModuleRow = {
   slug: string;
@@ -28,7 +30,6 @@ export default function ModulesIndex() {
   useEffect(() => {
     (async () => {
       setLoading(true);
-      // Content
       const { data } = await supabase
         .from("content_modules")
         .select("slug, title, summary, required_points, required_tier, is_active")
@@ -36,7 +37,6 @@ export default function ModulesIndex() {
         .order("created_at", { ascending: false });
       setRows((data || []) as ModuleRow[]);
 
-      // Points (from totals view)
       const { data: me } = await supabase.auth.getUser();
       const uid = me?.user?.id;
       if (uid) {
@@ -51,7 +51,14 @@ export default function ModulesIndex() {
     })();
   }, []);
 
-  if (loading) return <div className="p-6">Loading…</div>;
+  if (loading) {
+    return (
+      <div className="max-w-4xl mx-auto p-6 space-y-4">
+        <h1 className="text-2xl font-semibold">Modules</h1>
+        <SkeletonRows />
+      </div>
+    );
+  }
 
   return (
     <div className="max-w-4xl mx-auto p-6 space-y-4">
@@ -60,56 +67,65 @@ export default function ModulesIndex() {
         Structured learning modules. Some items may be locked based on your membership and points.
       </p>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-        {rows.map((m) => (
-          <Card key={m.slug}>
-            <CardContent className="p-4 space-y-3">
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <div className="font-medium">{m.title}</div>
-                  <div className="text-sm text-gray-600 mt-1">
-                    {m.summary ?? "Coming soon…"}
+      {rows.length === 0 ? (
+        <EmptyState
+          title="No modules yet"
+          description="We’re assembling course modules now. Earn points to be ready when they drop."
+          ctaText="Play Daily Quiz"
+          ctaHref="/daily-quiz"
+        />
+      ) : (
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          {rows.map((m) => (
+            <Card key={m.slug}>
+              <CardContent className="p-4 space-y-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <div className="font-medium">{m.title}</div>
+                    <div className="text-sm text-gray-600 mt-1">
+                      {m.summary ?? "Coming soon…"}
+                    </div>
+                  </div>
+                  <div className="flex flex-col items-end gap-1">
+                    <LockBadge
+                      requiredTier={m.required_tier}
+                      requiredPoints={m.required_points}
+                    />
+                    <PointsProgressChip
+                      userPoints={userPoints}
+                      requiredPoints={m.required_points}
+                    />
                   </div>
                 </div>
-                <div className="flex flex-col items-end gap-1">
-                  <LockBadge
-                    requiredTier={m.required_tier}
-                    requiredPoints={m.required_points}
-                  />
-                  <PointsProgressChip
-                    userPoints={userPoints}
-                    requiredPoints={m.required_points}
-                  />
-                </div>
-              </div>
 
-              <Gate
-                userTier={userTier}
-                userPoints={userPoints}
-                requiredTier={m.required_tier}
-                requiredPoints={m.required_points}
-                fallback={
-                  <div className="flex items-center gap-2">
-                    <Button variant="outline" onClick={() => (window.location.href = "/daily-quiz")}>
-                      Earn points
-                    </Button>
-                    <Button onClick={() => (window.location.href = "/pricing")}>
-                      Upgrade
-                    </Button>
-                  </div>
-                }
-              >
-                <a
-                  href={`/modules/${m.slug}`}
-                  className="inline-block rounded-md bg-black text-white px-3 py-2 text-sm"
+                <Gate
+                  userTier={userTier}
+                  userPoints={userPoints}
+                  requiredTier={m.required_tier}
+                  requiredPoints={m.required_points}
+                  fallback={
+                    <div className="flex items-center gap-2">
+                      <Button variant="outline" onClick={() => (window.location.href = "/daily-quiz")}>
+                        Earn points
+                      </Button>
+                      <Button onClick={() => (window.location.href = "/pricing")}>
+                        Upgrade
+                      </Button>
+                    </div>
+                  }
                 >
-                  Open module
-                </a>
-              </Gate>
-            </CardContent>
-          </Card>
-        ))}
-      </div>
+                  <a
+                    href={`/modules/${m.slug}`}
+                    className="inline-block rounded-md bg-black text-white px-3 py-2 text-sm"
+                  >
+                    Open module
+                  </a>
+                </Gate>
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
