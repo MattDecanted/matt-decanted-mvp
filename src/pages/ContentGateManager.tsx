@@ -1,290 +1,558 @@
-import React, { useEffect, useState } from "react";
+import * as React from "react";
 import { supabase } from "@/lib/supabase";
-import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
+import { toast } from "sonner";
+import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { toast } from "sonner";
 
 type Tier = "free" | "pro" | "vip";
 
-type ShortRow = {
+/* --------------------------------- Types --------------------------------- */
+type ShortBase = {
   id: string;
   slug: string;
   title: string;
-  summary: string | null;
+  preview: boolean;
+  is_published: boolean;
+};
+
+type ShortGate = {
+  slug: string;
   required_points: number;
   required_tier: Tier;
   is_active: boolean;
+};
+
+type ShortRow = {
+  slug: string;
+  title: string;
+  preview: boolean;
+  is_published: boolean;
+  required_points: number;
+  required_tier: Tier;
+  is_active: boolean;
+  selected?: boolean;
+  dirty?: boolean;
 };
 
 type ModuleRow = {
-  id: string;
   slug: string;
   title: string;
   summary: string | null;
   required_points: number;
   required_tier: Tier;
   is_active: boolean;
+  selected?: boolean;
+  dirty?: boolean;
 };
+
+/* ------------------------------ Small helpers ---------------------------- */
+function cx(...xs: Array<string | false | null | undefined>) {
+  return xs.filter(Boolean).join(" ");
+}
+
+function useDebounced<T>(value: T, ms = 300) {
+  const [v, setV] = React.useState(value);
+  React.useEffect(() => {
+    const t = setTimeout(() => setV(value), ms);
+    return () => clearTimeout(t);
+  }, [value, ms]);
+  return v;
+}
 
 const TIERS: Tier[] = ["free", "pro", "vip"];
 
-function RowEditor<T extends { slug: string; title: string; summary: string | null; required_points: number; required_tier: Tier; is_active: boolean; }>(
-  { row, onChange, onSave, saving }:
-  { row: T; onChange: (r: T) => void; onSave: () => Promise<void>; saving: boolean; }
-) {
-  return (
-    <div className="grid grid-cols-1 sm:grid-cols-12 gap-3 items-center border-t py-3">
-      <div className="sm:col-span-3">
-        <div className="font-medium">{row.title}</div>
-        <div className="text-xs text-gray-500">{row.slug}</div>
-      </div>
-      <div className="sm:col-span-3">
-        <input
-          className="w-full rounded-md border px-3 py-2"
-          placeholder="Summary"
-          value={row.summary ?? ""}
-          onChange={(e) => onChange({ ...row, summary: e.target.value })}
-        />
-      </div>
-      <div className="sm:col-span-2">
-        <select
-          className="w-full rounded-md border px-3 py-2 bg-white"
-          value={row.required_tier}
-          onChange={(e) => onChange({ ...row, required_tier: e.target.value as Tier })}
-        >
-          {TIERS.map(t => <option key={t} value={t}>{t.toUpperCase()}</option>)}
-        </select>
-      </div>
-      <div className="sm:col-span-2">
-        <input
-          type="number"
-          min={0}
-          className="w-full rounded-md border px-3 py-2"
-          value={row.required_points}
-          onChange={(e) => onChange({ ...row, required_points: Math.max(0, Number(e.target.value || 0)) })}
-        />
-      </div>
-      <div className="sm:col-span-1">
-        <label className="inline-flex items-center gap-2 text-sm">
-          <input
-            type="checkbox"
-            checked={row.is_active}
-            onChange={(e) => onChange({ ...row, is_active: e.target.checked })}
-          />
-          Active
-        </label>
-      </div>
-      <div className="sm:col-span-1">
-        <Button onClick={onSave} disabled={saving} className="w-full">
-          {saving ? "Saving…" : "Save"}
-        </Button>
-      </div>
-    </div>
-  );
-}
-
-function QuickAdd({
-  kind,
-  onAdded,
-}: {
-  kind: "shorts" | "modules";
-  onAdded: () => void;
-}) {
-  const [slug, setSlug] = useState("");
-  const [title, setTitle] = useState("");
-  const [summary, setSummary] = useState("");
-  const [requiredTier, setRequiredTier] = useState<Tier>("free");
-  const [requiredPoints, setRequiredPoints] = useState(0);
-  const [active, setActive] = useState(true);
-  const [saving, setSaving] = useState(false);
-
-  const table = kind === "shorts" ? "content_shorts" : "content_modules";
-
-  const save = async () => {
-    if (!slug || !title) {
-      toast.error("Slug and title are required.");
-      return;
-    }
-    setSaving(true);
-    try {
-      const { error } = await supabase.from(table).insert([{
-        slug: slug.trim(),
-        title: title.trim(),
-        summary: summary || null,
-        required_tier: requiredTier,
-        required_points: requiredPoints,
-        is_active: active,
-      }]);
-      if (error) throw error;
-      toast.success("Created!");
-      setSlug(""); setTitle(""); setSummary(""); setRequiredTier("free"); setRequiredPoints(0); setActive(true);
-      onAdded();
-    } catch (e: any) {
-      toast.error(e?.message || "Failed to create.");
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  return (
-    <div className="rounded-md border p-3 space-y-2 bg-white">
-      <div className="font-medium">Quick add {kind}</div>
-      <div className="grid sm:grid-cols-6 gap-2">
-        <input className="rounded-md border px-3 py-2 sm:col-span-2" placeholder="slug" value={slug} onChange={e => setSlug(e.target.value)} />
-        <input className="rounded-md border px-3 py-2 sm:col-span-2" placeholder="title" value={title} onChange={e => setTitle(e.target.value)} />
-        <input className="rounded-md border px-3 py-2 sm:col-span-2" placeholder="summary (optional)" value={summary} onChange={e => setSummary(e.target.value)} />
-        <select className="rounded-md border px-3 py-2 sm:col-span-2 bg-white" value={requiredTier} onChange={e => setRequiredTier(e.target.value as Tier)}>
-          {TIERS.map(t => <option key={t} value={t}>{t.toUpperCase()}</option>)}
-        </select>
-        <input type="number" min={0} className="rounded-md border px-3 py-2 sm:col-span-2" placeholder="required points" value={requiredPoints} onChange={e => setRequiredPoints(Math.max(0, Number(e.target.value || 0)))} />
-        <label className="inline-flex items-center gap-2 text-sm sm:col-span-1">
-          <input type="checkbox" checked={active} onChange={e => setActive(e.target.checked)} />
-          Active
-        </label>
-        <Button onClick={save} disabled={saving} className="sm:col-span-1">{saving ? "Saving…" : "Create"}</Button>
-      </div>
-    </div>
-  );
-}
-
+/* --------------------------------- Page ---------------------------------- */
 export default function ContentGateManager() {
-  const [activeTab, setActiveTab] = useState<"shorts" | "modules">("shorts");
-  const [shorts, setShorts] = useState<ShortRow[]>([]);
-  const [modules, setModules] = useState<ModuleRow[]>([]);
-  const [savingSlug, setSavingSlug] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [tab, setTab] = React.useState<"shorts" | "modules">("shorts");
 
-  async function loadAll() {
-    setLoading(true);
-    const [sRes, mRes] = await Promise.all([
-      supabase.from("content_shorts").select("*").order("created_at", { ascending: false }),
-      supabase.from("content_modules").select("*").order("created_at", { ascending: false }),
-    ]);
-    if (!sRes.error && sRes.data) setShorts(sRes.data as ShortRow[]);
-    if (!mRes.error && mRes.data) setModules(mRes.data as ModuleRow[]);
-    setLoading(false);
-  }
+  /* Shorts state */
+  const [shorts, setShorts] = React.useState<ShortRow[]>([]);
+  const [sLoading, setSLoading] = React.useState(true);
 
-  useEffect(() => {
-    loadAll();
+  /* Modules state */
+  const [modules, setModules] = React.useState<ModuleRow[]>([]);
+  const [mLoading, setMLoading] = React.useState(true);
+
+  /* Filters */
+  const [search, setSearch] = React.useState("");
+  const debouncedSearch = useDebounced(search, 250);
+  const [tierFilter, setTierFilter] = React.useState<"all" | Tier>("all");
+  const [statusFilter, setStatusFilter] = React.useState<"all" | "active" | "inactive">("all");
+
+  React.useEffect(() => {
+    loadShorts();
+    loadModules();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const saveShort = async (row: ShortRow) => {
-    setSavingSlug(row.slug);
+  async function loadShorts() {
     try {
-      const { error } = await supabase
-        .from("content_shorts")
-        .update({
-          title: row.title,
-          summary: row.summary,
-          required_tier: row.required_tier,
-          required_points: row.required_points,
-          is_active: row.is_active,
+      setSLoading(true);
+      const [{ data: sBase, error: e1 }, { data: sMeta, error: e2 }] = await Promise.all([
+        supabase
+          .from("shorts")
+          .select("id, slug, title, preview, is_published")
+          .eq("is_published", true)
+          .order("created_at", { ascending: false }),
+        supabase
+          .from("content_shorts")
+          .select("slug, required_points, required_tier, is_active"),
+      ]);
+      if (e1) throw e1;
+      if (e2) throw e2;
+      const gateMap = new Map<string, ShortGate>();
+      (sMeta || []).forEach((g: any) =>
+        gateMap.set(g.slug, {
+          slug: g.slug,
+          required_points: Number(g.required_points ?? 0),
+          required_tier: (g.required_tier ?? "free") as Tier,
+          is_active: Boolean(g.is_active ?? true),
         })
-        .eq("slug", row.slug);
-      if (error) throw error;
-      toast.success("Saved");
-    } catch (e: any) {
-      toast.error(e?.message || "Save failed");
+      );
+      const rows: ShortRow[] = (sBase || []).map((b: ShortBase) => {
+        const g = gateMap.get(b.slug);
+        return {
+          slug: b.slug,
+          title: b.title,
+          preview: b.preview,
+          is_published: b.is_published,
+          required_points: Number(g?.required_points ?? 0),
+          required_tier: (g?.required_tier ?? "free") as Tier,
+          is_active: Boolean(g?.is_active ?? true),
+        };
+      });
+      setShorts(rows);
+    } catch (err: any) {
+      console.error(err);
+      toast.error("Failed to load shorts");
     } finally {
-      setSavingSlug(null);
+      setSLoading(false);
     }
-  };
+  }
 
-  const saveModule = async (row: ModuleRow) => {
-    setSavingSlug(row.slug);
+  async function loadModules() {
     try {
-      const { error } = await supabase
+      setMLoading(true);
+      const { data, error } = await supabase
         .from("content_modules")
-        .update({
-          title: row.title,
-          summary: row.summary,
-          required_tier: row.required_tier,
-          required_points: row.required_points,
-          is_active: row.is_active,
-        })
-        .eq("slug", row.slug);
+        .select("slug, title, summary, required_points, required_tier, is_active")
+        .order("created_at", { ascending: false });
       if (error) throw error;
-      toast.success("Saved");
-    } catch (e: any) {
-      toast.error(e?.message || "Save failed");
+      const rows: ModuleRow[] = (data || []).map((m: any) => ({
+        slug: m.slug,
+        title: m.title,
+        summary: m.summary ?? null,
+        required_points: Number(m.required_points ?? 0),
+        required_tier: (m.required_tier ?? "free") as Tier,
+        is_active: Boolean(m.is_active ?? true),
+      }));
+      setModules(rows);
+    } catch (err: any) {
+      console.error(err);
+      toast.error("Failed to load modules");
     } finally {
-      setSavingSlug(null);
+      setMLoading(false);
     }
-  };
+  }
 
+  /* ------------------------------ Derivations ----------------------------- */
+  const list = tab === "shorts" ? shorts : modules;
+  const filtered = React.useMemo(() => {
+    const q = debouncedSearch.trim().toLowerCase();
+    return list.filter((r: any) => {
+      const bySearch = q
+        ? (r.title?.toLowerCase() || "").includes(q) || (r.slug?.toLowerCase() || "").includes(q)
+        : true;
+      const byTier = tierFilter === "all" ? true : r.required_tier === tierFilter;
+      const byStatus =
+        statusFilter === "all"
+          ? true
+          : statusFilter === "active"
+          ? r.is_active === true
+          : r.is_active === false;
+      return bySearch && byTier && byStatus;
+    });
+  }, [list, debouncedSearch, tierFilter, statusFilter]);
+
+  const allSelected = filtered.length > 0 && filtered.every((r) => r.selected);
+  const someSelected = filtered.some((r) => r.selected);
+
+  function toggleSelectAll() {
+    const next = !allSelected;
+    if (tab === "shorts") {
+      setShorts((prev) =>
+        prev.map((r) =>
+          filtered.find((x) => x.slug === r.slug) ? { ...r, selected: next } : r
+        )
+      );
+    } else {
+      setModules((prev) =>
+        prev.map((r) =>
+          filtered.find((x) => x.slug === r.slug) ? { ...r, selected: next } : r
+        )
+      );
+    }
+  }
+
+  function patchRow(slug: string, patch: Partial<ShortRow & ModuleRow>) {
+    if (tab === "shorts") {
+      setShorts((prev) =>
+        prev.map((r) =>
+          r.slug === slug ? { ...r, ...patch, dirty: true } : r
+        )
+      );
+    } else {
+      setModules((prev) =>
+        prev.map((r) =>
+          r.slug === slug ? { ...r, ...patch, dirty: true } : r
+        )
+      );
+    }
+  }
+
+  async function saveRow(slug: string) {
+    const row: any = (tab === "shorts" ? shorts : modules).find((r) => r.slug === slug);
+    if (!row) return;
+    try {
+      if (tab === "shorts") {
+        // upsert because a gate row might not exist yet
+        const { error } = await supabase.from("content_shorts").upsert(
+          [
+            {
+              slug: row.slug,
+              required_points: Math.max(0, Number(row.required_points || 0)),
+              required_tier: row.required_tier,
+              is_active: !!row.is_active,
+            },
+          ],
+          { onConflict: "slug" }
+        );
+        if (error) throw error;
+      } else {
+        const { error } = await supabase
+          .from("content_modules")
+          .update({
+            required_points: Math.max(0, Number(row.required_points || 0)),
+            required_tier: row.required_tier,
+            is_active: !!row.is_active,
+          })
+          .eq("slug", row.slug);
+        if (error) throw error;
+      }
+      patchRow(slug, { dirty: false });
+      toast.success("Saved");
+    } catch (err: any) {
+      console.error(err);
+      toast.error("Save failed");
+    }
+  }
+
+  /* ------------------------------- Bulk ops ------------------------------ */
+  function getTargets(): string[] {
+    const src = tab === "shorts" ? shorts : modules;
+    const selected = src.filter((r) => r.selected).map((r) => r.slug);
+    if (selected.length > 0) return selected;
+    // If none selected, apply to all filtered rows (confirmation)
+    if (!window.confirm("No items selected. Apply to all filtered items?")) return [];
+    return filtered.map((r) => r.slug);
+  }
+
+  async function bulkSetTier(tier: Tier) {
+    const slugs = getTargets();
+    if (slugs.length === 0) return;
+
+    try {
+      if (tab === "shorts") {
+        const payload = slugs.map((slug) => ({
+          slug,
+          required_tier: tier,
+        }));
+        const { error } = await supabase.from("content_shorts").upsert(payload, { onConflict: "slug", ignoreDuplicates: false });
+        if (error) throw error;
+        setShorts((prev) =>
+          prev.map((r) => (slugs.includes(r.slug) ? { ...r, required_tier: tier, dirty: false } : r))
+        );
+      } else {
+        const { error } = await supabase
+          .from("content_modules")
+          .update({ required_tier: tier })
+          .in("slug", slugs);
+        if (error) throw error;
+        setModules((prev) =>
+          prev.map((r) => (slugs.includes(r.slug) ? { ...r, required_tier: tier, dirty: false } : r))
+        );
+      }
+      toast.success(`Set ${slugs.length} item(s) to ${tier.toUpperCase()}`);
+    } catch (err: any) {
+      console.error(err);
+      toast.error("Bulk update failed");
+    }
+  }
+
+  async function bulkSetPoints() {
+    const slugs = getTargets();
+    if (slugs.length === 0) return;
+    const val = window.prompt("Required points (non-negative integer):", "0");
+    if (val === null) return;
+    const pts = Math.max(0, Number(val));
+    if (!Number.isFinite(pts)) return toast.error("Invalid number");
+
+    try {
+      if (tab === "shorts") {
+        const payload = slugs.map((slug) => ({
+          slug,
+          required_points: pts,
+        }));
+        const { error } = await supabase.from("content_shorts").upsert(payload, { onConflict: "slug", ignoreDuplicates: false });
+        if (error) throw error;
+        setShorts((prev) =>
+          prev.map((r) => (slugs.includes(r.slug) ? { ...r, required_points: pts, dirty: false } : r))
+        );
+      } else {
+        const { error } = await supabase
+          .from("content_modules")
+          .update({ required_points: pts })
+          .in("slug", slugs);
+        if (error) throw error;
+        setModules((prev) =>
+          prev.map((r) => (slugs.includes(r.slug) ? { ...r, required_points: pts, dirty: false } : r))
+        );
+      }
+      toast.success(`Set points to ${pts} for ${slugs.length} item(s)`);
+    } catch (err: any) {
+      console.error(err);
+      toast.error("Bulk update failed");
+    }
+  }
+
+  async function bulkSetActive(active: boolean) {
+    const slugs = getTargets();
+    if (slugs.length === 0) return;
+
+    try {
+      if (tab === "shorts") {
+        const payload = slugs.map((slug) => ({
+          slug,
+          is_active: active,
+        }));
+        const { error } = await supabase.from("content_shorts").upsert(payload, { onConflict: "slug", ignoreDuplicates: false });
+        if (error) throw error;
+        setShorts((prev) =>
+          prev.map((r) => (slugs.includes(r.slug) ? { ...r, is_active: active, dirty: false } : r))
+        );
+      } else {
+        const { error } = await supabase
+          .from("content_modules")
+          .update({ is_active: active })
+          .in("slug", slugs);
+        if (error) throw error;
+        setModules((prev) =>
+          prev.map((r) => (slugs.includes(r.slug) ? { ...r, is_active: active, dirty: false } : r))
+        );
+      }
+      toast.success(`${active ? "Activated" : "Deactivated"} ${slugs.length} item(s)`);
+    } catch (err: any) {
+      console.error(err);
+      toast.error("Bulk update failed");
+    }
+  }
+
+  /* ---------------------------------- UI --------------------------------- */
   return (
-    <div className="max-w-5xl mx-auto p-6 space-y-6">
+    <div className="max-w-6xl mx-auto p-6 space-y-6">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-semibold">Content Gate Manager</h1>
-        <div className="flex gap-2">
-          <Button variant={activeTab === "shorts" ? "default" : "outline"} onClick={() => setActiveTab("shorts")}>Shorts</Button>
-          <Button variant={activeTab === "modules" ? "default" : "outline"} onClick={() => setActiveTab("modules")}>Modules</Button>
+        <div className="inline-flex items-center gap-1">
+          <Badge variant="outline">{tab === "shorts" ? "Shorts" : "Modules"}</Badge>
         </div>
       </div>
 
-      {loading ? (
-        <div>Loading…</div>
-      ) : (
-        <>
-          {activeTab === "shorts" && (
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  Shorts <Badge variant="secondary">{shorts.length}</Badge>
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <QuickAdd kind="shorts" onAdded={loadAll} />
-                <div className="text-xs text-gray-500">Edit requirements and toggle visibility. Changes are immediate on Save.</div>
-
-                {shorts.map((s, idx) => (
-                  <RowEditor
-                    key={s.slug}
-                    row={s}
-                    saving={savingSlug === s.slug}
-                    onChange={(next) => {
-                      const copy = [...shorts];
-                      copy[idx] = next as ShortRow;
-                      setShorts(copy);
-                    }}
-                    onSave={() => saveShort(shorts[idx])}
-                  />
-                ))}
-              </CardContent>
-            </Card>
+      {/* Tabs */}
+      <div className="inline-flex rounded-lg border overflow-hidden">
+        <button
+          className={cx(
+            "px-4 py-2 text-sm",
+            tab === "shorts" ? "bg-black text-white" : "bg-white hover:bg-gray-50"
           )}
-
-          {activeTab === "modules" && (
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  Modules <Badge variant="secondary">{modules.length}</Badge>
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <QuickAdd kind="modules" onAdded={loadAll} />
-                <div className="text-xs text-gray-500">Edit requirements and toggle visibility. Changes are immediate on Save.</div>
-
-                {modules.map((m, idx) => (
-                  <RowEditor
-                    key={m.slug}
-                    row={m}
-                    saving={savingSlug === m.slug}
-                    onChange={(next) => {
-                      const copy = [...modules];
-                      copy[idx] = next as ModuleRow;
-                      setModules(copy);
-                    }}
-                    onSave={() => saveModule(modules[idx])}
-                  />
-                ))}
-              </CardContent>
-            </Card>
+          onClick={() => setTab("shorts")}
+        >
+          Shorts
+        </button>
+        <button
+          className={cx(
+            "px-4 py-2 text-sm border-l",
+            tab === "modules" ? "bg-black text-white" : "bg-white hover:bg-gray-50"
           )}
-        </>
-      )}
+          onClick={() => setTab("modules")}
+        >
+          Modules
+        </button>
+      </div>
+
+      {/* Controls */}
+      <Card>
+        <CardContent className="p-4">
+          <div className="flex flex-col sm:flex-row gap-3 sm:items-center sm:justify-between">
+            <div className="flex gap-2 items-center">
+              <input
+                className="w-64 rounded-md border px-3 py-2 text-sm"
+                placeholder="Search by title or slug…"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+              />
+              <select
+                className="rounded-md border px-2 py-2 text-sm"
+                value={tierFilter}
+                onChange={(e) => setTierFilter(e.target.value as any)}
+              >
+                <option value="all">All tiers</option>
+                <option value="free">Free</option>
+                <option value="pro">Pro</option>
+                <option value="vip">VIP</option>
+              </select>
+              <select
+                className="rounded-md border px-2 py-2 text-sm"
+                value={statusFilter}
+                onChange={(e) => setStatusFilter(e.target.value as any)}
+              >
+                <option value="all">All statuses</option>
+                <option value="active">Active only</option>
+                <option value="inactive">Inactive only</option>
+              </select>
+            </div>
+
+            <div className="flex flex-wrap gap-2">
+              <Button variant="outline" onClick={() => bulkSetTier("free")}>Set Free</Button>
+              <Button variant="outline" onClick={() => bulkSetTier("pro")}>Set Pro</Button>
+              <Button variant="outline" onClick={() => bulkSetTier("vip")}>Set VIP</Button>
+              <Button variant="outline" onClick={bulkSetPoints}>Set Points…</Button>
+              <Button variant="outline" onClick={() => bulkSetActive(true)}>Activate</Button>
+              <Button variant="outline" onClick={() => bulkSetActive(false)}>Deactivate</Button>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Table */}
+      <Card>
+        <CardContent className="p-0 overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead className="bg-gray-50 text-left">
+              <tr>
+                <th className="px-3 py-2 w-10">
+                  <input
+                    type="checkbox"
+                    aria-label="Select all"
+                    checked={allSelected}
+                    onChange={toggleSelectAll}
+                    ref={(el) => {
+                      if (el) el.indeterminate = !allSelected && someSelected;
+                    }}
+                  />
+                </th>
+                <th className="px-3 py-2">Title</th>
+                <th className="px-3 py-2">Slug</th>
+                {tab === "shorts" && <th className="px-3 py-2">Preview</th>}
+                <th className="px-3 py-2">Tier</th>
+                <th className="px-3 py-2">Points</th>
+                <th className="px-3 py-2">Active</th>
+                <th className="px-3 py-2 w-28">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {(tab === "shorts" ? (sLoading ? [] : filtered) : (mLoading ? [] : filtered)).map((r: any) => (
+                <tr key={r.slug} className={cx("border-t", r.dirty && "bg-amber-50")}>
+                  <td className="px-3 py-2">
+                    <input
+                      type="checkbox"
+                      checked={!!r.selected}
+                      onChange={(e) => patchRow(r.slug, { selected: e.target.checked })}
+                    />
+                  </td>
+                  <td className="px-3 py-2">
+                    <div className="font-medium">{r.title}</div>
+                    {tab === "modules" && r.summary && (
+                      <div className="text-xs text-gray-500 line-clamp-1">{r.summary}</div>
+                    )}
+                  </td>
+                  <td className="px-3 py-2 text-gray-600">{r.slug}</td>
+                  {tab === "shorts" && (
+                    <td className="px-3 py-2">
+                      {r.preview ? <Badge variant="outline">Preview</Badge> : <span className="text-gray-400">—</span>}
+                    </td>
+                  )}
+                  <td className="px-3 py-2">
+                    <select
+                      className="rounded-md border px-2 py-1"
+                      value={r.required_tier}
+                      onChange={(e) => patchRow(r.slug, { required_tier: e.target.value as Tier })}
+                    >
+                      {TIERS.map((t) => (
+                        <option key={t} value={t}>{t.toUpperCase()}</option>
+                      ))}
+                    </select>
+                  </td>
+                  <td className="px-3 py-2">
+                    <input
+                      type="number"
+                      min={0}
+                      className="w-24 rounded-md border px-2 py-1"
+                      value={r.required_points}
+                      onChange={(e) =>
+                        patchRow(r.slug, { required_points: Math.max(0, Number(e.target.value || 0)) })
+                      }
+                    />
+                  </td>
+                  <td className="px-3 py-2">
+                    <label className="inline-flex items-center gap-2">
+                      <input
+                        type="checkbox"
+                        checked={!!r.is_active}
+                        onChange={(e) => patchRow(r.slug, { is_active: e.target.checked })}
+                      />
+                      <span className={cx("text-xs", r.is_active ? "text-emerald-600" : "text-gray-500")}>
+                        {r.is_active ? "Active" : "Inactive"}
+                      </span>
+                    </label>
+                  </td>
+                  <td className="px-3 py-2">
+                    <div className="flex gap-2">
+                      <Button size="sm" onClick={() => saveRow(r.slug)} disabled={!r.dirty}>
+                        Save
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => {
+                          // Reload just this row by reloading all; keeps it simple & consistent.
+                          tab === "shorts" ? loadShorts() : loadModules();
+                        }}
+                      >
+                        Reset
+                      </Button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+
+              {(sLoading && tab === "shorts") || (mLoading && tab === "modules") ? (
+                <tr>
+                  <td colSpan={8} className="px-3 py-8 text-center text-gray-500">
+                    Loading…
+                  </td>
+                </tr>
+              ) : filtered.length === 0 ? (
+                <tr>
+                  <td colSpan={8} className="px-3 py-10 text-center text-gray-500">
+                    No items match your filters.
+                  </td>
+                </tr>
+              ) : null}
+            </tbody>
+          </table>
+        </CardContent>
+      </Card>
     </div>
   );
 }
