@@ -5,7 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
-import { Trophy, CheckCircle, ArrowLeft, Clock } from 'lucide-react';
+import { Trophy, CheckCircle, ArrowLeft, Clock, FileDown } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import { usePoints } from '@/context/PointsContext';
 import { useAnalytics } from '@/context/AnalyticsContext';
@@ -16,12 +16,12 @@ import { toast } from 'sonner';
 import { Gate, LockBadge } from '@/components/LockGate';
 import type { Tier } from '@/lib/entitlements';
 
-// Local UX bits
 import VideoPlayer from '@/components/VideoPlayer';
 import { useShortProgress } from "@/hooks/useLocalProgress";
 import { useQuizKeyboard } from "@/hooks/useQuizKeyboard";
 import PointsGainBubble from "@/components/PointsGainBubble";
 import LevelUpBanner from "@/components/LevelUpBanner";
+import { getLocaleCandidates } from '@/lib/locale';
 
 type Short = {
   id: string;
@@ -29,6 +29,14 @@ type Short = {
   title: string;
   video_url: string;
   preview: boolean;
+};
+
+type ShortI18n = {
+  locale: string;
+  title: string | null;
+  description: string | null;
+  video_url: string | null;
+  pdf_url: string | null;
 };
 
 type Question = {
@@ -57,6 +65,11 @@ export default function ShortDetailPage() {
   const navigate = useNavigate();
 
   const [short, setShort] = useState<Short | null>(null);
+  const [resolvedTitle, setResolvedTitle] = useState<string | null>(null);
+  const [resolvedVideo, setResolvedVideo] = useState<string | null>(null);
+  const [resolvedPdf, setResolvedPdf] = useState<string | null>(null);
+  const [resolvedLocale, setResolvedLocale] = useState<string | null>(null);
+
   const [questions, setQuestions] = useState<Question[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -72,12 +85,12 @@ export default function ShortDetailPage() {
   });
   const [submitting, setSubmitting] = useState(false);
 
-  /** 🎉 UI: “+points” bubble + level-up banner */
+  /** 🎉 UI bits */
   const [justGained, setJustGained] = useState<number>(0);
   const [levelOpen, setLevelOpen] = useState(false);
   const [levelMsg, setLevelMsg] = useState<string>("You just crossed a points gate and unlocked more learning content.");
 
-  /** 🔒 Entitlement state */
+  /** 🔒 Gating */
   const [meta, setMeta] = useState<ShortMeta>({
     required_points: 0,
     required_tier: 'free',
@@ -101,6 +114,7 @@ export default function ShortDetailPage() {
   async function loadAll(currSlug: string) {
     setLoading(true);
     try {
+      // 1) Base short
       const { data: shortData, error: shortError } = await supabase
         .from('shorts')
         .select('*')
@@ -108,32 +122,59 @@ export default function ShortDetailPage() {
         .eq('is_published', true)
         .single();
       if (shortError) throw shortError;
-      setShort(shortData as Short);
+      const base = shortData as Short;
+      setShort(base);
 
-      const { data: metaData, error: metaErr } = await supabase
+      // 2) Meta gate
+      const { data: metaData } = await supabase
         .from('content_shorts')
         .select('required_points, required_tier, is_active')
         .eq('slug', currSlug)
         .single();
-      if (!metaErr && metaData) {
+      if (metaData) {
         setMeta({
           required_points: Number(metaData.required_points ?? 0),
           required_tier: (metaData.required_tier ?? 'free') as Tier,
           is_active: Boolean(metaData.is_active ?? true),
         });
-      } else {
-        setMeta({ required_points: 0, required_tier: 'free', is_active: true });
       }
 
+      // 3) Locale resolution: fetch any i18n rows matching candidates, pick best
+      const candidates = getLocaleCandidates(profile?.locale ?? null);
+      const { data: i18nRows } = await supabase
+        .from('content_shorts_i18n')
+        .select('locale, title, description, video_url, pdf_url')
+        .eq('slug', currSlug)
+        .in('locale', candidates);
+
+      let chosen: ShortI18n | null = null;
+      if (i18nRows && i18nRows.length) {
+        // rank by order in candidates
+        i18nRows.sort(
+          (a, b) => candidates.indexOf(a.locale) - candidates.indexOf(b.locale)
+        );
+        chosen = i18nRows[0] as ShortI18n;
+      }
+
+      const finalTitle = chosen?.title ?? base.title;
+      const finalVideo = chosen?.video_url || base.video_url || null;
+      const finalPdf = chosen?.pdf_url || null;
+      setResolvedTitle(finalTitle);
+      setResolvedVideo(finalVideo);
+      setResolvedPdf(finalPdf);
+      setResolvedLocale(chosen?.locale || null);
+
+      // 4) Questions (language-agnostic for now)
       const { data: questionsData, error: questionsError } = await supabase
         .from('quiz_bank')
         .select('*')
         .eq('kind', 'short')
-        .eq('ref_id', (shortData as Short).id)
+        .eq('ref_id', base.id)
         .order('created_at', { ascending: true });
       if (questionsError) throw questionsError;
       setQuestions((questionsData || []) as Question[]);
 
+      // 5) Points for gating
       let pointsNow = Number(totalPoints ?? 0);
       if (!pointsNow && user?.id) {
         const { data: pt } = await supabase
@@ -153,7 +194,7 @@ export default function ShortDetailPage() {
     }
   }
 
-  // Mark as watched at >=95% progress
+  // Mark watched at >=95%
   useEffect(() => {
     if (!videoWatched && watchProgress >= 95) setVideoWatched(true);
   }, [watchProgress, videoWatched]);
@@ -172,7 +213,7 @@ export default function ShortDetailPage() {
     }
   };
 
-  // Auto-focus selected/first option on question change
+  // Autofocus on question change
   useEffect(() => {
     if (!optionsWrapRef.current || quizState.showResults) return;
     const selectedIdx = quizState.answers[quizState.currentQuestion];
@@ -182,7 +223,7 @@ export default function ShortDetailPage() {
     sel?.focus();
   }, [quizState.currentQuestion, quizState.showResults, quizState.answers]);
 
-  // Keyboard shortcuts: 1–9 to select, Enter/→ to Next
+  // Keyboard shortcuts
   const optsCount = questions[quizState.currentQuestion]?.options?.length ?? 0;
   useQuizKeyboard({
     enabled: videoWatched && !quizState.showResults && optsCount > 0,
@@ -209,24 +250,18 @@ export default function ShortDetailPage() {
         setLevelMsg(`You reached ${newPoints} points and unlocked content (gate: ${nextGate}).`);
         setLevelOpen(true);
       }
-    } catch {
-      /* non-blocking */
-    }
+    } catch { /* noop */ }
   }
 
   const finishQuiz = async () => {
-    const correctCount = questions.reduce((count, question, index) => {
-      return count + (quizState.answers[index] === question.correct_index ? 1 : 0);
-    }, 0);
-
+    const correctCount = questions.reduce((count, q, i) => count + (quizState.answers[i] === q.correct_index ? 1 : 0), 0);
     setQuizState(prev => ({ ...prev, showResults: true, correctCount }));
 
     if (correctCount > 0 && user) {
       setSubmitting(true);
       try {
-        const pointsAwarded = questions.reduce((sum, q, i) => {
-          return sum + (quizState.answers[i] === q.correct_index ? Number(q.points_award ?? 0) : 0);
-        }, 0);
+        const pointsAwarded = questions.reduce((sum, q, i) =>
+          sum + (quizState.answers[i] === q.correct_index ? Number(q.points_award ?? 0) : 0), 0);
 
         const prev = userPoints;
 
@@ -236,14 +271,14 @@ export default function ShortDetailPage() {
           reason: 'Video Quiz',
           meta: {
             short_id: short!.id,
-            short_title: short!.title,
+            short_title: resolvedTitle ?? short!.title,
             correct_count: correctCount,
             total_questions: questions.length,
+            locale: resolvedLocale ?? undefined,
           },
         }]);
 
         setJustGained(pointsAwarded);
-
         if (typeof refreshPoints === 'function') await refreshPoints();
 
         const { data: pt } = await supabase
@@ -262,6 +297,7 @@ export default function ShortDetailPage() {
           correct_count: correctCount,
           total_questions: questions.length,
           points_awarded: pointsAwarded,
+          locale: resolvedLocale ?? undefined,
         });
       } catch (error) {
         console.error('Error saving quiz results:', error);
@@ -299,6 +335,9 @@ export default function ShortDetailPage() {
     );
   }
 
+  const displayTitle = resolvedTitle ?? short.title;
+  const videoUrl = resolvedVideo ?? short.video_url ?? '';
+
   return (
     <div className="max-w-4xl mx-auto space-y-6">
       {/* Header */}
@@ -321,7 +360,7 @@ export default function ShortDetailPage() {
       {/* Video Section (🔒 gated) */}
       <Card>
         <CardHeader>
-          <CardTitle className="text-2xl">{short.title}</CardTitle>
+          <CardTitle className="text-2xl">{displayTitle}</CardTitle>
         </CardHeader>
 
         <CardContent className="space-y-6">
@@ -346,7 +385,7 @@ export default function ShortDetailPage() {
             {/* Responsive 16:9 player */}
             <div className="relative w-full h-0" style={{ paddingBottom: '56.25%' }}>
               <VideoPlayer
-                url={short.video_url}
+                url={videoUrl}
                 className="absolute inset-0"
                 onProgress={(pct) => {
                   setWatchProgress(pct);
@@ -360,10 +399,23 @@ export default function ShortDetailPage() {
               />
             </div>
 
-            {/* Progress under player */}
-            <div>
-              <Progress value={watchProgress} className="h-2" />
-              <p className="mt-2 text-xs text-muted-foreground">{watchProgress}% watched</p>
+            {/* Progress + localized PDF */}
+            <div className="flex items-center justify-between flex-wrap gap-3">
+              <div>
+                <Progress value={watchProgress} className="h-2" />
+                <p className="mt-2 text-xs text-muted-foreground">{watchProgress}% watched</p>
+              </div>
+              {resolvedPdf && (
+                <a
+                  href={resolvedPdf}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex items-center gap-2 text-sm underline underline-offset-2"
+                >
+                  <FileDown className="w-4 h-4" />
+                  Download handout (PDF){resolvedLocale ? ` — ${resolvedLocale}` : ''}
+                </a>
+              )}
             </div>
           </Gate>
         </CardContent>
