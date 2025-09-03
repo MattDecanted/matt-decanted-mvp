@@ -10,14 +10,36 @@ export default {
     './pages/**/*.{ts,tsx}',
     './components/**/*.{ts,tsx}',
     './app/**/*.{ts,tsx}',
+    // (optional) include brand css folder if you keep extra styles there
+    './src/styles/**/*.{css}',
   ],
+
+  // ✅ Keep these classes from being purged (we use them across the app)
+  safelist: [
+    'text-brand',
+    'bg-brand-orange',
+    'hover:bg-brand-600',
+    'border-brand',
+    'bg-brand-100',
+    'btn-brand',
+    'chip',
+  ],
+
   theme: {
+    container: {
+      center: true,
+      padding: '1rem',
+      screens: {
+        '2xl': '72rem', // ~1152px, tweak to match your Bolt max width
+      },
+    },
     extend: {
       borderRadius: {
         lg: 'var(--radius)',
         md: 'calc(var(--radius) - 2px)',
         sm: 'calc(var(--radius) - 4px)',
       },
+
       colors: {
         /* shadcn-style tokens wired to CSS vars (keep as-is if you use them) */
         background: 'hsl(var(--background))',
@@ -25,9 +47,9 @@ export default {
         card: { DEFAULT: 'hsl(var(--card-hsl))', foreground: 'hsl(var(--card-foreground))' },
         popover: { DEFAULT: 'hsl(var(--popover))', foreground: 'hsl(var(--popover-foreground))' },
         primary: { DEFAULT: 'hsl(var(--primary))', foreground: 'hsl(var(--primary-foreground))' },
-        secondary:{ DEFAULT: 'hsl(var(--secondary))', foreground: 'hsl(var(--secondary-foreground))' },
-        muted:    { DEFAULT: 'hsl(var(--muted))', foreground: 'hsl(var(--muted-foreground))' },
-        accent:   { DEFAULT: 'hsl(var(--accent-hsl))', foreground: 'hsl(var(--accent-foreground))' },
+        secondary: { DEFAULT: 'hsl(var(--secondary))', foreground: 'hsl(var(--secondary-foreground))' },
+        muted: { DEFAULT: 'hsl(var(--muted))', foreground: 'hsl(var(--muted-foreground))' },
+        accent: { DEFAULT: 'hsl(var(--accent-hsl))', foreground: 'hsl(var(--accent-foreground))' },
         destructive: { DEFAULT: 'hsl(var(--destructive))', foreground: 'hsl(var(--destructive-foreground))' },
         border: 'hsl(var(--border))',
         input: 'hsl(var(--input))',
@@ -42,22 +64,29 @@ export default {
 
         /* === Matt Decanted brand palette === */
         brand: {
-          /* semantic aliases */
-          primary: '#1F40C6',      // main brand blue (links/CTA variants)
-          orange:  '#FF9500',      // highlight / Sign Up / top accent
-          blue:    '#3B82F6',      // secondary CTA / info
-          purple:  '#8B5CF6',      // member-only / premium
-          green:   '#10B981',      // success
-          navy:    '#1E293B',      // dark/footer
-          soft:    '#F3F4F6',      // light cards / backgrounds
-          wine:    '#7F1D1D',      // wine accent (optional)
-          ink:     '#111827',      // primary text
-          paper:   '#FAFAFA',      // page background
+          // semantic aliases
+          primary: '#1F40C6',   // main brand blue (links/CTA variants)
+          orange:  '#FF9500',   // highlight / Sign Up / top accent
+          blue:    '#3B82F6',   // secondary CTA / info
+          purple:  '#8B5CF6',   // member-only / premium
+          green:   '#10B981',   // success
+          navy:    '#1E293B',   // dark/footer
+          soft:    '#F3F4F6',   // light cards / backgrounds
+          wine:    '#7F1D1D',   // wine accent (optional)
+          ink:     '#111827',   // primary text
+          paper:   '#FAFAFA',   // page background
         },
       },
+
       keyframes: {
-        'accordion-down': { from: { height: '0' }, to: { height: 'var(--radix-accordion-content-height)' } },
-        'accordion-up':   { from: { height: 'var(--radix-accordion-content-height)' }, to: { height: '0' } },
+        'accordion-down': {
+          from: { height: '0' },
+          to: { height: 'var(--radix-accordion-content-height)' },
+        },
+        'accordion-up': {
+          from: { height: 'var(--radix-accordion-content-height)' },
+          to: { height: '0' },
+        },
       },
       animation: {
         'accordion-down': 'accordion-down 0.2s ease-out',
