@@ -10,6 +10,7 @@ type Profile = {
   country: string | null;
   state: string | null;
   terms_accepted_at: string | null;
+  terms_version?: string | null; // ⬅️ NEW (optional TS field)
   marketing_opt_in: boolean | null;
   stripe_customer_id: string | null;
 };
@@ -62,7 +63,7 @@ async function createStripeCustomerIfNeeded(alias: string) {
   }
 }
 
-/** ---- NEW: suggest alternates when a collision happens ---- */
+/** ---- suggest alternates when a collision happens ---- */
 function suggestAliases(base: string): string[] {
   const clean = (base || "").replace(/[^A-Za-z0-9_]/g, "").slice(0, ALIAS_MAX);
   const rnd = () => Math.floor(10 + Math.random() * 89); // 2 digits
@@ -78,6 +79,9 @@ function suggestAliases(base: string): string[] {
   }
   return Array.from(options).slice(0, 3);
 }
+
+// ⬅️ NEW: bump this whenever /terms content changes
+const TERMS_VERSION = "2025-09-03";
 
 export default function Onboarding() {
   const { user } = useAuth();
@@ -95,7 +99,7 @@ export default function Onboarding() {
   const [msg, setMsg] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
 
-  // NEW: hold suggestions to render buttons on collision
+  // hold suggestions to render buttons on collision
   const [aliasSuggestions, setAliasSuggestions] = useState<string[]>([]);
 
   const isAU = country === "Australia";
@@ -184,11 +188,12 @@ export default function Onboarding() {
           state: stateRegion || null,
           marketing_opt_in: marketing,
           terms_accepted_at: new Date().toISOString(),
+          terms_version: TERMS_VERSION, // ⬅️ NEW
         })
         .eq("id", user?.id);
 
       if (upErr) {
-        // NEW: Detect unique violation (Postgres 23505) and suggest alternates
+        // Detect unique violation (Postgres 23505) and suggest alternates
         const code = (upErr as any)?.code || (upErr as any)?.details?.code;
         if (code === "23505" || String(upErr?.message || "").toLowerCase().includes("duplicate key")) {
           setErr("That alias was just claimed by someone else. Try one of these:");
@@ -213,9 +218,7 @@ export default function Onboarding() {
     setAlias(s);
     setAliasOK(null);
     setAliasSuggestions([]);
-    // Optional: re-check, but we can trust DB; still, UX feels snappy:
     await checkAlias();
-    // If OK (or unknown), attempt save right away:
     save();
   }
 
