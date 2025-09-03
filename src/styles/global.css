@@ -22,11 +22,6 @@
     --card: 255 255 255;     /* #FFFFFF */
     --line: 229 231 235;     /* #E5E7EB */
 
-    /* tighter brand stack if you want it slightly smaller */
-.header-brand .title { font-weight: 600; color: #111827; }
-.header-brand .subtitle { margin-top:-2px; font-size:11px; color:#6B7280; }
-
-
     /* ---- Light theme tokens (shadcn-style) ---- */
     --background: 0 0% 100%;
     --foreground: 0 0% 3.9%;
@@ -93,6 +88,10 @@
            hover:border-border focus:outline-none focus-visible:ring-2 focus-visible:ring-ring;
   }
 }
+
+/* ✅ These belong OUTSIDE :root */
+.header-brand .title { font-weight: 600; color: #111827; }
+.header-brand .subtitle { margin-top:-2px; font-size:11px; color:#6B7280; }
 
 /* === Bolt-style helpers === */
 .top-accent { height: 3px; background: rgb(var(--accent)); }
