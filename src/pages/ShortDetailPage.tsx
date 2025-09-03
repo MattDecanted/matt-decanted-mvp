@@ -1,4 +1,3 @@
-// src/pages/ShortDetailPage.tsx
 import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -20,6 +19,7 @@ import type { Tier } from '@/lib/entitlements';
 import { useShortProgress } from "@/hooks/useLocalProgress";
 import { useQuizKeyboard } from "@/hooks/useQuizKeyboard";
 import PointsGainBubble from "@/components/PointsGainBubble";
+import LevelUpBanner from "@/components/LevelUpBanner";
 
 type Short = {
   id: string;
@@ -34,7 +34,7 @@ type Question = {
   question: string;
   options: string[];
   correct_index: number;
-  points_award: number; // points for this question when correct
+  points_award: number;
 };
 
 type QuizState = {
@@ -70,8 +70,10 @@ export default function ShortDetailPage() {
   });
   const [submitting, setSubmitting] = useState(false);
 
-  /** 🎉 “+points” bubble */
+  /** 🎉 UI: “+points” bubble + level-up banner */
   const [justGained, setJustGained] = useState<number>(0);
+  const [levelOpen, setLevelOpen] = useState(false);
+  const [levelMsg, setLevelMsg] = useState<string>("You just crossed a points gate and unlocked more learning content.");
 
   /** 🔒 Entitlement state */
   const [meta, setMeta] = useState<ShortMeta>({
@@ -221,8 +223,13 @@ export default function ShortDetailPage() {
         const mod = await import('canvas-confetti');
         mod.default({ particleCount: 120, spread: 70, origin: { y: 0.6 } });
         toast.success('New content unlocked! 🎉');
+        // Open banner
+        setLevelMsg(`You reached ${newPoints} points and unlocked content (gate: ${nextGate}).`);
+        setLevelOpen(true);
       }
-    } catch { /* non-blocking */ }
+    } catch {
+      /* non-blocking */
+    }
   }
 
   const finishQuiz = async () => {
@@ -275,7 +282,7 @@ export default function ShortDetailPage() {
         const now = Number(pt?.total_points ?? prev + pointsAwarded);
         setUserPoints(now);
 
-        // 🎉 confetti if you crossed a content gate
+        // 🎉 celebrate if you crossed a gate
         maybeConfettiOnUnlock(prev, now);
 
         toast.success(`Great job! You earned ${pointsAwarded} points!`);
@@ -534,6 +541,15 @@ export default function ShortDetailPage() {
       {justGained > 0 && (
         <PointsGainBubble amount={justGained} onDone={() => setJustGained(0)} />
       )}
+
+      {/* 🎉 Level-up banner */}
+      <LevelUpBanner
+        open={levelOpen}
+        onClose={() => setLevelOpen(false)}
+        message={levelMsg}
+        ctaText="Explore Shorts"
+        ctaHref="/shorts"
+      />
     </div>
   );
 }
