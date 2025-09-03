@@ -19,44 +19,80 @@ const json = (status, body) => ({
   body: JSON.stringify(body),
 });
 
+const requiredEnv = (key) => {
+  const val = process.env[key];
+  if (!val) throw new Error(`Missing environment variable: ${key}`);
+  return val;
+};
+
+const parseBody = (event) => {
+  if (!event.body) return {};
+  try {
+    const raw = event.isBase64Encoded
+      ? Buffer.from(event.body, 'base64').toString('utf8')
+      : event.body;
+    return JSON.parse(raw || '{}');
+  } catch {
+    throw new Error('Invalid JSON body');
+  }
+};
+
 exports.handler = async (event) => {
+  // CORS preflight
   if (event.httpMethod === 'OPTIONS') return json(200, { ok: true });
-  if (event.httpMethod !== 'POST') return json(405, { error: 'Method not allowed' });
+
+  if (event.httpMethod !== 'POST') {
+    return json(405, { error: 'Method not allowed' });
+  }
 
   try {
-    const auth = event.headers.authorization || '';
+    // ----- Env validation -----
+    const SUPABASE_URL = requiredEnv('SUPABASE_URL');
+    // Use SERVICE_ROLE_KEY (your build log lists both; this one has RLS bypass for admin ops)
+    const SUPABASE_SERVICE_ROLE_KEY = requiredEnv('SUPABASE_SERVICE_ROLE_KEY');
+    const STRIPE_SECRET_KEY = requiredEnv('STRIPE_SECRET_KEY');
+
+    // ----- Auth header -> access token -----
+    const auth = event.headers.authorization || event.headers.Authorization || '';
     const m = auth.match(/^Bearer\s+(.+)$/i);
     if (!m) return json(401, { error: 'Missing bearer token' });
     const accessToken = m[1];
 
-    const supabaseAdmin = createClient(
-      process.env.SUPABASE_URL,
-      process.env.SUPABASE_SERVICE_ROLE_KEY
-    );
+    // ----- Supabase (admin) -----
+    const supabaseAdmin = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
     // Validate token → get user
     const { data: userRes, error: userErr } = await supabaseAdmin.auth.getUser(accessToken);
     if (userErr || !userRes?.user) return json(401, { error: 'Invalid token' });
     const user = userRes.user;
 
-    // Load profile (need alias, country, state, email)
+    // ----- Read profile -----
     const { data: prof, error: pErr } = await supabaseAdmin
       .from('profiles')
       .select('id, email, alias, country, state, stripe_customer_id')
       .eq('id', user.id)
       .single();
-    if (pErr) return json(500, { error: 'Unable to read profile', detail: pErr.message });
+
+    if (pErr) {
+      return json(500, { error: 'Unable to read profile', detail: pErr.message });
+    }
 
     if (prof?.stripe_customer_id) {
       return json(200, { status: 'exists', stripe_customer_id: prof.stripe_customer_id });
     }
 
-    const stripe = new Stripe(process.env.STRIPE_SECRET_KEY, { apiVersion: '2024-06-20' });
+    // ----- Body -----
+    const body = parseBody(event);
+    const name =
+      body.name ||
+      prof?.alias ||
+      user.user_metadata?.name ||
+      user.user_metadata?.full_name ||
+      undefined;
 
-    const body = event.body ? JSON.parse(event.body || '{}') : {};
-    const name = body.name || prof?.alias || user.user_metadata?.name || undefined;
+    // ----- Stripe -----
+    const stripe = new Stripe(STRIPE_SECRET_KEY, { apiVersion: '2024-06-20' });
 
-    // Create Stripe customer
     const customer = await stripe.customers.create({
       email: prof?.email || user.email || undefined,
       name,
@@ -68,13 +104,19 @@ exports.handler = async (event) => {
       },
     });
 
-    // Persist back to profiles (only if still null to avoid overwriting)
+    // Only update if still null to avoid overwriting in a race
     const { error: upErr } = await supabaseAdmin
       .from('profiles')
       .update({ stripe_customer_id: customer.id })
       .eq('id', user.id)
       .is('stripe_customer_id', null);
-    if (upErr) return json(500, { error: 'Failed to save stripe_customer_id', detail: upErr.message });
+
+    if (upErr) {
+      return json(500, {
+        error: 'Failed to save stripe_customer_id',
+        detail: upErr.message,
+      });
+    }
 
     return json(200, { status: 'created', stripe_customer_id: customer.id });
   } catch (e) {
