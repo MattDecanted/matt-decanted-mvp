@@ -58,6 +58,13 @@ import AuthCallbackPage from '@/pages/AuthCallbackPage';
 // ✅ NEW: Onboarding page (created in Step 5)
 import Onboarding from '@/pages/Onboarding';
 
+// ✅ NEW: Modules pages
+import ModulesIndex from '@/pages/ModulesIndex';
+import ModuleDetail from '@/pages/ModuleDetail';
+
+// ✅ NEW: Admin Content Gate Manager
+import ContentGateManager from '@/pages/admin/ContentGateManager';
+
 const FN_SUBMIT = '/.netlify/functions/trial-quiz-attempt';
 const PENDING_KEY = 'md_trial_pending';
 
@@ -304,9 +311,31 @@ function App() {
                       }
                     />
 
-                    {/* Shorts (public) */}
+                    {/* Shorts (public list + gated detail handled in page) */}
                     <Route path="/shorts" element={<ShortsPage />} />
                     <Route path="/shorts/:slug" element={<ShortDetailPage />} />
+
+                    {/* Modules (gated) */}
+                    <Route
+                      path="/modules"
+                      element={
+                        <RequireAuth>
+                          <RequireOnboarded>
+                            <ModulesIndex />
+                          </RequireOnboarded>
+                        </RequireAuth>
+                      }
+                    />
+                    <Route
+                      path="/modules/:slug"
+                      element={
+                        <RequireAuth>
+                          <RequireOnboarded>
+                            <ModuleDetail />
+                          </RequireOnboarded>
+                        </RequireAuth>
+                      }
+                    />
 
                     {/* Daily Quiz (gated) */}
                     <Route
@@ -363,6 +392,15 @@ function App() {
                       element={
                         <RequireAdmin>
                           <SwirdleAdmin />
+                        </RequireAdmin>
+                      }
+                    />
+                    {/* ✅ NEW: Admin Content Gate Manager */}
+                    <Route
+                      path="/admin/content"
+                      element={
+                        <RequireAdmin>
+                          <ContentGateManager />
                         </RequireAdmin>
                       }
                     />
