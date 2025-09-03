@@ -16,35 +16,36 @@ import { toast } from 'sonner';
 import { Gate, LockBadge } from '@/components/LockGate';
 import PointsProgressChip from "@/components/PointsProgressChip";
 import type { Tier } from '@/lib/entitlements';
+import { useShortProgress } from "@/hooks/useLocalProgress";
 
-interface Short {
+type Short = {
   id: string;
   slug: string;
   title: string;
   video_url: string;
   preview: boolean;
-}
+};
 
-interface Question {
+type Question = {
   id: string;
   question: string;
   options: string[];
   correct_index: number;
   points_award: number; // points for this question when correct
-}
+};
 
-interface QuizState {
+type QuizState = {
   currentQuestion: number;
   answers: number[];
   showResults: boolean;
   correctCount: number;
-}
+};
 
-interface ShortMeta {
+type ShortMeta = {
   required_points: number;
   required_tier: Tier;
   is_active: boolean;
-}
+};
 
 export default function ShortDetailPage() {
   const { slug } = useParams<{ slug: string }>();
@@ -56,6 +57,8 @@ export default function ShortDetailPage() {
 
   const [videoWatched, setVideoWatched] = useState(false);
   const [watchProgress, setWatchProgress] = useState(0);
+  const { setPercent: saveLocalPercent } = useShortProgress(slug);
+
   const [quizState, setQuizState] = useState<QuizState>({
     currentQuestion: 0,
     answers: [],
@@ -88,7 +91,6 @@ export default function ShortDetailPage() {
   async function loadAll(currSlug: string) {
     setLoading(true);
     try {
-      // 1) Load short details (content)
       const { data: shortData, error: shortError } = await supabase
         .from('shorts')
         .select('*')
@@ -98,7 +100,6 @@ export default function ShortDetailPage() {
       if (shortError) throw shortError;
       setShort(shortData as Short);
 
-      // 2) Load entitlement metadata (required tier/points)
       const { data: metaData, error: metaErr } = await supabase
         .from('content_shorts')
         .select('required_points, required_tier, is_active')
@@ -111,11 +112,9 @@ export default function ShortDetailPage() {
           is_active: Boolean(metaData.is_active ?? true),
         });
       } else {
-        // fallback if no gating meta row exists
         setMeta({ required_points: 0, required_tier: 'free', is_active: true });
       }
 
-      // 3) Load quiz questions (if any)
       const { data: questionsData, error: questionsError } = await supabase
         .from('quiz_bank')
         .select('*')
@@ -125,7 +124,6 @@ export default function ShortDetailPage() {
       if (questionsError) throw questionsError;
       setQuestions((questionsData || []) as Question[]);
 
-      // 4) Determine user points for gating (prefer context, else query)
       let pointsNow = Number(totalPoints ?? 0);
       if (!pointsNow && user?.id) {
         const { data: pt, error: ptErr } = await supabase
@@ -149,7 +147,8 @@ export default function ShortDetailPage() {
   const simulateVideoWatch = () => {
     const interval = setInterval(() => {
       setWatchProgress(prev => {
-        const newProgress = prev + 2; // Simulate 2% progress every 100ms
+        const newProgress = prev + 2;
+        saveLocalPercent(newProgress);
         if (newProgress >= 100) {
           clearInterval(interval);
           setVideoWatched(true);
@@ -177,6 +176,32 @@ export default function ShortDetailPage() {
     }
   };
 
+  async function maybeConfettiOnUnlock(prevPoints: number, newPoints: number) {
+    try {
+      // Find the next gate above prevPoints
+      const { data, error } = await supabase
+        .from('content_shorts')
+        .select('required_points')
+        .gt('required_points', prevPoints)
+        .order('required_points', { ascending: true })
+        .limit(1);
+      if (error || !data || data.length === 0) return;
+
+      const nextGate = Number(data[0].required_points || 0);
+      if (newPoints >= nextGate) {
+        const mod = await import('canvas-confetti');
+        mod.default({
+          particleCount: 120,
+          spread: 70,
+          origin: { y: 0.6 }
+        });
+        toast.success('New content unlocked! 🎉');
+      }
+    } catch {
+      // non-blocking
+    }
+  }
+
   const finishQuiz = async () => {
     const correctCount = questions.reduce((count, question, index) => {
       return count + (quizState.answers[index] === question.correct_index ? 1 : 0);
@@ -196,11 +221,13 @@ export default function ShortDetailPage() {
           return sum + (quizState.answers[i] === q.correct_index ? Number(q.points_award ?? 0) : 0);
         }, 0);
 
+        const prev = userPoints;
+
         await supabase
           .from('points_ledger')
           .insert([{
             user_id: user.id,
-            points: pointsAwarded, // your ledger’s numeric column; totals view will handle it
+            points: pointsAwarded,
             reason: 'Video Quiz',
             meta: {
               short_id: short!.id,
@@ -214,7 +241,17 @@ export default function ShortDetailPage() {
         if (typeof refreshPoints === 'function') {
           await refreshPoints();
         }
-        setUserPoints(prev => prev + pointsAwarded);
+
+        const { data: pt } = await supabase
+          .from('user_points_totals_v1')
+          .select('total_points')
+          .eq('user_id', user.id)
+          .maybeSingle();
+        const now = Number(pt?.total_points ?? prev + pointsAwarded);
+        setUserPoints(now);
+
+        // 🎉 confetti if you crossed a content gate
+        maybeConfettiOnUnlock(prev, now);
 
         track('short_quiz_complete', {
           short_id: short!.id,
@@ -278,10 +315,7 @@ export default function ShortDetailPage() {
             <Clock className="h-3 w-3" />
             <span>~5 min</span>
           </Badge>
-          <div className="flex flex-col items-end gap-1">
-            <LockBadge requiredTier={meta.required_tier} requiredPoints={meta.required_points} />
-            <PointsProgressChip userPoints={userPoints} requiredPoints={meta.required_points} />
-          </div>
+          <LockBadge requiredTier={meta.required_tier} requiredPoints={meta.required_points} />
           {short.preview && <Badge variant="outline">Preview</Badge>}
         </div>
       </div>
@@ -369,7 +403,6 @@ export default function ShortDetailPage() {
             <CardContent className="space-y-6">
               {!quizState.showResults ? (
                 <>
-                  {/* Progress */}
                   <div className="space-y-2">
                     <div className="flex justify-between text-sm text-muted-foreground">
                       <span>Question {quizState.currentQuestion + 1} of {questions.length}</span>
@@ -380,7 +413,6 @@ export default function ShortDetailPage() {
                     />
                   </div>
 
-                  {/* Current Question */}
                   <div className="space-y-4">
                     <h3 className="text-lg font-medium">
                       {questions[quizState.currentQuestion].question}
@@ -400,7 +432,6 @@ export default function ShortDetailPage() {
                     </div>
                   </div>
 
-                  {/* Navigation */}
                   <div className="flex justify-end">
                     <Button
                       onClick={handleNext}
@@ -411,7 +442,6 @@ export default function ShortDetailPage() {
                   </div>
                 </>
               ) : (
-                /* Results */
                 <div className="text-center space-y-6">
                   <div className="space-y-2">
                     <div className="w-16 h-16 bg-primary/10 rounded-full flex items-center justify-center mx-auto">
@@ -423,7 +453,6 @@ export default function ShortDetailPage() {
                     </p>
                   </div>
 
-                  {/* Score */}
                   <div className="bg-muted/50 rounded-lg p-4">
                     <div className="text-2xl font-bold text-primary mb-1">
                       {
