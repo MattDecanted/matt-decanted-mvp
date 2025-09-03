@@ -65,6 +65,9 @@ import ModuleDetail from '@/pages/ModuleDetail';
 // ✅ NEW: Admin Content Gate Manager
 import ContentGateManager from '@/pages/admin/ContentGateManager';
 
+// ✅ NEW: Admin Users Manager
+import UsersManager from '@/pages/admin/UsersManager';
+
 const FN_SUBMIT = '/.netlify/functions/trial-quiz-attempt';
 const PENDING_KEY = 'md_trial_pending';
 
@@ -401,6 +404,15 @@ function App() {
                       element={
                         <RequireAdmin>
                           <ContentGateManager />
+                        </RequireAdmin>
+                      }
+                    />
+                    {/* ✅ NEW: Admin Users Manager */}
+                    <Route
+                      path="/admin/users"
+                      element={
+                        <RequireAdmin>
+                          <UsersManager />
                         </RequireAdmin>
                       }
                     />
