@@ -1,3 +1,4 @@
+// src/pages/ShortDetailPage.tsx
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -10,6 +11,10 @@ import { usePoints } from '@/context/PointsContext';
 import { useAnalytics } from '@/context/AnalyticsContext';
 import { supabase } from '@/lib/supabase';
 import { toast } from 'sonner';
+
+/** 🔒 Entitlements */
+import { Gate, LockBadge } from '@/components/LockGate';
+import type { Tier } from '@/lib/entitlements';
 
 interface Short {
   id: string;
@@ -24,7 +29,7 @@ interface Question {
   question: string;
   options: string[];
   correct_index: number;
-  points_award: number;
+  points_award: number; // points for this question when correct
 }
 
 interface QuizState {
@@ -34,13 +39,20 @@ interface QuizState {
   correctCount: number;
 }
 
+interface ShortMeta {
+  required_points: number;
+  required_tier: Tier;
+  is_active: boolean;
+}
+
 export default function ShortDetailPage() {
   const { slug } = useParams<{ slug: string }>();
   const navigate = useNavigate();
-  
+
   const [short, setShort] = useState<Short | null>(null);
   const [questions, setQuestions] = useState<Question[]>([]);
   const [loading, setLoading] = useState(true);
+
   const [videoWatched, setVideoWatched] = useState(false);
   const [watchProgress, setWatchProgress] = useState(0);
   const [quizState, setQuizState] = useState<QuizState>({
@@ -51,39 +63,78 @@ export default function ShortDetailPage() {
   });
   const [submitting, setSubmitting] = useState(false);
 
-  const { user } = useAuth();
-  const { refreshPoints } = usePoints();
+  /** 🔒 Entitlement state */
+  const [meta, setMeta] = useState<ShortMeta>({
+    required_points: 0,
+    required_tier: 'free',
+    is_active: true,
+  });
+  const [userPoints, setUserPoints] = useState<number>(0);
+
+  const { user, profile } = useAuth() as any;
+  const userTier: Tier = (profile?.membership_tier || 'free') as Tier;
+
+  const { refreshPoints, totalPoints } = (usePoints() as any) || {};
   const { track } = useAnalytics();
 
   useEffect(() => {
     if (slug) {
-      loadShortAndQuestions();
+      loadAll(slug);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [slug]);
 
-  const loadShortAndQuestions = async () => {
+  async function loadAll(currSlug: string) {
+    setLoading(true);
     try {
-      // Load short details
+      // 1) Load short details (content)
       const { data: shortData, error: shortError } = await supabase
         .from('shorts')
         .select('*')
-        .eq('slug', slug)
+        .eq('slug', currSlug)
         .eq('is_published', true)
         .single();
-
       if (shortError) throw shortError;
-      setShort(shortData);
+      setShort(shortData as Short);
 
-      // Load quiz questions
+      // 2) Load entitlement metadata (required tier/points)
+      const { data: metaData, error: metaErr } = await supabase
+        .from('content_shorts')
+        .select('required_points, required_tier, is_active')
+        .eq('slug', currSlug)
+        .single();
+      if (!metaErr && metaData) {
+        setMeta({
+          required_points: Number(metaData.required_points ?? 0),
+          required_tier: (metaData.required_tier ?? 'free') as Tier,
+          is_active: Boolean(metaData.is_active ?? true),
+        });
+      } else {
+        // fallback if no gating meta row exists
+        setMeta({ required_points: 0, required_tier: 'free', is_active: true });
+      }
+
+      // 3) Load quiz questions (if any)
       const { data: questionsData, error: questionsError } = await supabase
         .from('quiz_bank')
         .select('*')
         .eq('kind', 'short')
-        .eq('ref_id', shortData.id)
+        .eq('ref_id', (shortData as Short).id)
         .order('created_at', { ascending: true });
-
       if (questionsError) throw questionsError;
-      setQuestions(questionsData || []);
+      setQuestions((questionsData || []) as Question[]);
+
+      // 4) Determine user points for gating (prefer context, else query)
+      let pointsNow = Number(totalPoints ?? 0);
+      if (!pointsNow && user?.id) {
+        const { data: pt, error: ptErr } = await supabase
+          .from('user_points_totals_v1')
+          .select('total_points')
+          .eq('user_id', user.id)
+          .maybeSingle();
+        if (!ptErr && pt) pointsNow = Number(pt.total_points ?? 0);
+      }
+      setUserPoints(pointsNow);
     } catch (error) {
       console.error('Error loading content:', error);
       toast.error('Failed to load video');
@@ -91,8 +142,9 @@ export default function ShortDetailPage() {
     } finally {
       setLoading(false);
     }
-  };
+  }
 
+  /** Fake player – simulate progress */
   const simulateVideoWatch = () => {
     const interval = setInterval(() => {
       setWatchProgress(prev => {
@@ -135,17 +187,19 @@ export default function ShortDetailPage() {
       correctCount,
     }));
 
-    // Award points for correct answers
+    // Award points = sum of points_award for correct answers
     if (correctCount > 0 && user) {
       setSubmitting(true);
       try {
-        const pointsAwarded = correctCount * 5; // 5 points per correct answer
+        const pointsAwarded = questions.reduce((sum, q, i) => {
+          return sum + (quizState.answers[i] === q.correct_index ? Number(q.points_award ?? 0) : 0);
+        }, 0);
 
         await supabase
           .from('points_ledger')
           .insert([{
             user_id: user.id,
-            points: pointsAwarded,
+            points: pointsAwarded, // your ledger’s numeric column; totals view will handle it
             reason: 'Video Quiz',
             meta: {
               short_id: short!.id,
@@ -156,7 +210,10 @@ export default function ShortDetailPage() {
           }]);
 
         toast.success(`Great job! You earned ${pointsAwarded} points!`);
-        await refreshPoints();
+        if (typeof refreshPoints === 'function') {
+          await refreshPoints();
+        }
+        setUserPoints(prev => prev + pointsAwarded);
 
         track('short_quiz_complete', {
           short_id: short!.id,
@@ -215,163 +272,190 @@ export default function ShortDetailPage() {
           <span>Back to Shorts</span>
         </Button>
 
-        <div className="flex items-center space-x-2">
+        <div className="flex items-center gap-2">
           <Badge variant="secondary" className="flex items-center space-x-1">
             <Clock className="h-3 w-3" />
             <span>~5 min</span>
           </Badge>
-          {short.preview && (
-            <Badge variant="outline">Preview</Badge>
-          )}
+          <LockBadge requiredTier={meta.required_tier} requiredPoints={meta.required_points} />
+          {short.preview && <Badge variant="outline">Preview</Badge>}
         </div>
       </div>
 
-      {/* Video Section */}
+      {/* Video Section (🔒 gated) */}
       <Card>
         <CardHeader>
           <CardTitle className="text-2xl">{short.title}</CardTitle>
         </CardHeader>
 
         <CardContent className="space-y-6">
-          {/* Video Player Placeholder */}
-          <div className="relative w-full h-0" style={{ paddingBottom: '56.25%' }}>
-            <div className="absolute inset-0 bg-black rounded-lg flex items-center justify-center">
-              {watchProgress === 0 ? (
-                <Button
-                  size="lg"
-                  onClick={simulateVideoWatch}
-                  className="flex items-center space-x-2"
-                >
-                  <Play className="h-6 w-6" />
-                  <span>Watch Video</span>
-                </Button>
-              ) : watchProgress < 100 ? (
-                <div className="text-center text-white space-y-4">
-                  <Play className="h-12 w-12 mx-auto animate-pulse" />
-                  <div className="w-64">
-                    <Progress value={watchProgress} className="h-2" />
-                    <p className="text-sm mt-2">{Math.round(watchProgress)}% watched</p>
+          <Gate
+            userTier={userTier}
+            userPoints={userPoints}
+            requiredTier={meta.required_tier}
+            requiredPoints={meta.required_points}
+            fallback={
+              <div className="text-center space-y-4">
+                <p className="text-sm text-muted-foreground">
+                  This short is locked. Earn more points by playing Daily Quiz or upgrade your membership.
+                </p>
+                <div className="flex items-center justify-center gap-2">
+                  <Button variant="outline" onClick={() => navigate('/daily-quiz')}>Earn Points</Button>
+                  <Button onClick={() => navigate('/pricing')}>Upgrade</Button>
+                </div>
+              </div>
+            }
+          >
+            {/* Video Player Placeholder */}
+            <div className="relative w-full h-0" style={{ paddingBottom: '56.25%' }}>
+              <div className="absolute inset-0 bg-black rounded-lg flex items-center justify-center">
+                {watchProgress === 0 ? (
+                  <Button
+                    size="lg"
+                    onClick={simulateVideoWatch}
+                    className="flex items-center space-x-2"
+                  >
+                    <Play className="h-6 w-6" />
+                    <span>Watch Video</span>
+                  </Button>
+                ) : watchProgress < 100 ? (
+                  <div className="text-center text-white space-y-4">
+                    <Play className="h-12 w-12 mx-auto animate-pulse" />
+                    <div className="w-64">
+                      <Progress value={watchProgress} className="h-2" />
+                      <p className="text-sm mt-2">{Math.round(watchProgress)}% watched</p>
+                    </div>
                   </div>
-                </div>
-              ) : (
-                <div className="text-center text-white space-y-2">
-                  <CheckCircle className="h-12 w-12 mx-auto text-green-500" />
-                  <p>Video completed!</p>
-                </div>
-              )}
+                ) : (
+                  <div className="text-center text-white space-y-2">
+                    <CheckCircle className="h-12 w-12 mx-auto text-green-500" />
+                    <p>Video completed!</p>
+                  </div>
+                )}
+              </div>
             </div>
-          </div>
 
-          {/* Video description */}
-          <div className="text-muted-foreground">
-            <p>This is a placeholder video player. In a real implementation, you would integrate with a video service like YouTube, Vimeo, or host your own videos.</p>
-          </div>
+            {/* Video description */}
+            <div className="text-muted-foreground">
+              <p>This is a placeholder video player. In a real implementation, integrate with YouTube/Vimeo or your own player.</p>
+            </div>
+          </Gate>
         </CardContent>
       </Card>
 
-      {/* Quiz Section */}
-      {videoWatched && questions.length > 0 && (
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center space-x-2">
-              <Trophy className="h-6 w-6 text-primary" />
-              <span>Quick Quiz</span>
-              <Badge variant="secondary">{questions.length * 5} pts available</Badge>
-            </CardTitle>
-          </CardHeader>
+      {/* Quiz Section (🔒 gated) */}
+      <Gate
+        userTier={userTier}
+        userPoints={userPoints}
+        requiredTier={meta.required_tier}
+        requiredPoints={meta.required_points}
+      >
+        {videoWatched && questions.length > 0 && (
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center space-x-2">
+                <Trophy className="h-6 w-6 text-primary" />
+                <span>Quick Quiz</span>
+                <Badge variant="secondary">
+                  {questions.reduce((sum, q) => sum + Number(q.points_award ?? 0), 0)} pts available
+                </Badge>
+              </CardTitle>
+            </CardHeader>
 
-          <CardContent className="space-y-6">
-            {!quizState.showResults ? (
-              <>
-                {/* Progress */}
-                <div className="space-y-2">
-                  <div className="flex justify-between text-sm text-muted-foreground">
-                    <span>Question {quizState.currentQuestion + 1} of {questions.length}</span>
+            <CardContent className="space-y-6">
+              {!quizState.showResults ? (
+                <>
+                  {/* Progress */}
+                  <div className="space-y-2">
+                    <div className="flex justify-between text-sm text-muted-foreground">
+                      <span>Question {quizState.currentQuestion + 1} of {questions.length}</span>
+                    </div>
+                    <Progress
+                      value={((quizState.currentQuestion + 1) / questions.length) * 100}
+                      className="h-2"
+                    />
                   </div>
-                  <Progress
-                    value={((quizState.currentQuestion + 1) / questions.length) * 100}
-                    className="h-2"
-                  />
-                </div>
 
-                {/* Current Question */}
-                <div className="space-y-4">
-                  <h3 className="text-lg font-medium">
-                    {questions[quizState.currentQuestion].question}
-                  </h3>
+                  {/* Current Question */}
+                  <div className="space-y-4">
+                    <h3 className="text-lg font-medium">
+                      {questions[quizState.currentQuestion].question}
+                    </h3>
 
-                  <div className="grid gap-3">
-                    {questions[quizState.currentQuestion].options.map((option, index) => (
-                      <Button
-                        key={index}
-                        variant={quizState.answers[quizState.currentQuestion] === index ? "default" : "outline"}
-                        className="h-auto p-4 text-left justify-start"
-                        onClick={() => handleAnswerSelect(index)}
-                      >
-                        {option}
-                      </Button>
-                    ))}
+                    <div className="grid gap-3">
+                      {questions[quizState.currentQuestion].options.map((option, index) => (
+                        <Button
+                          key={index}
+                          variant={quizState.answers[quizState.currentQuestion] === index ? "default" : "outline"}
+                          className="h-auto p-4 text-left justify-start"
+                          onClick={() => handleAnswerSelect(index)}
+                        >
+                          {option}
+                        </Button>
+                      ))}
+                    </div>
                   </div>
-                </div>
 
-                {/* Navigation */}
-                <div className="flex justify-end">
+                  {/* Navigation */}
+                  <div className="flex justify-end">
+                    <Button
+                      onClick={handleNext}
+                      disabled={quizState.answers[quizState.currentQuestion] === undefined}
+                    >
+                      {quizState.currentQuestion === questions.length - 1 ? 'Finish' : 'Next'}
+                    </Button>
+                  </div>
+                </>
+              ) : (
+                /* Results */
+                <div className="text-center space-y-6">
+                  <div className="space-y-2">
+                    <div className="w-16 h-16 bg-primary/10 rounded-full flex items-center justify-center mx-auto">
+                      <CheckCircle className="h-8 w-8 text-primary" />
+                    </div>
+                    <h3 className="text-2xl font-bold">Quiz Complete!</h3>
+                    <p className="text-muted-foreground">
+                      You got {quizState.correctCount} out of {questions.length} questions correct
+                    </p>
+                  </div>
+
+                  {/* Score */}
+                  <div className="bg-muted/50 rounded-lg p-4">
+                    <div className="text-2xl font-bold text-primary mb-1">
+                      {
+                        questions.reduce((sum, q, i) =>
+                          sum + (quizState.answers[i] === q.correct_index ? Number(q.points_award ?? 0) : 0), 0)
+                      } points earned
+                    </div>
+                    <div className="text-sm text-muted-foreground">
+                      {Math.round((quizState.correctCount / questions.length) * 100)}% accuracy
+                    </div>
+                  </div>
+
                   <Button
-                    onClick={handleNext}
-                    disabled={quizState.answers[quizState.currentQuestion] === undefined}
+                    onClick={() => navigate('/shorts')}
+                    size="lg"
+                    disabled={submitting}
                   >
-                    {quizState.currentQuestion === questions.length - 1 ? 'Finish' : 'Next'}
+                    {submitting ? 'Saving...' : 'Continue Learning'}
                   </Button>
                 </div>
-              </>
-            ) : (
-              /* Results */
-              <div className="text-center space-y-6">
-                <div className="space-y-2">
-                  <div className="w-16 h-16 bg-primary/10 rounded-full flex items-center justify-center mx-auto">
-                    <CheckCircle className="h-8 w-8 text-primary" />
-                  </div>
-                  <h3 className="text-2xl font-bold">Quiz Complete!</h3>
-                  <p className="text-muted-foreground">
-                    You got {quizState.correctCount} out of {questions.length} questions correct
-                  </p>
-                </div>
+              )}
+            </CardContent>
+          </Card>
+        )}
 
-                {/* Score */}
-                <div className="bg-muted/50 rounded-lg p-4">
-                  <div className="text-2xl font-bold text-primary mb-1">
-                    {quizState.correctCount * 5} points earned
-                  </div>
-                  <div className="text-sm text-muted-foreground">
-                    {Math.round((quizState.correctCount / questions.length) * 100)}% accuracy
-                  </div>
-                </div>
-
-                <Button
-                  onClick={() => navigate('/shorts')}
-                  size="lg"
-                  disabled={submitting}
-                >
-                  {submitting ? 'Saving...' : 'Continue Learning'}
-                </Button>
-              </div>
-            )}
-          </CardContent>
-        </Card>
-      )}
-
-      {videoWatched && questions.length === 0 && (
-        <Card>
-          <CardContent className="p-8 text-center">
-            <Trophy className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
-            <h3 className="text-lg font-semibold mb-2">Great Job!</h3>
-            <p className="text-muted-foreground mb-4">You've completed this video. Check out more content to keep learning!</p>
-            <Button onClick={() => navigate('/shorts')}>
-              More Videos
-            </Button>
-          </CardContent>
-        </Card>
-      )}
+        {videoWatched && questions.length === 0 && (
+          <Card>
+            <CardContent className="p-8 text-center">
+              <Trophy className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
+              <h3 className="text-lg font-semibold mb-2">Great Job!</h3>
+              <p className="text-muted-foreground mb-4">You've completed this video. Check out more content to keep learning!</p>
+              <Button onClick={() => navigate('/shorts')}>More Videos</Button>
+            </CardContent>
+          </Card>
+        )}
+      </Gate>
     </div>
   );
 }
