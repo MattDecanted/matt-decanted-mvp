@@ -1,5 +1,5 @@
 // src/pages/ModulesIndex.tsx
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { useAuth } from "@/context/AuthContext";
 import { Gate, LockBadge } from "@/components/LockGate";
@@ -22,7 +22,19 @@ type ModuleRow = {
   required_points: number;
   required_tier: Tier;
   is_active: boolean;
+  created_at?: string | null;
+  updated_at?: string | null;
 };
+
+function fmtDate(d: Date | null) {
+  if (!d || Number.isNaN(d.getTime())) return "";
+  // Light, locale-friendly date (no time) — tweak as you like
+  return d.toLocaleDateString(undefined, {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+  });
+}
 
 export default function ModulesIndex() {
   const { profile } = useAuth() as any;
@@ -32,17 +44,28 @@ export default function ModulesIndex() {
   const [loading, setLoading] = useState(true);
   const [userPoints, setUserPoints] = useState<number>(0);
   const [upgradeOpen, setUpgradeOpen] = useState(false);
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const lastModule = getLastModuleSlug();
 
   useEffect(() => {
     (async () => {
       setLoading(true);
-      const { data } = await supabase
+      // Pull created_at/updated_at so we can show “Last updated”
+      const { data: modulesData } = await supabase
         .from("content_modules")
-        .select("slug, title, summary, required_points, required_tier, is_active")
+        .select("slug, title, summary, required_points, required_tier, is_active, created_at, updated_at")
         .eq("is_active", true)
         .order("created_at", { ascending: false });
-      setRows((data || []) as ModuleRow[]);
+
+      const rows = (modulesData || []) as ModuleRow[];
+      setRows(rows);
+
+      // Compute lastUpdated from the most recent updated_at (fall back to created_at)
+      const latest = rows
+        .map((m) => new Date(m.updated_at || m.created_at || 0))
+        .filter((d) => !Number.isNaN(d.getTime()))
+        .sort((a, b) => b.getTime() - a.getTime())[0] || null;
+      setLastUpdated(latest ?? null);
 
       const { data: me } = await supabase.auth.getUser();
       const uid = me?.user?.id;
@@ -58,6 +81,8 @@ export default function ModulesIndex() {
     })();
   }, []);
 
+  const totalActive = useMemo(() => rows.length, [rows]);
+
   if (loading) {
     return (
       <div className="max-w-4xl mx-auto p-6 space-y-4">
@@ -69,7 +94,12 @@ export default function ModulesIndex() {
 
   return (
     <div className="max-w-4xl mx-auto p-6 space-y-4">
-      <h1 className="text-2xl font-semibold">Modules</h1>
+      <div className="flex items-baseline justify-between">
+        <h1 className="text-2xl font-semibold">Modules</h1>
+        <div className="text-xs text-gray-500">
+          {totalActive > 0 && <>Updated {fmtDate(lastUpdated)}</>}
+        </div>
+      </div>
       <p className="text-sm text-gray-600">
         Structured learning modules. Some items may be locked based on your membership and points.
       </p>
@@ -92,7 +122,8 @@ export default function ModulesIndex() {
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           {rows.map((m) => {
-            const premiumTier = m.required_tier !== "free" ? (m.required_tier as "pro" | "vip") : null;
+            const premiumTier =
+              m.required_tier !== "free" ? (m.required_tier as "pro" | "vip") : null;
             const { locked } = useEntitlement({
               userTier,
               userPoints,
@@ -131,9 +162,13 @@ export default function ModulesIndex() {
                     userPoints={userPoints}
                     requiredTier={m.required_tier}
                     requiredPoints={m.required_points}
+                    telemetry={{ kind: "module", slug: m.slug }}
                     fallback={
                       <div className="flex items-center gap-2">
-                        <Button variant="outline" onClick={() => (window.location.href = "/daily-quiz")}>
+                        <Button
+                          variant="outline"
+                          onClick={() => (window.location.href = "/daily-quiz")}
+                        >
                           Earn points
                         </Button>
                         <Button onClick={() => setUpgradeOpen(true)}>
