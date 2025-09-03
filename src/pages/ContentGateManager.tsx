@@ -50,7 +50,6 @@ type ModuleRow = {
 function cx(...xs: Array<string | false | null | undefined>) {
   return xs.filter(Boolean).join(" ");
 }
-
 function useDebounced<T>(value: T, ms = 300) {
   const [v, setV] = React.useState(value);
   React.useEffect(() => {
@@ -59,8 +58,28 @@ function useDebounced<T>(value: T, ms = 300) {
   }, [value, ms]);
   return v;
 }
-
 const TIERS: Tier[] = ["free", "pro", "vip"];
+
+function exportCSV(rows: any[], filename: string) {
+  const escape = (v: any) => {
+    const s = v === null || v === undefined ? "" : String(v);
+    if (/[",\n]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
+    return s;
+  };
+  const header = Object.keys(rows[0] || {});
+  const csv = [
+    header.map(escape).join(","),
+    ...rows.map((r) => header.map((k) => escape(r[k])).join(",")),
+  ].join("\n");
+
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
 
 /* --------------------------------- Page ---------------------------------- */
 export default function ContentGateManager() {
@@ -216,7 +235,6 @@ export default function ContentGateManager() {
     if (!row) return;
     try {
       if (tab === "shorts") {
-        // upsert because a gate row might not exist yet
         const { error } = await supabase.from("content_shorts").upsert(
           [
             {
@@ -253,7 +271,6 @@ export default function ContentGateManager() {
     const src = tab === "shorts" ? shorts : modules;
     const selected = src.filter((r) => r.selected).map((r) => r.slug);
     if (selected.length > 0) return selected;
-    // If none selected, apply to all filtered rows (confirmation)
     if (!window.confirm("No items selected. Apply to all filtered items?")) return [];
     return filtered.map((r) => r.slug);
   }
@@ -264,10 +281,7 @@ export default function ContentGateManager() {
 
     try {
       if (tab === "shorts") {
-        const payload = slugs.map((slug) => ({
-          slug,
-          required_tier: tier,
-        }));
+        const payload = slugs.map((slug) => ({ slug, required_tier: tier }));
         const { error } = await supabase.from("content_shorts").upsert(payload, { onConflict: "slug", ignoreDuplicates: false });
         if (error) throw error;
         setShorts((prev) =>
@@ -300,10 +314,7 @@ export default function ContentGateManager() {
 
     try {
       if (tab === "shorts") {
-        const payload = slugs.map((slug) => ({
-          slug,
-          required_points: pts,
-        }));
+        const payload = slugs.map((slug) => ({ slug, required_points: pts }));
         const { error } = await supabase.from("content_shorts").upsert(payload, { onConflict: "slug", ignoreDuplicates: false });
         if (error) throw error;
         setShorts((prev) =>
@@ -332,10 +343,7 @@ export default function ContentGateManager() {
 
     try {
       if (tab === "shorts") {
-        const payload = slugs.map((slug) => ({
-          slug,
-          is_active: active,
-        }));
+        const payload = slugs.map((slug) => ({ slug, is_active: active }));
         const { error } = await supabase.from("content_shorts").upsert(payload, { onConflict: "slug", ignoreDuplicates: false });
         if (error) throw error;
         setShorts((prev) =>
@@ -356,6 +364,47 @@ export default function ContentGateManager() {
       console.error(err);
       toast.error("Bulk update failed");
     }
+  }
+
+  /* ------------------------------- CSV export ---------------------------- */
+  function rowsForExport(src: Array<ShortRow | ModuleRow>) {
+    if (tab === "shorts") {
+      return (src as ShortRow[]).map((r) => ({
+        type: "short",
+        title: r.title,
+        slug: r.slug,
+        tier: r.required_tier.toUpperCase(),
+        points: r.required_points,
+        active: r.is_active ? "yes" : "no",
+        preview: r.preview ? "yes" : "no",
+      }));
+    }
+    return (src as ModuleRow[]).map((r) => ({
+      type: "module",
+      title: r.title,
+      slug: r.slug,
+      tier: r.required_tier.toUpperCase(),
+      points: r.required_points,
+      active: r.is_active ? "yes" : "no",
+    }));
+  }
+
+  function exportFilteredCSV() {
+    const rows = rowsForExport(filtered);
+    if (rows.length === 0) return toast.message("Nothing to export");
+    const ts = new Date();
+    const name = `content_gates_${tab}_${ts.toISOString().replace(/[:.]/g, "-")}.csv`;
+    exportCSV(rows, name);
+  }
+
+  function exportSelectedCSV() {
+    const src = tab === "shorts" ? shorts : modules;
+    const sel = src.filter((r: any) => r.selected);
+    if (sel.length === 0) return toast.message("Select one or more rows first");
+    const rows = rowsForExport(sel);
+    const ts = new Date();
+    const name = `content_gates_${tab}_selected_${ts.toISOString().replace(/[:.]/g, "-")}.csv`;
+    exportCSV(rows, name);
   }
 
   /* ---------------------------------- UI --------------------------------- */
@@ -429,6 +478,9 @@ export default function ContentGateManager() {
               <Button variant="outline" onClick={bulkSetPoints}>Set Points…</Button>
               <Button variant="outline" onClick={() => bulkSetActive(true)}>Activate</Button>
               <Button variant="outline" onClick={() => bulkSetActive(false)}>Deactivate</Button>
+              {/* NEW: CSV */}
+              <Button variant="outline" onClick={exportFilteredCSV}>Export CSV (filtered)</Button>
+              <Button variant="outline" onClick={exportSelectedCSV}>Export CSV (selected)</Button>
             </div>
           </div>
         </CardContent>
@@ -524,10 +576,7 @@ export default function ContentGateManager() {
                       <Button
                         size="sm"
                         variant="outline"
-                        onClick={() => {
-                          // Reload just this row by reloading all; keeps it simple & consistent.
-                          tab === "shorts" ? loadShorts() : loadModules();
-                        }}
+                        onClick={() => { tab === "shorts" ? loadShorts() : loadModules(); }}
                       >
                         Reset
                       </Button>
