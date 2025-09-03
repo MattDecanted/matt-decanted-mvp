@@ -29,9 +29,7 @@ const COUNTRIES = [
   { code: "CN", name: "China" },
 ];
 
-const AU_STATES = [
-  "ACT","NSW","NT","QLD","SA","TAS","VIC","WA"
-];
+const AU_STATES = ["ACT", "NSW", "NT", "QLD", "SA", "TAS", "VIC", "WA"];
 
 const US_STATES = [
   "AL","AK","AZ","AR","CA","CO","CT","DE","FL","GA","HI","ID","IL","IN","IA","KS","KY","LA",
@@ -41,12 +39,31 @@ const US_STATES = [
 
 function detectCountryCode(): string | null {
   try {
-    // Lightweight guess based on browser locale
     const loc = Intl.DateTimeFormat().resolvedOptions().locale || "";
     const m = loc.match(/-([A-Z]{2})$/i);
     return m ? m[1].toUpperCase() : null;
   } catch {
     return null;
+  }
+}
+
+/** ---- NEW: Create Stripe customer (server function) if needed ---- */
+async function createStripeCustomerIfNeeded(alias: string) {
+  const { data: sess } = await supabase.auth.getSession();
+  const token = sess?.session?.access_token;
+  if (!token) return; // not signed in (shouldn't happen here)
+
+  try {
+    await fetch("/.netlify/functions/create-stripe-customer", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ name: alias }),
+    });
+  } catch {
+    // Non-blocking; ignore errors for UX
   }
 }
 
@@ -91,7 +108,7 @@ export default function Onboarding() {
         // Country: prefer existing; else detect; else default AU
         const detected = detectCountryCode();
         const detectedName =
-          detected && COUNTRIES.find(c => c.code === detected)?.name;
+          detected && COUNTRIES.find((c) => c.code === detected)?.name;
 
         setCountry(p.country ?? detectedName ?? "Australia");
         setStateRegion(p.state ?? "");
@@ -155,7 +172,11 @@ export default function Onboarding() {
         .eq("id", user?.id);
 
       if (upErr) throw upErr;
+
       setMsg("Profile saved.");
+
+      // ---- NEW: quietly create Stripe customer on the server (optional) ----
+      createStripeCustomerIfNeeded(alias.trim());
     } catch (e: any) {
       setErr(e.message || "Something went wrong.");
     } finally {
@@ -214,10 +235,9 @@ export default function Onboarding() {
             setStateRegion(""); // reset state on country change
           }}
         >
-          {COUNTRIES.map(c => (
+          {COUNTRIES.map((c) => (
             <option key={c.code} value={c.name}>{c.name}</option>
           ))}
-          {/* Allow a manual 'Other' choice */}
           <option value="">Other / Not listed</option>
         </select>
       </div>
@@ -232,7 +252,7 @@ export default function Onboarding() {
             onChange={(e) => setStateRegion(e.target.value)}
           >
             <option value="">{isAU ? "Select a state/territory" : "Select a state"}</option>
-            {(isAU ? AU_STATES : US_STATES).map(s => (
+            {(isAU ? AU_STATES : US_STATES).map((s) => (
               <option key={s} value={s}>{s}</option>
             ))}
           </select>
