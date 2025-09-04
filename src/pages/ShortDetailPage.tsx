@@ -1,18 +1,29 @@
-// src/pages/ShortsPage.tsx
-import React, { useEffect, useMemo, useState } from "react";
-import { Link } from "react-router-dom";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { supabase } from "@/lib/supabase";
-import { useAuth } from "@/context/AuthContext";
-import { usePoints } from "@/context/PointsContext";
-import { toast } from "sonner";
-import { Lock, Play, Globe, Clock } from "lucide-react";
-import i18n from "i18next";
+// src/pages/ShortDetailPage.tsx
+import React, { useState, useEffect, useRef, useMemo } from 'react';
+import { useParams, useNavigate, Link } from 'react-router-dom';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
+import { Progress } from '@/components/ui/progress';
+import { Play, Trophy, CheckCircle, ArrowLeft, Clock, Globe, FileText, ExternalLink } from 'lucide-react';
+import { useAuth } from '@/context/AuthContext';
+import { usePoints } from '@/context/PointsContext';
+import { useAnalytics } from '@/context/AnalyticsContext';
+import { useLocale } from '@/context/LocaleContext';
+import { supabase } from '@/lib/supabase';
+import { toast } from 'sonner';
 
-/* ---------- Types (align with your DB) ---------- */
+/** 🔒 Entitlements */
+import { Gate, LockBadge } from '@/components/LockGate';
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+import PointsProgressChip from '@/components/PointsProgressChip';
+import type { Tier } from '@/lib/entitlements';
+import { useShortProgress } from '@/hooks/useLocalProgress';
+import { useQuizKeyboard } from '@/hooks/useQuizKeyboard';
+import PointsGainBubble from '@/components/PointsGainBubble';
+import LevelUpBanner from '@/components/LevelUpBanner';
+
+/* ---------- Types (DB-aligned) ---------- */
 type Short = {
   id: string;
   slug: string;
@@ -23,10 +34,25 @@ type Short = {
   created_at: string;
 };
 
-type GateMeta = {
-  slug: string;
+type Question = {
+  id: string;
+  question: string;
+  options: string[] | null;
+  correct_index: number | null;
+  points_award: number;
+  order_index: number | null;
+};
+
+type QuizState = {
+  currentQuestion: number;
+  answers: number[];
+  showResults: boolean;
+  correctCount: number;
+};
+
+type ShortMeta = {
   required_points: number;
-  required_tier: "free" | "pro" | "vip";
+  required_tier: Tier;
   is_active: boolean;
 };
 
@@ -40,345 +66,563 @@ type ShortI18n = {
   pdf_url_alt: string | null;
 };
 
-/* ---------- Language options for the switcher ---------- */
-const LANGS = [
-  { code: "auto", name: "Auto (browser/i18n)", flag: "🌐" },
-  { code: "en", name: "English", flag: "🇺🇸" },
-  { code: "ko", name: "한국어", flag: "🇰🇷" },
-  { code: "zh", name: "中文", flag: "🇨🇳" },
-  { code: "es", name: "Español", flag: "🇪🇸" },
-  { code: "fr", name: "Français", flag: "🇫🇷" },
-  { code: "de", name: "Deutsch", flag: "🇩🇪" },
-  { code: "ja", name: "日本語", flag: "🇯🇵" },
-];
+export default function ShortDetailPage() {
+  const { slug } = useParams<{ slug: string }>();
+  const navigate = useNavigate();
 
-/* ---------- Helper: tier ranking ---------- */
-const tierRank: Record<GateMeta["required_tier"], number> = { free: 0, pro: 1, vip: 2 };
+  // 🌐 Global locale from provider
+  const { resolvedLocale } = useLocale();
 
-/* =======================================================
-   PAGE
-======================================================= */
-export default function ShortsPage() {
-  const { user, profile } = useAuth() as any;
-  const userTier = (profile?.membership_tier || "free") as GateMeta["required_tier"];
-  const { totalPoints } = (usePoints() as any) || {};
-
+  const [short, setShort] = useState<Short | null>(null);
+  const [i18nRow, setI18nRow] = useState<ShortI18n | null>(null);
+  const [questions, setQuestions] = useState<Question[]>([]);
   const [loading, setLoading] = useState(true);
-  const [shorts, setShorts] = useState<Short[]>([]);
-  const [gates, setGates] = useState<Record<string, GateMeta>>({});
-  const [i18nRows, setI18nRows] = useState<Record<string, ShortI18n | null>>({});
-  const [userPoints, setUserPoints] = useState<number>(Number(totalPoints ?? 0));
 
-  const [query, setQuery] = useState("");
+  const [videoWatched, setVideoWatched] = useState(false);
+  const [watchProgress, setWatchProgress] = useState(0);
+  const { setPercent: saveLocalPercent } = useShortProgress(slug);
 
-  // NEW: language switcher (persist to localStorage for convenience)
-  const [forcedLocale, setForcedLocale] = useState<string>(
-    () => localStorage.getItem("md_locale") || "auto"
-  );
-  const detected = (i18n?.language || navigator.language || "en").slice(0, 2).toLowerCase();
-  const locale = (forcedLocale === "auto" ? detected : forcedLocale).slice(0, 2);
+  const [quizState, setQuizState] = useState<QuizState>({
+    currentQuestion: 0,
+    answers: [],
+    showResults: false,
+    correctCount: 0,
+  });
+  const [submitting, setSubmitting] = useState(false);
+
+  /** 🎉 UI: “+points” bubble + level-up banner */
+  const [justGained, setJustGained] = useState<number>(0);
+  const [levelOpen, setLevelOpen] = useState(false);
+  const [levelMsg, setLevelMsg] = useState<string>('You just crossed a points gate and unlocked more learning content.');
+
+  /** 🔒 Entitlement state */
+  const [meta, setMeta] = useState<ShortMeta>({
+    required_points: 0,
+    required_tier: 'free',
+    is_active: true,
+  });
+  const [userPoints, setUserPoints] = useState<number>(0);
+
+  const { user, profile } = useAuth() as any;
+  const userTier: Tier = (profile?.membership_tier || 'free') as Tier;
+
+  const { refreshPoints, totalPoints } = (usePoints() as any) || {};
+  const { track } = useAnalytics();
+
+  const optionsWrapRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    loadAll().catch(() => {});
+    if (slug) {
+      loadAll(slug).catch(() => {});
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [locale]);
+  }, [slug, resolvedLocale]);
 
-  async function loadAll() {
+  async function loadAll(currSlug: string) {
     setLoading(true);
     try {
-      // 1) Shorts
-      const { data: s, error: sErr } = await supabase
-        .from("shorts")
-        .select("*")
-        .eq("is_published", true)
-        .order("created_at", { ascending: false });
-      if (sErr) throw sErr;
-      const list = (s || []) as Short[];
-      setShorts(list);
+      // Short (published)
+      const { data: shortData, error: shortError } = await supabase
+        .from('shorts')
+        .select('*')
+        .eq('slug', currSlug)
+        .eq('is_published', true)
+        .single();
+      if (shortError) throw shortError;
+      setShort(shortData as Short);
 
-      // 2) Gates by slug
-      const slugs = list.map((x) => x.slug);
-      let gatesMap: Record<string, GateMeta> = {};
-      if (slugs.length) {
-        const { data: g, error: gErr } = await supabase
-          .from("content_shorts")
-          .select("slug, required_points, required_tier, is_active")
-          .in("slug", slugs);
-        if (!gErr && g) {
-          g.forEach((row: any) => {
-            gatesMap[row.slug] = {
-              slug: row.slug,
-              required_points: Number(row.required_points ?? 0),
-              required_tier: (row.required_tier ?? "free") as GateMeta["required_tier"],
-              is_active: Boolean(row.is_active ?? true),
-            };
-          });
-        }
-      }
-      setGates(gatesMap);
-
-      // 3) I18n for selected locale
-      const ids = list.map((x) => x.id);
-      let i18Map: Record<string, ShortI18n | null> = {};
-      if (ids.length) {
-        const { data: t, error: tErr } = await supabase
-          .from("shorts_i18n")
-          .select("*")
-          .eq("locale", locale)
-          .in("short_id", ids);
-        if (!tErr && t) {
-          ids.forEach((id) => (i18Map[id] = null));
-          (t as any[]).forEach((row) => {
-            i18Map[row.short_id] = row as ShortI18n;
-          });
-        }
-      }
-      setI18nRows(i18Map);
-
-      // 4) User points snapshot (if not in context yet)
-      if (user?.id && (totalPoints === undefined || totalPoints === null)) {
-        const { data: pt } = await supabase
-          .from("user_points_totals_v1")
-          .select("total_points")
-          .eq("user_id", user.id)
-          .maybeSingle();
-        setUserPoints(Number(pt?.total_points ?? 0));
+      // Gate meta
+      const { data: metaData } = await supabase
+        .from('content_shorts')
+        .select('required_points, required_tier, is_active')
+        .eq('slug', currSlug)
+        .single();
+      if (metaData) {
+        setMeta({
+          required_points: Number(metaData.required_points ?? 0),
+          required_tier: (metaData.required_tier ?? 'free') as Tier,
+          is_active: Boolean(metaData.is_active ?? true),
+        });
       } else {
-        setUserPoints(Number(totalPoints ?? 0));
+        setMeta({ required_points: 0, required_tier: 'free', is_active: true });
       }
-    } catch (err: any) {
-      console.error(err);
-      toast.error("Failed to load shorts");
+
+      // I18n row for the resolved locale
+      const { data: tData } = await supabase
+        .from('shorts_i18n')
+        .select('*')
+        .eq('short_id', (shortData as Short).id)
+        .eq('locale', resolvedLocale)
+        .maybeSingle();
+      setI18nRow((tData as ShortI18n) || null);
+
+      // Quiz bank for this short
+      const { data: questionsData, error: questionsError } = await supabase
+        .from('quiz_bank')
+        .select('*')
+        .eq('kind', 'short')
+        .eq('ref_id', (shortData as Short).id)
+        .order('order_index', { ascending: true });
+      if (questionsError) throw questionsError;
+      setQuestions((questionsData || []) as Question[]);
+
+      // Points snapshot
+      let pointsNow = Number(totalPoints ?? 0);
+      if (!pointsNow && user?.id) {
+        const { data: pt } = await supabase
+          .from('user_points_totals_v1')
+          .select('total_points')
+          .eq('user_id', user.id)
+          .maybeSingle();
+        if (pt) pointsNow = Number(pt.total_points ?? 0);
+      }
+      setUserPoints(pointsNow);
+    } catch (error) {
+      console.error('Error loading content:', error);
+      toast.error('Failed to load video');
+      navigate('/shorts');
     } finally {
       setLoading(false);
     }
   }
 
-  /* ---------- Derive display models ---------- */
-  type VM = {
-    id: string;
-    slug: string;
-    title: string;
-    blurb: string;
-    videoUrl: string | null;
-    pdfUrl: string | null;
-    preview: boolean;
-    createdAt: string;
-    gate?: GateMeta;
-    locked: boolean;
+  /** Derived display fields (with i18n fallbacks) */
+  const display = useMemo(() => {
+    return {
+      title: i18nRow?.title_i18n || short?.title || '',
+      blurb: i18nRow?.blurb_i18n || '',
+      videoUrl: i18nRow?.video_url_alt || short?.video_url || null,
+      pdfUrl: i18nRow?.pdf_url_alt || null,
+    };
+  }, [i18nRow, short]);
+
+  /** Fake player – simulate progress */
+  const simulateVideoWatch = () => {
+    const interval = setInterval(() => {
+      setWatchProgress((prev) => {
+        const newProgress = prev + 2;
+        saveLocalPercent(newProgress);
+        if (newProgress >= 100) {
+          clearInterval(interval);
+          setVideoWatched(true);
+          return 100;
+        }
+        return newProgress;
+      });
+    }, 100);
   };
 
-  const cards: VM[] = useMemo(() => {
-    return shorts.map((s) => {
-      const i = i18nRows[s.id];
-      const gate = gates[s.slug];
+  const handleAnswerSelect = (answerIndex: number) => {
+    const newAnswers = [...quizState.answers];
+    newAnswers[quizState.currentQuestion] = answerIndex;
+    setQuizState((prev) => ({ ...prev, answers: newAnswers }));
+  };
 
-      // lock logic
-      let locked = false;
-      if (gate && gate.is_active && !s.preview) {
-        const tierOk = tierRank[userTier] >= tierRank[gate.required_tier];
-        const pointsOk = userPoints >= Number(gate.required_points || 0);
-        locked = !(tierOk && pointsOk);
-      }
+  const handleNext = () => {
+    if (quizState.currentQuestion < questions.length - 1) {
+      setQuizState((prev) => ({
+        ...prev,
+        currentQuestion: prev.currentQuestion + 1,
+      }));
+    } else {
+      finishQuiz();
+    }
+  };
 
-      return {
-        id: s.id,
-        slug: s.slug,
-        title: i?.title_i18n || s.title,
-        blurb: i?.blurb_i18n || "",
-        videoUrl: i?.video_url_alt || s.video_url,
-        pdfUrl: i?.pdf_url_alt || null,
-        preview: Boolean(s.preview),
-        createdAt: s.created_at,
-        gate,
-        locked,
-      };
-    });
-  }, [shorts, i18nRows, gates, userTier, userPoints]);
-
-  const filtered = useMemo(() => {
-    if (!query.trim()) return cards;
-    const q = query.trim().toLowerCase();
-    return cards.filter(
-      (c) =>
-        c.title.toLowerCase().includes(q) ||
-        c.blurb.toLowerCase().includes(q) ||
-        c.slug.toLowerCase().includes(q)
+  // Auto-focus the first (or selected) option when the question changes
+  useEffect(() => {
+    if (!optionsWrapRef.current || quizState.showResults) return;
+    const selectedIdx = quizState.answers[quizState.currentQuestion];
+    const sel = optionsWrapRef.current.querySelector<HTMLButtonElement>(
+      selectedIdx !== undefined
+        ? `button[data-opt-selected="true"]`
+        : `button[data-opt-index="0"]`
     );
-  }, [cards, query]);
+    sel?.focus();
+  }, [quizState.currentQuestion, quizState.showResults, quizState.answers]);
 
-  /* ---------- UI ---------- */
-  return (
-    <div className="min-h-screen py-12 bg-gray-50">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        {/* Header */}
-        <div className="mb-6 flex flex-col sm:flex-row sm:items-end sm:justify-between gap-4">
-          <div>
-            <h1 className="text-3xl font-bold text-gray-900 mb-1">Shorts</h1>
-            <p className="text-gray-600">
-              Bite-sized micro-lessons (5–15 min). Localized when available{" "}
-              <span className="inline-flex items-center gap-1 text-gray-500">
-                <Globe className="w-4 h-4" />{" "}
-                <span className="uppercase">{locale}</span>
-              </span>
-            </p>
-          </div>
+  // Keyboard shortcuts: 1–9 to select, Enter/→ to Next
+  const optsCount = questions[quizState.currentQuestion]?.options?.length ?? 0;
+  useQuizKeyboard({
+    enabled: videoWatched && !quizState.showResults && optsCount > 0,
+    optionsCount: optsCount,
+    onSelect: handleAnswerSelect,
+    onNext: handleNext,
+    allowNext: quizState.answers[quizState.currentQuestion] !== undefined,
+  });
 
-          <div className="flex items-center gap-2">
-            {/* Search */}
-            <Input
-              placeholder="Search shorts…"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              className="w-56"
-            />
+  async function maybeConfettiOnUnlock(prevPoints: number, newPoints: number) {
+    try {
+      const { data, error } = await supabase
+        .from('content_shorts')
+        .select('required_points')
+        .gt('required_points', prevPoints)
+        .order('required_points', { ascending: true })
+        .limit(1);
+      if (error || !data || data.length === 0) return;
+      const nextGate = Number(data[0].required_points || 0);
+      if (newPoints >= nextGate) {
+        const mod = await import('canvas-confetti');
+        mod.default({ particleCount: 120, spread: 70, origin: { y: 0.6 } });
+        toast.success('New content unlocked! 🎉');
+        setLevelMsg(`You reached ${newPoints} points and unlocked content (gate: ${nextGate}).`);
+        setLevelOpen(true);
+      }
+    } catch {
+      /* non-blocking */
+    }
+  }
 
-            {/* NEW: Language switcher */}
-            <select
-              value={forcedLocale}
-              onChange={(e) => {
-                const v = e.target.value;
-                setForcedLocale(v);
-                localStorage.setItem("md_locale", v);
-              }}
-              className="px-3 py-2 border rounded-md bg-white text-sm"
-              title="Preview a different language"
-            >
-              {LANGS.map((l) => (
-                <option key={l.code} value={l.code}>
-                  {l.flag} {l.name}
-                </option>
-              ))}
-            </select>
-          </div>
-        </div>
+  const finishQuiz = async () => {
+    const correctCount = questions.reduce((count, question, index) => {
+      return count + (quizState.answers[index] === question.correct_index ? 1 : 0);
+    }, 0);
 
-        {/* KPIs */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
-          <KpiCard label="Available" value={cards.length} />
-          <KpiCard label="Your points" value={userPoints} />
-          <KpiCard label="Your tier" value={userTier.toUpperCase()} />
-        </div>
+    setQuizState((prev) => ({
+      ...prev,
+      showResults: true,
+      correctCount,
+    }));
 
-        {/* List */}
-        {loading ? (
-          <div className="bg-white rounded-lg p-8 text-center shadow">
-            <div className="h-8 w-8 animate-spin rounded-full border-2 border-gray-300 border-t-transparent mx-auto mb-3" />
-            <p className="text-gray-500">Loading…</p>
-          </div>
-        ) : filtered.length === 0 ? (
-          <EmptyState />
-        ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
-            {filtered.map((c) => (
-              <Card key={c.id} className="overflow-hidden border border-[color:var(--line)]">
-                <CardHeader className="pb-3">
-                  <div className="flex items-center justify-between">
-                    <CardTitle className="text-lg leading-snug">{c.title}</CardTitle>
-                    <div className="flex items-center gap-1">
-                      <Badge variant="secondary" className="flex items-center gap-1">
-                        <Clock className="w-3 h-3" />
-                        <span>5–15m</span>
-                      </Badge>
-                      {c.preview && <Badge variant="outline">Preview</Badge>}
-                    </div>
-                  </div>
-                </CardHeader>
-                <CardContent className="pt-0">
-                  {c.blurb ? (
-                    <p className="text-sm text-gray-600 mb-3 line-clamp-3">{c.blurb}</p>
-                  ) : (
-                    <p className="text-sm text-gray-500 mb-3">
-                      Quick micro-lesson with a short quiz to earn points.
-                    </p>
-                  )}
+    // Award points = sum of points_award for correct answers
+    if (correctCount > 0 && user && short) {
+      setSubmitting(true);
+      try {
+        const pointsAwarded = questions.reduce((sum, q, i) => {
+          return sum + (quizState.answers[i] === q.correct_index ? Number(q.points_award ?? 0) : 0);
+        }, 0);
 
-                  {/* Language assets quick view */}
-                  <div className="flex items-center gap-3 text-xs text-gray-500 mb-4">
-                    {c.videoUrl ? (
-                      <a
-                        href={c.videoUrl}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="underline underline-offset-2"
-                      >
-                        Open video
-                      </a>
-                    ) : (
-                      <span>Video link missing</span>
-                    )}
-                    {c.pdfUrl && (
-                      <>
-                        <span>•</span>
-                        <a
-                          href={c.pdfUrl}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="underline underline-offset-2"
-                        >
-                          PDF (locale)
-                        </a>
-                      </>
-                    )}
-                  </div>
+        const prev = userPoints;
 
-                  {/* Gate chip */}
-                  {c.gate?.is_active && !c.preview && (
-                    <div className="flex items-center gap-2 text-xs text-gray-600 mb-3">
-                      <Lock className="w-3 h-3" />
-                      <span>
-                        {c.gate.required_tier.toUpperCase()} • {c.gate.required_points} pts
-                      </span>
-                      {c.locked ? (
-                        <Badge variant="outline" className="ml-1">Locked</Badge>
-                      ) : (
-                        <Badge variant="secondary" className="ml-1">Unlocked</Badge>
-                      )}
-                    </div>
-                  )}
+        await supabase.from('points_ledger').insert([
+          {
+            user_id: user.id,
+            points: pointsAwarded,
+            reason: 'Video Quiz',
+            meta: {
+              short_id: short.id,
+              short_title: display.title,
+              correct_count: correctCount,
+              total_questions: questions.length,
+            },
+          },
+        ]);
 
-                  <div className="flex items-center gap-2">
-                    <Button
-                      asChild
-                      className="flex-1"
-                      variant={c.locked ? "outline" : "default"}
-                      disabled={c.locked}
-                    >
-                      <Link to={`/shorts/${c.slug}`}>
-                        <Play className="w-4 h-4 mr-2" />
-                        {c.locked ? "Locked" : "Start"}
-                      </Link>
-                    </Button>
-                    <Button asChild variant="ghost">
-                      <Link to={`/shorts/${c.slug}`}>Details</Link>
-                    </Button>
-                  </div>
-                </CardContent>
-              </Card>
-            ))}
-          </div>
-        )}
+        // Float-in chip
+        setJustGained(pointsAwarded);
+
+        if (typeof refreshPoints === 'function') {
+          await refreshPoints();
+        }
+
+        const { data: pt } = await supabase
+          .from('user_points_totals_v1')
+          .select('total_points')
+          .eq('user_id', user.id)
+          .maybeSingle();
+        const now = Number(pt?.total_points ?? prev + pointsAwarded);
+        setUserPoints(now);
+
+        // 🎉 celebrate if you crossed a gate
+        maybeConfettiOnUnlock(prev, now);
+
+        toast.success(`Great job! You earned ${pointsAwarded} points!`);
+        track('short_quiz_complete', {
+          short_id: short.id,
+          correct_count: correctCount,
+          total_questions: questions.length,
+          points_awarded: pointsAwarded,
+        });
+      } catch (error) {
+        console.error('Error saving quiz results:', error);
+        toast.error('Failed to save quiz results');
+      } finally {
+        setSubmitting(false);
+      }
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="max-w-4xl mx-auto">
+        <Card>
+          <CardContent className="p-8 text-center">
+            <div className="animate-spin w-8 h-8 border-4 border-primary border-t-transparent rounded-full mx-auto mb-4"></div>
+            <p className="text-muted-foreground">Loading video...</p>
+          </CardContent>
+        </Card>
       </div>
-    </div>
-  );
-}
+    );
+  }
 
-/* ---------- Small UI bits ---------- */
-function KpiCard({ label, value }: { label: string; value: number | string }) {
-  return (
-    <div className="bg-white rounded-lg shadow-lg p-6">
-      <p className="text-sm text-gray-600">{label}</p>
-      <p className="text-2xl font-bold text-gray-900 tabular-nums mt-1">{value}</p>
-    </div>
-  );
-}
+  if (!short) {
+    return (
+      <div className="max-w-4xl mx-auto">
+        <Card>
+          <CardContent className="p-8 text-center">
+            <h3 className="text-lg font-semibold mb-2">Video Not Found</h3>
+            <p className="text-muted-foreground mb-4">This video may have been removed or is not available.</p>
+            <Button onClick={() => navigate('/shorts')}>Back to Shorts</Button>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
 
-function EmptyState() {
   return (
-    <div className="text-center py-12 bg-white rounded-lg shadow">
-      <Play className="w-12 h-12 text-gray-400 mx-auto mb-3" />
-      <h3 className="text-lg font-semibold text-gray-900 mb-1">No shorts yet</h3>
-      <p className="text-gray-600">Check back soon—new micro-lessons coming.</p>
+    <div className="max-w-4xl mx-auto space-y-6">
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <Button
+          variant="ghost"
+          onClick={() => navigate('/shorts')}
+          className="flex items-center space-x-2"
+        >
+          <ArrowLeft className="h-4 w-4" />
+          <span>Back to Shorts</span>
+        </Button>
+
+        <div className="flex items-center gap-2">
+          <Badge variant="secondary" className="flex items-center space-x-1">
+            <Clock className="h-3 w-3" />
+            <span>5–15m</span>
+          </Badge>
+          <Badge variant="outline" className="flex items-center gap-1">
+            <Globe className="h-3 w-3" />
+            <span className="uppercase">{resolvedLocale}</span>
+          </Badge>
+          <LockBadge requiredTier={meta.required_tier} requiredPoints={meta.required_points} />
+          {short.preview && <Badge variant="outline">Preview</Badge>}
+        </div>
+      </div>
+
+      {/* Video Section (🔒 gated) */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-2xl">{display.title}</CardTitle>
+        </CardHeader>
+
+        <CardContent className="space-y-6">
+          <Gate
+            userTier={userTier}
+            userPoints={userPoints}
+            requiredTier={meta.required_tier}
+            requiredPoints={meta.required_points}
+            telemetry={{ kind: 'short', slug }}
+            fallback={
+              <div className="text-center space-y-4">
+                <p className="text-sm text-muted-foreground">
+                  This short is locked. Earn more points by playing Daily Quiz or upgrade your membership.
+                </p>
+                <div className="flex items-center justify-center gap-2">
+                  <Button variant="outline" onClick={() => navigate('/daily-quiz')}>
+                    Earn Points
+                  </Button>
+                  <Button onClick={() => navigate('/pricing')}>Upgrade</Button>
+                </div>
+              </div>
+            }
+          >
+            {/* Quick asset links (live) */}
+            <div className="flex flex-wrap items-center gap-3 -mt-2">
+              {display.videoUrl ? (
+                <a
+                  href={display.videoUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex items-center text-sm underline underline-offset-2"
+                >
+                  <Play className="h-4 w-4 mr-1" />
+                  Open video
+                  <ExternalLink className="h-3 w-3 ml-1" />
+                </a>
+              ) : (
+                <span className="text-sm text-muted-foreground">No video link</span>
+              )}
+              {display.pdfUrl && (
+                <>
+                  <span className="text-muted-foreground">•</span>
+                  <a
+                    href={display.pdfUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex items-center text-sm underline underline-offset-2"
+                  >
+                    <FileText className="h-4 w-4 mr-1" />
+                    PDF (locale)
+                    <ExternalLink className="h-3 w-3 ml-1" />
+                  </a>
+                </>
+              )}
+            </div>
+
+            {/* Placeholder Player (simulated watch) */}
+            <div className="relative w-full h-0" style={{ paddingBottom: '56.25%' }}>
+              <div className="absolute inset-0 bg-black rounded-lg flex items-center justify-center">
+                {watchProgress === 0 ? (
+                  <Button size="lg" onClick={simulateVideoWatch} className="flex items-center space-x-2">
+                    <Play className="h-6 w-6" />
+                    <span>Watch Video</span>
+                  </Button>
+                ) : watchProgress < 100 ? (
+                  <div className="text-center text-white space-y-4">
+                    <Play className="h-12 w-12 mx-auto animate-pulse" />
+                    <div className="w-64">
+                      <Progress value={watchProgress} className="h-2" />
+                      <p className="text-sm mt-2">{Math.round(watchProgress)}% watched</p>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="text-center text-white space-y-2">
+                    <CheckCircle className="h-12 w-12 mx-auto text-green-500" />
+                    <p>Video completed!</p>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Video description (optional blurb) */}
+            {display.blurb ? (
+              <div className="text-muted-foreground">
+                <p>{display.blurb}</p>
+              </div>
+            ) : (
+              <div className="text-muted-foreground">
+                <p>This is a placeholder video player. In a real implementation, integrate with YouTube/Vimeo or your own player.</p>
+              </div>
+            )}
+          </Gate>
+        </CardContent>
+      </Card>
+
+      {/* Quiz Section (🔒 gated) */}
+      <Gate
+        userTier={userTier}
+        userPoints={userPoints}
+        requiredTier={meta.required_tier}
+        requiredPoints={meta.required_points}
+        telemetry={{ kind: 'short', slug }}
+      >
+        {videoWatched && questions.length > 0 && (
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center space-x-2">
+                <Trophy className="h-6 w-6 text-primary" />
+                <span>Quick Quiz</span>
+                <Badge variant="secondary">
+                  {questions.reduce((sum, q) => sum + Number(q.points_award ?? 0), 0)} pts available
+                </Badge>
+              </CardTitle>
+            </CardHeader>
+
+            <CardContent className="space-y-6">
+              {!quizState.showResults ? (
+                <>
+                  {/* Progress */}
+                  <div className="space-y-2">
+                    <div className="flex justify-between text-sm text-muted-foreground">
+                      <span>
+                        Question {quizState.currentQuestion + 1} of {questions.length}
+                      </span>
+                      <span className="hidden sm:inline">
+                        Tip: press <kbd className="px-1 border rounded">1</kbd>–<kbd className="px-1 border rounded">4</kbd>{' '}
+                        to answer, <kbd className="px-1 border rounded">Enter</kbd> to continue
+                      </span>
+                    </div>
+                    <Progress value={((quizState.currentQuestion + 1) / questions.length) * 100} className="h-2" />
+                  </div>
+
+                  {/* Current Question */}
+                  <div className="space-y-4">
+                    <h3 className="text-lg font-medium">{questions[quizState.currentQuestion].question}</h3>
+
+                    <div className="grid gap-3" ref={optionsWrapRef}>
+                      {(questions[quizState.currentQuestion].options || ['True', 'False']).map((option, index) => {
+                        const selected = quizState.answers[quizState.currentQuestion] === index;
+                        return (
+                          <Button
+                            key={index}
+                            data-opt-index={index}
+                            data-opt-selected={selected ? 'true' : 'false'}
+                            variant={selected ? 'default' : 'outline'}
+                            className="h-auto p-4 text-left justify-start"
+                            onClick={() => handleAnswerSelect(index)}
+                          >
+                            <span className="mr-2 text-xs opacity-60">{index + 1}.</span>
+                            {option}
+                          </Button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* Navigation */}
+                  <div className="flex justify-end">
+                    <Button onClick={handleNext} disabled={quizState.answers[quizState.currentQuestion] === undefined}>
+                      {quizState.currentQuestion === questions.length - 1 ? 'Finish' : 'Next'}
+                    </Button>
+                  </div>
+                </>
+              ) : (
+                /* Results */
+                <div className="text-center space-y-6">
+                  <div className="space-y-2">
+                    <div className="w-16 h-16 bg-primary/10 rounded-full flex items-center justify-center mx-auto">
+                      <CheckCircle className="h-8 w-8 text-primary" />
+                    </div>
+                    <h3 className="text-2xl font-bold">Quiz Complete!</h3>
+                    <p className="text-muted-foreground">
+                      You got {quizState.correctCount} out of {questions.length} questions correct
+                    </p>
+                  </div>
+
+                  {/* Score */}
+                  <div className="bg-muted/50 rounded-lg p-4">
+                    <div className="text-2xl font-bold text-primary mb-1">
+                      {questions.reduce(
+                        (sum, q, i) =>
+                          sum + (quizState.answers[i] === q.correct_index ? Number(q.points_award ?? 0) : 0),
+                        0
+                      )}{' '}
+                      points earned
+                    </div>
+                    <div className="text-sm text-muted-foreground">
+                      {Math.round((quizState.correctCount / questions.length) * 100)}% accuracy
+                    </div>
+                  </div>
+
+                  <Button onClick={() => navigate('/shorts')} size="lg" disabled={submitting}>
+                    {submitting ? 'Saving...' : 'Continue Learning'}
+                  </Button>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        )}
+
+        {videoWatched && questions.length === 0 && (
+          <Card>
+            <CardContent className="p-8 text-center">
+              <Trophy className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
+              <h3 className="text-lg font-semibold mb-2">Great Job!</h3>
+              <p className="text-muted-foreground mb-4">You've completed this video. Check out more content to keep learning!</p>
+              <Button onClick={() => navigate('/shorts')}>More Videos</Button>
+            </CardContent>
+          </Card>
+        )}
+      </Gate>
+
+      {/* Float-in “+points” chip */}
+      {justGained > 0 && <PointsGainBubble amount={justGained} onDone={() => setJustGained(0)} />}
+
+      {/* 🎉 Level-up banner */}
+      <LevelUpBanner
+        open={levelOpen}
+        onClose={() => setLevelOpen(false)}
+        message={levelMsg}
+        ctaText="Explore Shorts"
+        ctaHref="/shorts"
+      />
     </div>
   );
 }
