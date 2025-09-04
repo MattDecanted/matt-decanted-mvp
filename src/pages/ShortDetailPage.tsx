@@ -11,6 +11,7 @@ import { usePoints } from '@/context/PointsContext';
 import { useAnalytics } from '@/context/AnalyticsContext';
 import { useLocale } from '@/context/LocaleContext';
 import BrandButton from '@/components/ui/BrandButton';
+import BrandGhostButton from "@/components/ui/BrandGhostButton";
 import ChoiceButton from "@/components/ui/ChoiceButton";
 
 import { supabase } from '@/lib/supabase';
@@ -491,10 +492,13 @@ export default function ShortDetailPage() {
                   This short is locked. Earn more points by playing Daily Quiz or upgrade your membership.
                 </p>
                 <div className="flex items-center justify-center gap-2">
-                  <Button variant="outline" onClick={() => navigate('/daily-quiz')}>
-                    Earn Points
-                  </Button>
-                  <Button onClick={() => navigate('/pricing')}>Upgrade</Button>
+<BrandGhostButton onClick={() => navigate('/daily-quiz')}>
+  Earn Points
+</BrandGhostButton>
+<BrandButton onClick={() => navigate('/pricing')}>
+  Upgrade
+</BrandButton>
+
                 </div>
               </div>
             }
