@@ -32,6 +32,8 @@ type Short = {
   preview: boolean;
   is_published: boolean;
   created_at: string;
+  /** optional, if you added this column */
+  watch_points?: number | null;
 };
 
 type Question = {
@@ -45,7 +47,7 @@ type Question = {
 
 type QuizState = {
   currentQuestion: number;
-  answers: number[];
+  answers: number[]; // index per question
   showResults: boolean;
   correctCount: number;
 };
@@ -80,6 +82,7 @@ export default function ShortDetailPage() {
 
   const [videoWatched, setVideoWatched] = useState(false);
   const [watchProgress, setWatchProgress] = useState(0);
+  const [watchAwarded, setWatchAwarded] = useState(false);
   const { setPercent: saveLocalPercent } = useShortProgress(slug);
 
   const [quizState, setQuizState] = useState<QuizState>({
@@ -212,6 +215,48 @@ export default function ShortDetailPage() {
     }, 100);
   };
 
+  // Award watch points once when video completes (if column exists / value > 0)
+  useEffect(() => {
+    (async () => {
+      if (!videoWatched || watchAwarded || !short || !user) return;
+      const pts = Number((short as any)?.watch_points ?? 0);
+      if (pts > 0) {
+        try {
+          const prev = userPoints;
+
+          await supabase.from('points_ledger').insert([{
+            user_id: user.id,
+            points: pts,
+            reason: 'Video Watch',
+            meta: { short_id: short.id, short_title: display.title }
+          }]);
+
+          setJustGained((n) => n + pts);
+
+          if (typeof refreshPoints === 'function') {
+            await refreshPoints();
+          }
+          const { data: pt } = await supabase
+            .from('user_points_totals_v1')
+            .select('total_points')
+            .eq('user_id', user.id)
+            .maybeSingle();
+          const now = Number(pt?.total_points ?? prev + pts);
+          setUserPoints(now);
+
+          toast.success(`Nice! +${pts} for watching.`);
+        } catch (e) {
+          console.error('watch-points insert failed', e);
+        } finally {
+          setWatchAwarded(true);
+        }
+      } else {
+        setWatchAwarded(true);
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [videoWatched, watchAwarded, short, user, display.title]);
+
   const handleAnswerSelect = (answerIndex: number) => {
     const newAnswers = [...quizState.answers];
     newAnswers[quizState.currentQuestion] = answerIndex;
@@ -309,7 +354,7 @@ export default function ShortDetailPage() {
         ]);
 
         // Float-in chip
-        setJustGained(pointsAwarded);
+        setJustGained((n) => n + pointsAwarded);
 
         if (typeof refreshPoints === 'function') {
           await refreshPoints();
@@ -344,7 +389,7 @@ export default function ShortDetailPage() {
 
   if (loading) {
     return (
-      <div className="max-w-4xl mx-auto">
+      <div className="max-w-3xl mx-auto">
         <Card>
           <CardContent className="p-8 text-center">
             <div className="animate-spin w-8 h-8 border-4 border-primary border-t-transparent rounded-full mx-auto mb-4"></div>
@@ -357,7 +402,7 @@ export default function ShortDetailPage() {
 
   if (!short) {
     return (
-      <div className="max-w-4xl mx-auto">
+      <div className="max-w-3xl mx-auto">
         <Card>
           <CardContent className="p-8 text-center">
             <h3 className="text-lg font-semibold mb-2">Video Not Found</h3>
@@ -370,7 +415,7 @@ export default function ShortDetailPage() {
   }
 
   return (
-    <div className="max-w-4xl mx-auto space-y-6">
+    <div className="max-w-3xl mx-auto space-y-6">
       {/* Header */}
       <div className="flex items-center justify-between">
         <Button
@@ -402,7 +447,7 @@ export default function ShortDetailPage() {
           <CardTitle className="text-2xl">{display.title}</CardTitle>
         </CardHeader>
 
-        <CardContent className="space-y-6">
+        <CardContent className="space-y-5">
           <Gate
             userTier={userTier}
             userPoints={userPoints}
@@ -515,7 +560,7 @@ export default function ShortDetailPage() {
               </CardTitle>
             </CardHeader>
 
-            <CardContent className="space-y-6">
+            <CardContent className="space-y-4">
               {!quizState.showResults ? (
                 <>
                   {/* Progress */}
@@ -529,36 +574,50 @@ export default function ShortDetailPage() {
                         to answer, <kbd className="px-1 border rounded">Enter</kbd> to continue
                       </span>
                     </div>
-                    <Progress value={((quizState.currentQuestion + 1) / questions.length) * 100} className="h-2" />
+                    <Progress
+                      value={((quizState.currentQuestion + 1) / questions.length) * 100}
+                      className="h-2"
+                    />
                   </div>
 
                   {/* Current Question */}
-                  <div className="space-y-4">
-                    <h3 className="text-lg font-medium">{questions[quizState.currentQuestion].question}</h3>
+                  <div className="space-y-2">
+                    <h3 className="text-[15px] font-semibold text-gray-900 mb-1">
+                      {questions[quizState.currentQuestion].question}
+                    </h3>
 
-                    <div className="grid gap-3" ref={optionsWrapRef}>
+                    <div className="space-y-2" ref={optionsWrapRef}>
                       {(questions[quizState.currentQuestion].options || ['True', 'False']).map((option, index) => {
                         const selected = quizState.answers[quizState.currentQuestion] === index;
+
+                        const base =
+                          'block w-full text-left px-4 py-3 rounded-lg border transition select-none h-auto justify-start';
+                        const selectedCls = 'bg-indigo-600 text-white border-indigo-600 hover:bg-indigo-600';
+                        const unselectedCls = 'bg-white text-gray-900 border-gray-300 hover:bg-gray-50';
+
                         return (
-                          <Button
+                          <button
                             key={index}
+                            type="button"
                             data-opt-index={index}
                             data-opt-selected={selected ? 'true' : 'false'}
-                            variant={selected ? 'default' : 'outline'}
-                            className="h-auto p-4 text-left justify-start"
+                            className={`${base} ${selected ? selectedCls : unselectedCls}`}
                             onClick={() => handleAnswerSelect(index)}
                           >
                             <span className="mr-2 text-xs opacity-60">{index + 1}.</span>
                             {option}
-                          </Button>
+                          </button>
                         );
                       })}
                     </div>
                   </div>
 
                   {/* Navigation */}
-                  <div className="flex justify-end">
-                    <Button onClick={handleNext} disabled={quizState.answers[quizState.currentQuestion] === undefined}>
+                  <div className="mt-3 flex justify-end">
+                    <Button
+                      onClick={handleNext}
+                      disabled={quizState.answers[quizState.currentQuestion] === undefined}
+                    >
                       {quizState.currentQuestion === questions.length - 1 ? 'Finish' : 'Next'}
                     </Button>
                   </div>
