@@ -5,7 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
-import { Play, Trophy, CheckCircle, ArrowLeft, Clock, ExternalLink, FileText } from 'lucide-react';
+import { Play, Trophy, CheckCircle, ArrowLeft, Clock } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import { usePoints } from '@/context/PointsContext';
 import { useAnalytics } from '@/context/AnalyticsContext';
@@ -22,6 +22,9 @@ import { useQuizKeyboard } from "@/hooks/useQuizKeyboard";
 import PointsGainBubble from "@/components/PointsGainBubble";
 import LevelUpBanner from "@/components/LevelUpBanner";
 
+/** 🌐 i18n current language */
+import i18n from "i18next";
+
 type Short = {
   id: string;
   slug: string;
@@ -30,26 +33,12 @@ type Short = {
   preview: boolean;
 };
 
-type ShortI18n = {
-  locale: string;
-  title: string | null;
-  video_url: string | null;
-  pdf_url: string | null;
-};
-
 type Question = {
   id: string;
   question: string;
-  options: string[];
-  correct_index: number;
+  options: string[];          // for TF we’ll pass ["true","false"]
+  correct_index: number;      // 0/1 for TF, 0..n for MCQ
   points_award: number;
-};
-
-type QuestionI18n = {
-  question_id: string;
-  locale: string;
-  question: string | null;
-  options: string[] | null;
 };
 
 type QuizState = {
@@ -65,25 +54,28 @@ type ShortMeta = {
   is_active: boolean;
 };
 
+type ShortI18n = {
+  id: string;
+  short_id: string;
+  locale: string;
+  title_i18n: string | null;
+  blurb_i18n: string | null;
+  video_url_alt: string | null;
+  pdf_url_alt: string | null;
+};
+
 export default function ShortDetailPage() {
   const { slug } = useParams<{ slug: string }>();
   const navigate = useNavigate();
 
   const [short, setShort] = useState<Short | null>(null);
+  const [i18nRow, setI18nRow] = useState<ShortI18n | null>(null);
   const [questions, setQuestions] = useState<Question[]>([]);
   const [loading, setLoading] = useState(true);
 
-  // ✅ locale-resolved view of the short (title/video/pdf)
-  const [view, setView] = useState<{ title: string; video_url: string; pdf_url: string | null; locale: string | null }>({
-    title: '',
-    video_url: '',
-    pdf_url: null,
-    locale: null,
-  });
-
   const [videoWatched, setVideoWatched] = useState(false);
   const [watchProgress, setWatchProgress] = useState(0);
-  const { setPercent: saveLocalPercent } = useShortProgress(slug);
+  const { setPercent: saveLocalPercent } = useShortProgress(slug || "");
 
   const [quizState, setQuizState] = useState<QuizState>({
     currentQuestion: 0,
@@ -113,18 +105,18 @@ export default function ShortDetailPage() {
   const { track } = useAnalytics();
 
   const optionsWrapRef = useRef<HTMLDivElement>(null);
+  const locale = (i18n?.language || navigator.language || "en").slice(0, 2).toLowerCase();
 
   useEffect(() => {
     if (slug) {
       loadAll(slug);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [slug]);
+  }, [slug, locale]);
 
   async function loadAll(currSlug: string) {
     setLoading(true);
     try {
-      // 1) Load base short
       const { data: shortData, error: shortError } = await supabase
         .from('shorts')
         .select('*')
@@ -132,10 +124,9 @@ export default function ShortDetailPage() {
         .eq('is_published', true)
         .single();
       if (shortError) throw shortError;
-      const baseShort = shortData as Short;
-      setShort(baseShort);
+      setShort(shortData as Short);
 
-      // 2) Gating meta
+      // Load gate meta
       const { data: metaData, error: metaErr } = await supabase
         .from('content_shorts')
         .select('required_points, required_tier, is_active')
@@ -151,93 +142,42 @@ export default function ShortDetailPage() {
         setMeta({ required_points: 0, required_tier: 'free', is_active: true });
       }
 
-      // 3) Locale preference
-      const navLang = (typeof navigator !== 'undefined' && navigator.language) ? navigator.language : 'en';
-      const baseLang = navLang.split('-')[0];
-      const wanted = [navLang, baseLang, 'en'];
-
-      // 4) Short i18n (title/video/pdf)
-      const { data: i18nRows } = await supabase
-        .from('content_shorts_i18n')
-        .select('locale,title,video_url,pdf_url')
-        .eq('short_id', baseShort.id)
-        .in('locale', wanted);
-
-      const pick = <T extends { locale: string }>(rows?: T[] | null): T | undefined => {
-        if (!rows) return undefined;
-        for (const l of wanted) {
-          const found = rows.find(r => r.locale === l);
-          if (found) return found;
-        }
-        return undefined;
-      };
-      const i18n = pick<ShortI18n>(i18nRows as ShortI18n[]);
-
-      setView({
-        title: i18n?.title || baseShort.title,
-        video_url: i18n?.video_url || baseShort.video_url,
-        pdf_url: i18n?.pdf_url || null,
-        locale: i18n?.locale || null,
-      });
-
-      // 5) Questions (base)
+      // Load quiz questions for this short
       const { data: questionsData, error: questionsError } = await supabase
         .from('quiz_bank')
         .select('*')
         .eq('kind', 'short')
-        .eq('ref_id', baseShort.id)
-        .order('created_at', { ascending: true });
+        .eq('ref_id', (shortData as Short).id)
+        .order('order_index', { ascending: true });
       if (questionsError) throw questionsError;
-      const baseQs = (questionsData || []) as Question[];
 
-      // 6) Question i18n (merge)
-      const qids = baseQs.map(q => q.id);
-      let mergedQs = baseQs;
+      // Normalize TF questions to options ["true","false"] if needed
+      const normalized = (questionsData || []).map((q: any) => {
+        const isMCQ = Array.isArray(q.options) && q.options.length > 0;
+        return {
+          id: q.id,
+          question: q.question,
+          options: isMCQ ? q.options : ["true", "false"],
+          correct_index: Number(q.correct_index ?? 0),
+          points_award: Number(q.points_award ?? 0),
+        } as Question;
+      });
+      setQuestions(normalized);
 
-      if (qids.length > 0) {
-        const { data: qI18nRows } = await supabase
-          .from('quiz_bank_i18n')
-          .select('question_id, locale, question, options')
-          .in('question_id', qids)
-          .in('locale', wanted);
-
-        if (qI18nRows && qI18nRows.length > 0) {
-          // group by question_id
-          const byQ = new Map<string, QuestionI18n[]>();
-          for (const r of qI18nRows as QuestionI18n[]) {
-            const arr = byQ.get(r.question_id) || [];
-            arr.push(r);
-            byQ.set(r.question_id, arr);
-          }
-          const pickI18n = (qid: string): QuestionI18n | undefined => {
-            const arr = byQ.get(qid);
-            if (!arr) return undefined;
-            for (const l of wanted) {
-              const hit = arr.find(x => x.locale === l);
-              if (hit) return hit;
-            }
-            return undefined;
-          };
-
-          mergedQs = baseQs.map(q => {
-            const loc = pickI18n(q.id);
-            const translatedOptions =
-              Array.isArray(loc?.options) && loc!.options!.length === q.options.length
-                ? (loc!.options as string[])
-                : q.options;
-            return {
-              ...q,
-              question: loc?.question || q.question,
-              options: translatedOptions,
-              // correct_index remains from base; options order should match
-            };
-          });
-        }
+      // Load translation row for current locale (if any)
+      try {
+        const { data: t } = await supabase
+          .from('shorts_i18n')
+          .select('*')
+          .eq('short_id', (shortData as Short).id)
+          .eq('locale', locale)
+          .maybeSingle();
+        setI18nRow((t as any) || null);
+      } catch {
+        setI18nRow(null);
       }
 
-      setQuestions(mergedQs);
-
-      // 7) Points for gating
+      // User points
       let pointsNow = Number(totalPoints ?? 0);
       if (!pointsNow && user?.id) {
         const { data: pt, error: ptErr } = await supabase
@@ -303,7 +243,8 @@ export default function ShortDetailPage() {
   }, [quizState.currentQuestion, quizState.showResults, quizState.answers]);
 
   // Keyboard shortcuts: 1–9 to select, Enter/→ to Next
-  const optsCount = questions[quizState.currentQuestion]?.options?.length ?? 0;
+  const optsCount =
+    questions[quizState.currentQuestion]?.options?.length ?? 0;
   useQuizKeyboard({
     enabled: videoWatched && !quizState.showResults && optsCount > 0,
     optionsCount: optsCount,
@@ -326,6 +267,7 @@ export default function ShortDetailPage() {
         const mod = await import('canvas-confetti');
         mod.default({ particleCount: 120, spread: 70, origin: { y: 0.6 } });
         toast.success('New content unlocked! 🎉');
+        // Open banner
         setLevelMsg(`You reached ${newPoints} points and unlocked content (gate: ${nextGate}).`);
         setLevelOpen(true);
       }
@@ -363,7 +305,7 @@ export default function ShortDetailPage() {
             reason: 'Video Quiz',
             meta: {
               short_id: short!.id,
-              short_title: view.title || short!.title,
+              short_title: short!.title,
               correct_count: correctCount,
               total_questions: questions.length,
             },
@@ -403,6 +345,12 @@ export default function ShortDetailPage() {
     }
   };
 
+  // Prefer translated values when present
+  const displayTitle = i18nRow?.title_i18n || short?.title || "";
+  const displayBlurb = i18nRow?.blurb_i18n || "";
+  const displayVideoUrl = i18nRow?.video_url_alt || short?.video_url || "";
+  const displayPdfUrl = i18nRow?.pdf_url_alt || "";
+
   if (loading) {
     return (
       <div className="max-w-4xl mx-auto">
@@ -432,10 +380,6 @@ export default function ShortDetailPage() {
     );
   }
 
-  const displayTitle = view.title || short.title;
-  const videoUrl = view.video_url || short.video_url;
-  const pdfUrl = view.pdf_url;
-
   return (
     <div className="max-w-4xl mx-auto space-y-6">
       {/* Header */}
@@ -454,11 +398,6 @@ export default function ShortDetailPage() {
             <Clock className="h-3 w-3" />
             <span>~5 min</span>
           </Badge>
-          {view.locale && (
-            <Badge variant="outline" title={`Localized for ${view.locale}`}>
-              {(view.locale.includes('-') ? view.locale.split('-')[0] : view.locale).toUpperCase()}
-            </Badge>
-          )}
           <LockBadge requiredTier={meta.required_tier} requiredPoints={meta.required_points} />
           {short.preview && <Badge variant="outline">Preview</Badge>}
         </div>
@@ -493,14 +432,27 @@ export default function ShortDetailPage() {
             <div className="relative w-full h-0" style={{ paddingBottom: '56.25%' }}>
               <div className="absolute inset-0 bg-black rounded-lg flex items-center justify-center">
                 {watchProgress === 0 ? (
-                  <Button
-                    size="lg"
-                    onClick={simulateVideoWatch}
-                    className="flex items-center space-x-2"
-                  >
-                    <Play className="h-6 w-6" />
-                    <span>Watch Video</span>
-                  </Button>
+                  <div className="flex flex-col items-center gap-3">
+                    <Button
+                      size="lg"
+                      onClick={simulateVideoWatch}
+                      className="flex items-center space-x-2"
+                    >
+                      <Play className="h-6 w-6" />
+                      <span>Watch Video</span>
+                    </Button>
+                    {/* If you want to open the real URL in a new tab while we simulate watch: */}
+                    {displayVideoUrl && (
+                      <a
+                        href={displayVideoUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="text-xs text-white/80 underline underline-offset-2"
+                      >
+                        Open video in a new tab →
+                      </a>
+                    )}
+                  </div>
                 ) : watchProgress < 100 ? (
                   <div className="text-center text-white space-y-4">
                     <Play className="h-12 w-12 mx-auto animate-pulse" />
@@ -518,32 +470,21 @@ export default function ShortDetailPage() {
               </div>
             </div>
 
-            {/* External links (live) */}
-            <div className="flex flex-wrap items-center gap-2">
-              {!!videoUrl && (
-                <Button asChild variant="outline">
-                  <a href={videoUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-2">
-                    <ExternalLink className="h-4 w-4" />
-                    Open video
-                  </a>
-                </Button>
+            {/* Description / i18n extras */}
+            <div className="space-y-2">
+              {displayBlurb && (
+                <p className="text-sm text-muted-foreground">{displayBlurb}</p>
               )}
-              {!!pdfUrl && (
-                <Button asChild variant="outline">
-                  <a href={pdfUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-2">
-                    <FileText className="h-4 w-4" />
-                    View PDF
-                  </a>
-                </Button>
+              {displayPdfUrl && (
+                <a
+                  href={displayPdfUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex items-center text-sm underline underline-offset-2"
+                >
+                  Download PDF (your language) →
+                </a>
               )}
-            </div>
-
-            {/* Video description */}
-            <div className="text-muted-foreground">
-              <p>
-                This is a placeholder video player. If playback is blocked on your device, use
-                the “Open video” button above to watch in a new tab.
-              </p>
             </div>
           </Gate>
         </CardContent>
