@@ -1,6 +1,6 @@
 // src/pages/ShortDetailPage.tsx
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { useParams, useNavigate, Link } from 'react-router-dom';
+import { useParams, useNavigate } from 'react-router-dom';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -10,6 +10,8 @@ import { useAuth } from '@/context/AuthContext';
 import { usePoints } from '@/context/PointsContext';
 import { useAnalytics } from '@/context/AnalyticsContext';
 import { useLocale } from '@/context/LocaleContext';
+import BrandButton from '@/components/ui/BrandButton';
+
 import { supabase } from '@/lib/supabase';
 import { toast } from 'sonner';
 
@@ -56,16 +58,15 @@ type ShortMeta = {
   required_points: number;
   required_tier: Tier;
   is_active: boolean;
+  /** optional gate details for UI */
+  title?: string | null;
+  summary?: string | null;
 };
 
 type ShortI18n = {
-  id: string;
-  short_id: string;
-  locale: string;
-  title_i18n: string | null;
-  blurb_i18n: string | null;
-  video_url_alt: string | null;
-  pdf_url_alt: string | null;
+  id: string; short_id: string; locale: string;
+  title_i18n: string | null; blurb_i18n: string | null;
+  video_url_alt: string | null; pdf_url_alt: string | null;
 };
 
 export default function ShortDetailPage() {
@@ -103,6 +104,8 @@ export default function ShortDetailPage() {
     required_points: 0,
     required_tier: 'free',
     is_active: true,
+    title: null,
+    summary: null,
   });
   const [userPoints, setUserPoints] = useState<number>(0);
 
@@ -134,30 +137,37 @@ export default function ShortDetailPage() {
       if (shortError) throw shortError;
       setShort(shortData as Short);
 
-      // Gate meta
+      // Gate meta (+ optional title/summary for UI warmth)
       const { data: metaData } = await supabase
         .from('content_shorts')
-        .select('required_points, required_tier, is_active')
+        .select('required_points, required_tier, is_active, title, summary')
         .eq('slug', currSlug)
-        .single();
+        .maybeSingle();
       if (metaData) {
         setMeta({
           required_points: Number(metaData.required_points ?? 0),
           required_tier: (metaData.required_tier ?? 'free') as Tier,
           is_active: Boolean(metaData.is_active ?? true),
+          title: metaData.title ?? null,
+          summary: metaData.summary ?? null,
         });
       } else {
-        setMeta({ required_points: 0, required_tier: 'free', is_active: true });
+        setMeta({ required_points: 0, required_tier: 'free', is_active: true, title: null, summary: null });
       }
 
-      // I18n row for the resolved locale
-      const { data: tData } = await supabase
+      // I18n rows: try resolvedLocale, then fall back to 'en'
+      const localesToTry = Array.from(new Set([resolvedLocale, 'en'].filter(Boolean))) as string[];
+      const { data: tRows } = await supabase
         .from('shorts_i18n')
         .select('*')
         .eq('short_id', (shortData as Short).id)
-        .eq('locale', resolvedLocale)
-        .maybeSingle();
-      setI18nRow((tData as ShortI18n) || null);
+        .in('locale', localesToTry);
+
+      const best =
+        (tRows || []).find((r: any) => r.locale === resolvedLocale) ||
+        (tRows || []).find((r: any) => r.locale === 'en') ||
+        null;
+      setI18nRow((best as ShortI18n) || null);
 
       // Quiz bank for this short
       const { data: questionsData, error: questionsError } = await supabase
@@ -189,15 +199,15 @@ export default function ShortDetailPage() {
     }
   }
 
-  /** Derived display fields (with i18n fallbacks) */
+  /** Derived display fields (with i18n + gate fallbacks) */
   const display = useMemo(() => {
     return {
       title: i18nRow?.title_i18n || short?.title || '',
-      blurb: i18nRow?.blurb_i18n || '',
+      blurb: i18nRow?.blurb_i18n || meta.summary || '',
       videoUrl: i18nRow?.video_url_alt || short?.video_url || null,
       pdfUrl: i18nRow?.pdf_url_alt || null,
     };
-  }, [i18nRow, short]);
+  }, [i18nRow, short, meta.summary]);
 
   /** Fake player – simulate progress */
   const simulateVideoWatch = () => {
@@ -416,7 +426,7 @@ export default function ShortDetailPage() {
 
   return (
     <div className="max-w-3xl mx-auto space-y-6">
-      {/* Header */}
+      {/* Back & status row */}
       <div className="flex items-center justify-between">
         <Button
           variant="ghost"
@@ -441,13 +451,26 @@ export default function ShortDetailPage() {
         </div>
       </div>
 
+      {/* Warm hero (title + blurb + gate meta) */}
+      <div className="rounded-2xl overflow-hidden border shadow-card bg-white">
+        <div className="bg-gradient-to-br from-brand-300 to-brand-100 p-6 md:p-8">
+          <h1 className="text-2xl md:text-3xl font-bold text-brand-900">{display.title}</h1>
+          {display.blurb && (
+            <p className="mt-2 text-brand-900/80">{display.blurb}</p>
+          )}
+          <div className="mt-3 text-xs text-brand-900/70">
+            {short.preview ? "Preview • " : ""}
+            {short.is_published ? "Published" : "Draft"}
+            {meta.required_tier ? ` • Tier: ${String(meta.required_tier).toUpperCase()}` : ""}
+            {typeof meta.required_points === "number" ? ` • ${meta.required_points} pts` : ""}
+          </div>
+        </div>
+      </div>
+
       {/* Video Section (🔒 gated) */}
       <Card>
-        <CardHeader>
-          <CardTitle className="text-2xl">{display.title}</CardTitle>
-        </CardHeader>
-
-        <CardContent className="space-y-5">
+        {/* Title moved to hero; keep content clean here */}
+        <CardContent className="space-y-5 pt-6">
           <Gate
             userTier={userTier}
             userPoints={userPoints}
@@ -650,9 +673,9 @@ export default function ShortDetailPage() {
                     </div>
                   </div>
 
-                  <Button onClick={() => navigate('/shorts')} size="lg" disabled={submitting}>
+                  <BrandButton onClick={() => navigate('/shorts')} size="lg" disabled={submitting}>
                     {submitting ? 'Saving...' : 'Continue Learning'}
-                  </Button>
+                  </BrandButton>
                 </div>
               )}
             </CardContent>
@@ -665,7 +688,7 @@ export default function ShortDetailPage() {
               <Trophy className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
               <h3 className="text-lg font-semibold mb-2">Great Job!</h3>
               <p className="text-muted-foreground mb-4">You've completed this video. Check out more content to keep learning!</p>
-              <Button onClick={() => navigate('/shorts')}>More Videos</Button>
+              <BrandButton onClick={() => navigate('/shorts')}>More Videos</BrandButton>
             </CardContent>
           </Card>
         )}
