@@ -1,10 +1,11 @@
 // src/components/Layout.tsx
 import * as React from "react";
-import { NavLink, Link, useLocation, useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import { Globe, Trophy, Flame, Menu, X } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 import { usePoints } from "@/context/PointsContext";
 import { useLocale } from "@/context/LocaleContext";
+import { LangLink as Link, LangNavLink as NavLink } from "@/components/LangLink";
 
 function cx(...xs: Array<string | false | null | undefined>) {
   return xs.filter(Boolean).join(" ");
@@ -14,7 +15,7 @@ function cx(...xs: Array<string | false | null | undefined>) {
 const LOGO_URL =
   "https://matt-decanted.s3.ap-southeast-2.amazonaws.com/brand/matt-decanted-logo.png";
 
-// Supported languages for the switcher
+// Supported languages (keep in sync with your data)
 const LANGS = [
   { code: "en", label: "English", flag: "🇺🇸" },
   { code: "ko", label: "한국어", flag: "🇰🇷" },
@@ -30,6 +31,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   const pointsCtx = usePoints?.();
   const { locale, setLocale } = useLocale();
   const navigate = useNavigate();
+  const loc = useLocation();
 
   // Be flexible: accept totalPoints | points | balance
   const displayPoints = Number(
@@ -56,13 +58,12 @@ export default function Layout({ children }: { children: React.ReactNode }) {
       isActive && "text-brand"
     );
 
-  const loc = useLocation();
   const hideChrome =
     loc.pathname.startsWith("/auth/callback") ||
     loc.pathname.startsWith("/reset-password");
 
   // ---- Language handling ----
-  // 1) Pick up ?lang=xx from URL and persist
+  // 1) Pick up ?lang=xx → set context + persist
   React.useEffect(() => {
     const params = new URLSearchParams(loc.search);
     const qLang = params.get("lang");
@@ -76,23 +77,30 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     }
   }, [loc.search, locale, setLocale]);
 
-  // 2) On first load, restore locale from localStorage if not set
+  // 2) Restore from localStorage on first mount if no locale yet
   React.useEffect(() => {
     if (!locale) {
       try {
         const saved = localStorage.getItem("md_locale");
-        if (saved && LANGS.some((l) => l.code === saved)) {
-          setLocale(saved);
-        } else {
-          setLocale("en");
-        }
+        setLocale(saved && LANGS.some(l => l.code === saved) ? saved : "en");
       } catch {
         setLocale("en");
       }
     }
   }, [locale, setLocale]);
 
-  // 3) Changing the select updates context, persists, and rewrites ?lang= for shareable links
+  // 3) Always keep ?lang in the URL on every route (so Home/About/etc keep it)
+  React.useEffect(() => {
+    if (!locale) return;
+    const params = new URLSearchParams(loc.search);
+    if (params.get("lang") !== locale) {
+      params.set("lang", locale);
+      navigate(loc.pathname + "?" + params.toString(), { replace: true });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loc.pathname, locale]);
+
+  // 4) Handler for dropdown
   function handleLangChange(next: string) {
     setLocale(next);
     try {
@@ -174,7 +182,6 @@ export default function Layout({ children }: { children: React.ReactNode }) {
               <NavLink to="/dashboard" className={linkClass}>
                 Dashboard
               </NavLink>
-              {/* ⛔️ Swirdle Leaderboard intentionally NOT here */}
             </nav>
 
             {/* Right cluster */}
@@ -356,7 +363,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
         <div
           className="w-full"
           style={{
-            height: 6, // slightly thicker
+            height: 6,
             background:
               "linear-gradient(to bottom, rgba(255,128,0,0.90), rgba(255,128,0,0.78))",
             borderBottomLeftRadius: 8,
