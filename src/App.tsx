@@ -10,6 +10,7 @@ import { Toaster } from "@/components/ui/sonner";
 import { AuthProvider, useAuth } from "@/context/AuthContext";
 import { PointsProvider } from "@/context/PointsContext";
 import { AnalyticsProvider } from "@/context/AnalyticsContext";
+import { LocaleProvider } from "@/context/LocaleContext";
 
 // Layout & Pages
 import Layout from "@/components/Layout";
@@ -240,10 +241,11 @@ function App() {
     );
   }, []);
 
-  return (
-    <AnalyticsProvider>
-      <AuthProvider>
-        <PointsProvider>
+return (
+  <AnalyticsProvider>
+    <AuthProvider>
+      <PointsProvider>
+        <LocaleProvider>
           <Router>
             {/* 🔒 Keep auth callback route outside Layout to avoid visual flash */}
             <Routes>
@@ -259,6 +261,7 @@ function App() {
                   </div>
                 }
               >
+
                 <Layout>
                   <Routes>
                     {/* Avoid double render inside Layout */}
