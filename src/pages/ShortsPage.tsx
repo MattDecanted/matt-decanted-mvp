@@ -40,6 +40,18 @@ type ShortI18n = {
   pdf_url_alt: string | null;
 };
 
+/* ---------- Language options for the switcher ---------- */
+const LANGS = [
+  { code: "auto", name: "Auto (browser/i18n)", flag: "🌐" },
+  { code: "en", name: "English", flag: "🇺🇸" },
+  { code: "ko", name: "한국어", flag: "🇰🇷" },
+  { code: "zh", name: "中文", flag: "🇨🇳" },
+  { code: "es", name: "Español", flag: "🇪🇸" },
+  { code: "fr", name: "Français", flag: "🇫🇷" },
+  { code: "de", name: "Deutsch", flag: "🇩🇪" },
+  { code: "ja", name: "日本語", flag: "🇯🇵" },
+];
+
 /* ---------- Helper: tier ranking ---------- */
 const tierRank: Record<GateMeta["required_tier"], number> = { free: 0, pro: 1, vip: 2 };
 
@@ -58,7 +70,13 @@ export default function ShortsPage() {
   const [userPoints, setUserPoints] = useState<number>(Number(totalPoints ?? 0));
 
   const [query, setQuery] = useState("");
-  const locale = (i18n?.language || navigator.language || "en").slice(0, 2).toLowerCase();
+
+  // NEW: language switcher (persist to localStorage for convenience)
+  const [forcedLocale, setForcedLocale] = useState<string>(
+    () => localStorage.getItem("md_locale") || "auto"
+  );
+  const detected = (i18n?.language || navigator.language || "en").slice(0, 2).toLowerCase();
+  const locale = (forcedLocale === "auto" ? detected : forcedLocale).slice(0, 2);
 
   useEffect(() => {
     loadAll().catch(() => {});
@@ -99,7 +117,7 @@ export default function ShortsPage() {
       }
       setGates(gatesMap);
 
-      // 3) I18n for current locale
+      // 3) I18n for selected locale
       const ids = list.map((x) => x.id);
       let i18Map: Record<string, ShortI18n | null> = {};
       if (ids.length) {
@@ -109,7 +127,6 @@ export default function ShortsPage() {
           .eq("locale", locale)
           .in("short_id", ids);
         if (!tErr && t) {
-          // initialize all to null then fill
           ids.forEach((id) => (i18Map[id] = null));
           (t as any[]).forEach((row) => {
             i18Map[row.short_id] = row as ShortI18n;
@@ -199,19 +216,40 @@ export default function ShortsPage() {
           <div>
             <h1 className="text-3xl font-bold text-gray-900 mb-1">Shorts</h1>
             <p className="text-gray-600">
-              Bite-sized micro-lessons (5–15 min). Auto-localized when available{" "}
+              Bite-sized micro-lessons (5–15 min). Localized when available{" "}
               <span className="inline-flex items-center gap-1 text-gray-500">
-                <Globe className="w-4 h-4" /> <span className="uppercase">{locale}</span>
+                <Globe className="w-4 h-4" />{" "}
+                <span className="uppercase">{locale}</span>
               </span>
             </p>
           </div>
+
           <div className="flex items-center gap-2">
+            {/* Search */}
             <Input
               placeholder="Search shorts…"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              className="w-64"
+              className="w-56"
             />
+
+            {/* NEW: Language switcher */}
+            <select
+              value={forcedLocale}
+              onChange={(e) => {
+                const v = e.target.value;
+                setForcedLocale(v);
+                localStorage.setItem("md_locale", v);
+              }}
+              className="px-3 py-2 border rounded-md bg-white text-sm"
+              title="Preview a different language"
+            >
+              {LANGS.map((l) => (
+                <option key={l.code} value={l.code}>
+                  {l.flag} {l.name}
+                </option>
+              ))}
+            </select>
           </div>
         </div>
 
