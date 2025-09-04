@@ -13,7 +13,6 @@ import { useLocale } from '@/context/LocaleContext';
 import BrandButton from '@/components/ui/BrandButton';
 import ChoiceButton from "@/components/ui/ChoiceButton";
 
-
 import { supabase } from '@/lib/supabase';
 import { toast } from 'sonner';
 
@@ -26,6 +25,9 @@ import { useShortProgress } from '@/hooks/useLocalProgress';
 import { useQuizKeyboard } from '@/hooks/useQuizKeyboard';
 import PointsGainBubble from '@/components/PointsGainBubble';
 import LevelUpBanner from '@/components/LevelUpBanner';
+
+/* ---------- Feature flag for reveal ---------- */
+const SHOW_REVEAL = String(import.meta.env.VITE_SHOW_QUIZ_REVEAL ?? "true") === "true";
 
 /* ---------- Types (DB-aligned) ---------- */
 type Short = {
@@ -426,6 +428,10 @@ export default function ShortDetailPage() {
     );
   }
 
+  /* ---------- Reveal controls ---------- */
+  const [reviewOpen, setReviewOpen] = useState(true);
+  const showReveal = SHOW_REVEAL && quizState.showResults;
+
   return (
     <div className="max-w-3xl mx-auto space-y-6">
       {/* Back & status row */}
@@ -611,25 +617,23 @@ export default function ShortDetailPage() {
                       {questions[quizState.currentQuestion].question}
                     </h3>
 
-<div className="space-y-2" ref={optionsWrapRef}>
-  {(questions[quizState.currentQuestion].options || ["True", "False"]).map((option, index) => {
-    const selected = quizState.answers[quizState.currentQuestion] === index;
-
-    return (
-      <ChoiceButton
-        key={index}
-        label={option}
-        index={index}
-        state={selected ? "selected" : "idle"}
-        onClick={() => handleAnswerSelect(index)}
-        dataIndex={index}
-        dataSelected={selected}
-        autoFocus={selected ? true : index === 0}
-      />
-    );
-  })}
-</div>
-
+                    <div className="space-y-2" ref={optionsWrapRef}>
+                      {(questions[quizState.currentQuestion].options || ["True", "False"]).map((option, index) => {
+                        const selected = quizState.answers[quizState.currentQuestion] === index;
+                        return (
+                          <ChoiceButton
+                            key={index}
+                            label={option}
+                            index={index}
+                            state={selected ? "selected" : "idle"}
+                            onClick={() => handleAnswerSelect(index)}
+                            dataIndex={index}
+                            dataSelected={selected}
+                            autoFocus={selected ? true : index === 0}
+                          />
+                        );
+                      })}
+                    </div>
                   </div>
 
                   {/* Navigation */}
@@ -670,9 +674,56 @@ export default function ShortDetailPage() {
                     </div>
                   </div>
 
-                  <BrandButton onClick={() => navigate('/shorts')} size="lg" disabled={submitting}>
-                    {submitting ? 'Saving...' : 'Continue Learning'}
-                  </BrandButton>
+                  <div className="flex items-center justify-center gap-2">
+                    <BrandButton onClick={() => navigate('/shorts')} size="lg" disabled={submitting}>
+                      {submitting ? 'Saving...' : 'Continue Learning'}
+                    </BrandButton>
+
+                    {/* Toggle reveal list (optional) */}
+                    {SHOW_REVEAL && (
+                      <Button
+                        variant="outline"
+                        onClick={() => setReviewOpen((v) => !v)}
+                      >
+                        {reviewOpen ? "Hide Review" : "Review Answers"}
+                      </Button>
+                    )}
+                  </div>
+
+                  {/* Reveal list */}
+                  {showReveal && reviewOpen && (
+                    <div className="text-left space-y-6 mt-6">
+                      {questions.map((q, qi) => {
+                        const options = q.options || ["True", "False"];
+                        const userIdx = quizState.answers[qi];
+                        const correctIdx = q.correct_index ?? -1;
+                        return (
+                          <div key={q.id ?? qi} className="rounded-lg border p-4">
+                            <div className="font-semibold mb-2">
+                              {qi + 1}. {q.question}
+                            </div>
+                            <div className="space-y-2">
+                              {options.map((opt, oi) => {
+                                const isCorrect = oi === correctIdx;
+                                const isUser = oi === userIdx;
+                                const state =
+                                  isCorrect ? "correct" : isUser ? "incorrect" : "idle";
+                                return (
+                                  <ChoiceButton
+                                    key={oi}
+                                    label={opt}
+                                    index={oi}
+                                    state={state as any}
+                                    // read-only in review
+                                  />
+                                );
+                              })}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
                 </div>
               )}
             </CardContent>
