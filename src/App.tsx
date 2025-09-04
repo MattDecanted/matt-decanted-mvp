@@ -64,12 +64,16 @@ import ModuleDetail from "@/pages/ModuleDetail";
 // Admin
 import ContentGateManager from "@/pages/admin/ContentGateManager";
 import UsersManager from "@/pages/admin/UsersManager";
-// ❌ Removed: AdminDashboard (file missing on Netlify)
-// import AdminDashboard from "@/pages/admin/AdminDashboard";
+// AdminDashboard intentionally omitted
 import ShortsManager from "@/pages/admin/ShortsManager";
 
 const FN_SUBMIT = "/.netlify/functions/trial-quiz-attempt";
 const PENDING_KEY = "md_trial_pending";
+
+/* ---------- Small page wrapper (no-op, keeps your earlier JSX intact) ---------- */
+function PageBoundary({ children }: { children: React.ReactNode }) {
+  return <>{children}</>;
+}
 
 /* ---------- Auto resume pending trial-quiz posts on Account ---------- */
 function AutoResumeOnAccount() {
@@ -193,16 +197,14 @@ class AppErrorBoundary extends React.Component<
   }
   componentDidCatch(error: any, info: React.ErrorInfo) {
     this.setState({ info });
-    // Always log to console for Netlify prod debugging
-    // (shows real stack even with minified error codes)
-    console.error('[AppErrorBoundary]', error, info?.componentStack);
+    console.error("[AppErrorBoundary]", error, info?.componentStack);
   }
   render() {
     if (this.state.error) {
       const showDetails =
-        import.meta.env.DEV || String(import.meta.env.VITE_DEBUG_ERRORS) === '1';
+        import.meta.env.DEV || String(import.meta.env.VITE_DEBUG_ERRORS) === "1";
       return (
-        <div style={{ padding: 24, maxWidth: 900, margin: '0 auto' }}>
+        <div style={{ padding: 24, maxWidth: 900, margin: "0 auto" }}>
           <h1 className="text-xl font-bold mb-2">Something went wrong</h1>
           {!showDetails ? (
             <p className="text-sm text-gray-600">
@@ -211,13 +213,13 @@ class AppErrorBoundary extends React.Component<
           ) : (
             <>
               <h2 className="font-semibold mt-4 mb-1">Error</h2>
-              <pre style={{ whiteSpace: 'pre-wrap' }}>
+              <pre style={{ whiteSpace: "pre-wrap" }}>
                 {String(this.state.error?.stack || this.state.error?.message || this.state.error)}
               </pre>
               {this.state.info?.componentStack && (
                 <>
                   <h2 className="font-semibold mt-4 mb-1">Component stack</h2>
-                  <pre style={{ whiteSpace: 'pre-wrap' }}>{this.state.info.componentStack}</pre>
+                  <pre style={{ whiteSpace: "pre-wrap" }}>{this.state.info.componentStack}</pre>
                 </>
               )}
             </>
@@ -228,7 +230,6 @@ class AppErrorBoundary extends React.Component<
     return this.props.children as React.ReactNode;
   }
 }
-
 
 function App() {
   useEffect(() => {
@@ -241,276 +242,273 @@ function App() {
     );
   }, []);
 
-return (
-  <AnalyticsProvider>
-    <AuthProvider>
-      <PointsProvider>
-        <LocaleProvider>
-          <Router>
-            {/* 🔒 Keep auth callback route outside Layout to avoid visual flash */}
-            <Routes>
-              <Route path="/auth/callback" element={<AuthCallbackPage />} />
-            </Routes>
+  return (
+    <AnalyticsProvider>
+      <AuthProvider>
+        <PointsProvider>
+          <LocaleProvider>
+            <Router>
+              {/* 🔒 Keep auth callback route outside Layout to avoid visual flash */}
+              <Routes>
+                <Route path="/auth/callback" element={<AuthCallbackPage />} />
+              </Routes>
 
-            <AppErrorBoundary>
-              {/* 🌐 Global Suspense protects ALL lazy chunks on any route */}
-              <Suspense
-                fallback={
-                  <div className="min-h-screen flex items-center justify-center">
-                    <div className="h-8 w-8 animate-spin rounded-full border-2 border-gray-300 border-t-transparent" />
-                  </div>
-                }
-              >
+              <AppErrorBoundary>
+                {/* 🌐 Global Suspense protects ALL lazy chunks on any route */}
+                <Suspense
+                  fallback={
+                    <div className="min-h-screen flex items-center justify-center">
+                      <div className="h-8 w-8 animate-spin rounded-full border-2 border-gray-300 border-t-transparent" />
+                    </div>
+                  }
+                >
+                  <Layout>
+                    <Routes>
+                      {/* Avoid double render inside Layout */}
+                      <Route path="/auth/callback" element={<></>} />
 
-                <Layout>
-                  <Routes>
-                    {/* Avoid double render inside Layout */}
-                    <Route path="/auth/callback" element={<></>} />
+                      {/* Onboarding */}
+                      <Route path="/onboarding" element={<Onboarding />} />
 
-                    {/* Onboarding */}
-                    <Route path="/onboarding" element={<Onboarding />} />
+                      {/* Public */}
+                      <Route path="/" element={<Home />} />
+                      <Route path="/about" element={<About />} />
+                      <Route path="/signin" element={<SignIn />} />
+                      <Route path="/sign-in" element={<Navigate to="/signin" replace />} />
+                      <Route path="/activate" element={<Activate />} />
+                      <Route path="/reset-password" element={<ResetPassword />} />
+                      <Route path="/terms" element={<Terms />} />
 
-                    {/* Public */}
-                    <Route path="/" element={<Home />} />
-                    <Route path="/about" element={<About />} />
-                    <Route path="/signin" element={<SignIn />} />
-                    <Route path="/sign-in" element={<Navigate to="/signin" replace />} />
-                    <Route path="/activate" element={<Activate />} />
-                    <Route path="/reset-password" element={<ResetPassword />} />
-                    <Route path="/terms" element={<Terms />} />
+                      {/* Debug */}
+                      <Route path="/debug/auth" element={<DebugAuth />} />
 
-                    {/* Debug */}
-                    <Route path="/debug/auth" element={<DebugAuth />} />
+                      {/* Blog */}
+                      <Route path="/blog" element={<BlogIndex />} />
+                      <Route path="/blog/how-to-become-winemaker" element={<HowToBecomeWinemaker />} />
+                      <Route path="/blog/wset-level-2-questions" element={<WSETLevel2Questions />} />
+                      <Route path="/blog/wine-tasting-guide" element={<WineTastingGuide />} />
+                      <Route path="/blog/wine-vocabulary-quiz" element={<WineVocabularyQuiz />} />
 
-                    {/* Blog */}
-                    <Route path="/blog" element={<BlogIndex />} />
-                    <Route path="/blog/how-to-become-winemaker" element={<HowToBecomeWinemaker />} />
-                    <Route path="/blog/wset-level-2-questions" element={<WSETLevel2Questions />} />
-                    <Route path="/blog/wine-tasting-guide" element={<WineTastingGuide />} />
-                    <Route path="/blog/wine-vocabulary-quiz" element={<WineVocabularyQuiz />} />
+                      {/* Games */}
+                      <Route
+                        path="/games/guess-what"
+                        element={
+                          <RequireAuth>
+                            <RequireOnboarded>
+                              <GuessWhatPage />
+                            </RequireOnboarded>
+                          </RequireAuth>
+                        }
+                      />
+                      <Route
+                        path="/swirdle"
+                        element={
+                          <RequireAuth>
+                            <RequireOnboarded>
+                              <Swirdle />
+                            </RequireOnboarded>
+                          </RequireAuth>
+                        }
+                      />
+                      <Route path="/swirdle/leaderboard" element={<SwirdleLeaderboardPage />} />
+                      <Route path="/leaderboard" element={<Navigate to="/swirdle/leaderboard" replace />} />
 
-                    {/* Games */}
-                    <Route
-                      path="/games/guess-what"
-                      element={
-                        <RequireAuth>
-                          <RequireOnboarded>
-                            <GuessWhatPage />
-                          </RequireOnboarded>
-                        </RequireAuth>
-                      }
-                    />
-                    <Route
-                      path="/swirdle"
-                      element={
-                        <RequireAuth>
-                          <RequireOnboarded>
-                            <Swirdle />
-                          </RequireOnboarded>
-                        </RequireAuth>
-                      }
-                    />
-                    <Route path="/swirdle/leaderboard" element={<SwirdleLeaderboardPage />} />
-                    <Route path="/leaderboard" element={<Navigate to="/swirdle/leaderboard" replace />} />
+                      <Route
+                        path="/play"
+                        element={
+                          <RequireAuth>
+                            <RequireOnboarded>
+                              <GamePage />
+                            </RequireOnboarded>
+                          </RequireAuth>
+                        }
+                      />
+                      <Route
+                        path="/game/:slug"
+                        element={
+                          <RequireAuth>
+                            <RequireOnboarded>
+                              <GamePage />
+                            </RequireOnboarded>
+                          </RequireAuth>
+                        }
+                      />
 
-                    <Route
-                      path="/play"
-                      element={
-                        <RequireAuth>
-                          <RequireOnboarded>
-                            <GamePage />
-                          </RequireOnboarded>
-                        </RequireAuth>
-                      }
-                    />
-                    <Route
-                      path="/game/:slug"
-                      element={
-                        <RequireAuth>
-                          <RequireOnboarded>
-                            <GamePage />
-                          </RequireOnboarded>
-                        </RequireAuth>
-                      }
-                    />
+                      {/* Badges */}
+                      <Route path="/badges" element={<BadgesPage />} />
+                      <Route
+                        path="/account/badges"
+                        element={
+                          <RequireAuth>
+                            <RequireOnboarded>
+                              <AccountBadges />
+                            </RequireOnboarded>
+                          </RequireAuth>
+                        }
+                      />
 
-                    {/* Badges */}
-                    <Route path="/badges" element={<BadgesPage />} />
-                    <Route
-                      path="/account/badges"
-                      element={
-                        <RequireAuth>
-                          <RequireOnboarded>
-                            <AccountBadges />
-                          </RequireOnboarded>
-                        </RequireAuth>
-                      }
-                    />
+                      {/* Shorts (public list + detail) */}
+                      <Route path="/shorts" element={<PageBoundary><ShortsPage /></PageBoundary>} />
+                      <Route path="/shorts/:slug" element={<PageBoundary><ShortDetailPage /></PageBoundary>} />
 
-                    {/* Shorts (public list + detail) */}
-                    <Route path="/shorts" element={<PageBoundary><ShortsPage /></PageBoundary>} />
-<Route path="/shorts/:slug" element={<PageBoundary><ShortDetailPage /></PageBoundary>} />
-                    {/* Modules (gated) */}
-                    <Route
-                      path="/modules"
-                      element={
-                        <RequireAuth>
-                          <RequireOnboarded>
-                            <ModulesIndex />
-                          </RequireOnboarded>
-                        </RequireAuth>
-                      }
-                    />
-                    <Route
-                      path="/modules/:slug"
-                      element={
-                        <RequireAuth>
-                          <RequireOnboarded>
-                            <ModuleDetail />
-                          </RequireOnboarded>
-                        </RequireAuth>
-                      }
-                    />
+                      {/* Modules (gated) */}
+                      <Route
+                        path="/modules"
+                        element={
+                          <RequireAuth>
+                            <RequireOnboarded>
+                              <ModulesIndex />
+                            </RequireOnboarded>
+                          </RequireAuth>
+                        }
+                      />
+                      <Route
+                        path="/modules/:slug"
+                        element={
+                          <RequireAuth>
+                            <RequireOnboarded>
+                              <ModuleDetail />
+                            </RequireOnboarded>
+                          </RequireAuth>
+                        }
+                      />
 
-                    {/* Daily Quiz (gated) */}
-                    <Route
-                      path="/daily-quiz"
-                      element={
-                        <RequireAuth>
-                          <RequireOnboarded>
-                            <DailyQuizPage />
-                          </RequireOnboarded>
-                        </RequireAuth>
-                      }
-                    />
-                    <Route path="/trial-quiz" element={<Navigate to="/daily-quiz" replace />} />
+                      {/* Daily Quiz (gated) */}
+                      <Route
+                        path="/daily-quiz"
+                        element={
+                          <RequireAuth>
+                            <RequireOnboarded>
+                              <DailyQuizPage />
+                            </RequireOnboarded>
+                          </RequireAuth>
+                        }
+                      />
+                      <Route path="/trial-quiz" element={<Navigate to="/daily-quiz" replace />} />
 
-                    {/* Vocab (gated) */}
-                    <Route
-                      path="/vocab"
-                      element={
-                        <RequireAuth>
-                          <RequireOnboarded>
-                            <VinoVocabPage />
-                          </RequireOnboarded>
-                        </RequireAuth>
-                      }
-                    />
+                      {/* Vocab (gated) */}
+                      <Route
+                        path="/vocab"
+                        element={
+                          <RequireAuth>
+                            <RequireOnboarded>
+                              <VinoVocabPage />
+                            </RequireOnboarded>
+                          </RequireAuth>
+                        }
+                      />
 
-                    {/* Admin */}
-                    {/* ✅ Replace missing AdminDashboard with a redirect to a real admin page */}
-                    <Route
-                      path="/admin"
-                      element={<Navigate to="/admin/users" replace />}
-                    />
-                    <Route
-                      path="/admin/shorts"
-                      element={
-                        <RequireAdmin>
-                          <ShortsManager />
-                        </RequireAdmin>
-                      }
-                    />
-                    <Route
-                      path="/admin/quizzes"
-                      element={
-                        <RequireAdmin>
-                          <QuizManager />
-                        </RequireAdmin>
-                      }
-                    />
-                    <Route
-                      path="/admin/trial-quizzes"
-                      element={
-                        <RequireAdmin>
-                          <TrialQuizManager />
-                        </RequireAdmin>
-                      }
-                    />
-                    <Route
-                      path="/admin/swirdle"
-                      element={
-                        <RequireAdmin>
-                          <SwirdleAdmin />
-                        </RequireAdmin>
-                      }
-                    />
-                    <Route
-                      path="/admin/content"
-                      element={
-                        <RequireAdmin>
-                          <ContentGateManager />
-                        </RequireAdmin>
-                      }
-                    />
-                    <Route
-                      path="/admin/users"
-                      element={
-                        <RequireAdmin>
-                          <UsersManager />
-                        </RequireAdmin>
-                      }
-                    />
+                      {/* Admin */}
+                      <Route path="/admin" element={<Navigate to="/admin/users" replace />} />
+                      <Route
+                        path="/admin/shorts"
+                        element={
+                          <RequireAdmin>
+                            <ShortsManager />
+                          </RequireAdmin>
+                        }
+                      />
+                      <Route
+                        path="/admin/quizzes"
+                        element={
+                          <RequireAdmin>
+                            <QuizManager />
+                          </RequireAdmin>
+                        }
+                      />
+                      <Route
+                        path="/admin/trial-quizzes"
+                        element={
+                          <RequireAdmin>
+                            <TrialQuizManager />
+                          </RequireAdmin>
+                        }
+                      />
+                      <Route
+                        path="/admin/swirdle"
+                        element={
+                          <RequireAdmin>
+                            <SwirdleAdmin />
+                          </RequireAdmin>
+                        }
+                      />
+                      <Route
+                        path="/admin/content"
+                        element={
+                          <RequireAdmin>
+                            <ContentGateManager />
+                          </RequireAdmin>
+                        }
+                      />
+                      <Route
+                        path="/admin/users"
+                        element={
+                          <RequireAdmin>
+                            <UsersManager />
+                          </RequireAdmin>
+                        }
+                      />
 
-                    {/* Wine Options (gated) */}
-                    <Route
-                      path="/wine-options/solo"
-                      element={
-                        <RequireAuth>
-                          <RequireOnboarded>
-                            <SoloWineOptions />
-                          </RequireOnboarded>
-                        </RequireAuth>
-                      }
-                    />
-                    <Route
-                      path="/wine-options/multiplayer"
-                      element={
-                        <RequireAuth>
-                          <RequireOnboarded>
-                            <WineOptionsGame />
-                          </RequireOnboarded>
-                        </RequireAuth>
-                      }
-                    />
+                      {/* Wine Options (gated) */}
+                      <Route
+                        path="/wine-options/solo"
+                        element={
+                          <RequireAuth>
+                            <RequireOnboarded>
+                              <SoloWineOptions />
+                            </RequireOnboarded>
+                          </RequireAuth>
+                        }
+                      />
+                      <Route
+                        path="/wine-options/multiplayer"
+                        element={
+                          <RequireAuth>
+                            <RequireOnboarded>
+                              <WineOptionsGame />
+                            </RequireOnboarded>
+                          </RequireAuth>
+                        }
+                      />
 
-                    {/* Dashboard / Account */}
-                    <Route
-                      path="/dashboard"
-                      element={
-                        <RequireAuth>
-                          <RequireOnboarded>
-                            <Dashboard />
-                          </RequireOnboarded>
-                        </RequireAuth>
-                      }
-                    />
-                    <Route path="/Dashboard" element={<Navigate to="/dashboard" replace />} />
-                    <Route
-                      path="/account"
-                      element={
-                        <>
-                          <AutoResumeOnAccount />
-                          <AccountPage />
-                        </>
-                      }
-                    />
+                      {/* Dashboard / Account */}
+                      <Route
+                        path="/dashboard"
+                        element={
+                          <RequireAuth>
+                            <RequireOnboarded>
+                              <Dashboard />
+                            </RequireOnboarded>
+                          </RequireAuth>
+                        }
+                      />
+                      <Route path="/Dashboard" element={<Navigate to="/dashboard" replace />} />
+                      <Route
+                        path="/account"
+                        element={
+                          <>
+                            <AutoResumeOnAccount />
+                            <AccountPage />
+                          </>
+                        }
+                      />
 
-                    {/* Pricing (public) */}
-                    <Route path="/pricing" element={<PricingPage />} />
+                      {/* Pricing (public) */}
+                      <Route path="/pricing" element={<PricingPage />} />
 
-                    {/* Legacy demo (public) */}
-                    <Route path="/demo" element={<BrandedDemo />} />
+                      {/* Legacy demo (public) */}
+                      <Route path="/demo" element={<BrandedDemo />} />
 
-                    {/* 404 */}
-                    <Route path="*" element={<Navigate to="/" replace />} />
-                  </Routes>
-                </Layout>
-              </Suspense>
+                      {/* 404 */}
+                      <Route path="*" element={<Navigate to="/" replace />} />
+                    </Routes>
+                  </Layout>
+                </Suspense>
 
-              <Toaster />
-            </AppErrorBoundary>
-          </Router>
+                <Toaster />
+              </AppErrorBoundary>
+            </Router>
+          </LocaleProvider>
         </PointsProvider>
       </AuthProvider>
     </AnalyticsProvider>
