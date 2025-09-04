@@ -1,5 +1,4 @@
-//src/pages/GuessWhatPage.tsx
-
+// src/pages/GuessWhatPage.tsx
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -15,7 +14,6 @@ import {
   Trophy,
   Globe,
   HelpCircle,
-  ImageIcon,
 } from "lucide-react";
 
 import { useAuth } from "@/context/AuthContext";
@@ -46,10 +44,10 @@ function bottlePlaceholder() {
     </defs>
     <rect width="${w}" height="${h}" fill="url(#g)"/>
     <g fill="rgba(255,255,255,0.12)">
-      <circle cx="${w*0.2}" cy="${h*0.8}" r="120"/>
-      <circle cx="${w*0.9}" cy="${h*0.2}" r="90"/>
+      <circle cx="${w * 0.2}" cy="${h * 0.8}" r="120"/>
+      <circle cx="${w * 0.9}" cy="${h * 0.2}" r="90"/>
     </g>
-    <g transform="translate(${w/2}, ${h/2})">
+    <g transform="translate(${w / 2}, ${h / 2})">
       <rect x="-45" y="-80" width="90" height="160" rx="8" fill="white" fill-opacity="0.85"/>
       <rect x="-8" y="-150" width="16" height="50" rx="4" fill="white" fill-opacity="0.85"/>
     </g>
@@ -77,10 +75,8 @@ type AttemptInsert = {
   bank_id: string;
   selected_index: number;
   is_correct: boolean;
-  // created_at handled by default
 };
 
-/* Small helpers */
 const shuffle = <T,>(arr: T[]) => {
   const a = arr.slice();
   for (let i = a.length - 1; i > 0; i--) {
@@ -95,13 +91,12 @@ export default function GuessWhatPage() {
   const { user } = useAuth() as any;
   const { resolvedLocale } = useLocale();
   const { track } = useAnalytics();
-  const pointsCtx = (usePoints() as any) || {};
-  const { refreshPoints } = pointsCtx;
+  const { refreshPoints } = (usePoints() as any) || {};
 
   const [loading, setLoading] = useState(true);
   const [rows, setRows] = useState<BankRow[]>([]);
   const [current, setCurrent] = useState(0);
-  const [answers, setAnswers] = useState<number[]>([]);
+  const [answers, setAnswers] = useState<Array<number | null>>([]);
   const [finished, setFinished] = useState(false);
 
   const [justGained, setJustGained] = useState(0);
@@ -115,8 +110,7 @@ export default function GuessWhatPage() {
     (async () => {
       setLoading(true);
       try {
-        // Get both locale + 'en', then prefer locale
-        const locales = Array.from(new Set([resolvedLocale, "en"].filter(Boolean)));
+        const locales = Array.from(new Set([resolvedLocale, "en"].filter(Boolean))) as string[];
         const { data, error } = await supabase
           .from("guess_what_bank")
           .select("*")
@@ -125,7 +119,7 @@ export default function GuessWhatPage() {
           .order("created_at", { ascending: false });
         if (error) throw error;
 
-        const byLocaleFirst = (data || []).sort((a, b) => {
+        const byLocaleFirst = (data || []).sort((a: BankRow, b: BankRow) => {
           const aScore = a.locale === resolvedLocale ? 0 : 1;
           const bScore = b.locale === resolvedLocale ? 0 : 1;
           return aScore - bScore;
@@ -134,7 +128,7 @@ export default function GuessWhatPage() {
         // Shuffle and take up to 6 for a snappy round
         const pick = shuffle(byLocaleFirst).slice(0, Math.min(6, byLocaleFirst.length));
         setRows(pick);
-        setAnswers(Array(pick.length).fill(undefined));
+        setAnswers(Array(pick.length).fill(null));
       } catch (e) {
         console.error(e);
         toast.error("Failed to load Guess What");
@@ -150,9 +144,7 @@ export default function GuessWhatPage() {
     if (!optionsWrapRef.current || finished) return;
     const selectedIdx = answers[current];
     const sel = optionsWrapRef.current.querySelector<HTMLButtonElement>(
-      selectedIdx !== undefined
-        ? `button[data-opt-selected="true"]`
-        : `button[data-opt-index="0"]`
+      selectedIdx != null ? `button[data-opt-selected="true"]` : `button[data-opt-index="0"]`
     );
     sel?.focus();
   }, [current, finished, answers]);
@@ -164,7 +156,7 @@ export default function GuessWhatPage() {
     optionsCount,
     onSelect: (idx) => handleSelect(idx),
     onNext: () => handleNext(),
-    allowNext: answers[current] !== undefined,
+    allowNext: answers[current] != null,
   });
 
   const currentRow = rows[current];
@@ -173,21 +165,20 @@ export default function GuessWhatPage() {
     () =>
       rows.reduce((n, r, i) => {
         const c = r.correct_index ?? -1;
-        return n + (answers[i] === c ? 1 : 0);
+        return n + ((answers[i] as number) === c ? 1 : 0);
       }, 0),
     [rows, answers]
   );
 
   const totalPotentialPoints = useMemo(
-    () =>
-      rows.reduce((sum, r) => sum + Number(r.points_award ?? 0), 0),
+    () => rows.reduce((sum, r) => sum + Number(r.points_award ?? 0), 0),
     [rows]
   );
 
   const pointsEarned = useMemo(
     () =>
       rows.reduce((sum, r, i) => {
-        const ok = answers[i] === (r.correct_index ?? -1);
+        const ok = (answers[i] as number) === (r.correct_index ?? -1);
         return sum + (ok ? Number(r.points_award ?? 0) : 0);
       }, 0),
     [rows, answers]
@@ -206,12 +197,15 @@ export default function GuessWhatPage() {
 
     try {
       // Save each attempt
-      const payload: AttemptInsert[] = rows.map((r, i) => ({
-        user_id: user.id,
-        bank_id: r.id,
-        selected_index: answers[i]!,
-        is_correct: answers[i] === (r.correct_index ?? -1),
-      }));
+      const payload: AttemptInsert[] = rows.map((r, i) => {
+        const sel = answers[i] as number; // guaranteed by UI gating
+        return {
+          user_id: user.id,
+          bank_id: r.id,
+          selected_index: sel,
+          is_correct: sel === (r.correct_index ?? -1),
+        };
+      });
 
       if (payload.length) {
         const { error: aErr } = await supabase.from("guess_what_attempts").insert(payload);
@@ -237,8 +231,6 @@ export default function GuessWhatPage() {
 
         toast.success(`Nice! +${pointsEarned} points from Guess What`);
       }
-
-      // (Optional) Confetti on threshold — fetch the next unlocked gate if you use gates elsewhere.
     } catch (e: any) {
       console.error("persistAttemptsAndPoints", e);
       toast.error("Could not save your results, but you can still continue.");
@@ -363,12 +355,7 @@ export default function GuessWhatPage() {
                   loading="lazy"
                 />
               ) : (
-                <img
-                  src={bottlePlaceholder()}
-                  alt="Placeholder"
-                  className="w-full h-48 object-cover"
-                  loading="lazy"
-                />
+                <img src={bottlePlaceholder()} alt="Placeholder" className="w-full h-48 object-cover" loading="lazy" />
               )}
             </div>
 
@@ -396,11 +383,7 @@ export default function GuessWhatPage() {
 
             {/* Nav */}
             <div className="mt-3 flex justify-end">
-              <BrandButton
-                onClick={handleNext}
-                disabled={answers[current] === undefined}
-                className="inline-flex items-center"
-              >
+              <BrandButton onClick={handleNext} disabled={answers[current] == null} className="inline-flex items-center">
                 {current === rows.length - 1 ? (
                   <>
                     Finish
@@ -445,18 +428,14 @@ export default function GuessWhatPage() {
             {/* Breakdown */}
             <div className="space-y-4">
               {rows.map((r, i) => {
-                const userIdx = answers[i];
+                const userIdx = answers[i] as number;
                 const correctIdx = r.correct_index ?? -1;
                 const ok = userIdx === correctIdx;
                 return (
                   <div key={r.id} className="border border-gray-200 rounded-lg p-4">
                     <div className="font-medium text-gray-900 mb-3">{r.prompt}</div>
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                      <div
-                        className={`p-3 rounded-lg ${
-                          ok ? "bg-green-50 border border-green-200" : "bg-red-50 border border-red-200"
-                        }`}
-                      >
+                      <div className={`p-3 rounded-lg ${ok ? "bg-green-50 border border-green-200" : "bg-red-50 border border-red-200"}`}>
                         <div className="flex items-center mb-1">
                           {ok ? (
                             <CheckCircle className="w-4 h-4 text-green-600 mr-2" />
@@ -465,9 +444,7 @@ export default function GuessWhatPage() {
                           )}
                           <span className="font-medium text-sm">Your Answer</span>
                         </div>
-                        <div className={ok ? "text-green-800" : "text-red-800"}>
-                          {r.options?.[userIdx!] ?? "—"}
-                        </div>
+                        <div className={ok ? "text-green-800" : "text-red-800"}>{r.options?.[userIdx] ?? "—"}</div>
                       </div>
 
                       <div className="p-3 bg-gray-50 border border-gray-200 rounded-lg">
@@ -492,10 +469,9 @@ export default function GuessWhatPage() {
               <Button
                 variant="outline"
                 onClick={() => {
-                  // Quick replay: reshuffle & reset
                   const reshuffled = shuffle(rows);
                   setRows(reshuffled);
-                  setAnswers(Array(reshuffled.length).fill(undefined));
+                  setAnswers(Array(reshuffled.length).fill(null));
                   setCurrent(0);
                   setFinished(false);
                   setJustGained(0);
