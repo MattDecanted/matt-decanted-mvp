@@ -174,12 +174,49 @@ function RequireOnboarded({ children }: { children: React.ReactNode }) {
   return <>{ok ? children : null}</>;
 }
 
+/** Admin guard — robust: checks context, user metadata, then DB */
 function RequireAdmin({ children }: { children: React.ReactNode }) {
   const { user, profile, loading } = useAuth();
   const location = useLocation();
-  if (loading) return <div className="p-8">Loading...</div>;
+  const [allowed, setAllowed] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    (async () => {
+      if (loading) return setAllowed(null);
+      if (!user) return setAllowed(false);
+
+      // 1) From context or auth metadata
+      const roleFromCtx = (profile as any)?.role ?? (user.user_metadata as any)?.role;
+      if (roleFromCtx === "admin") return setAllowed(true);
+
+      // 2) Fallback: fetch from DB
+      const { data, error } = await supabase
+        .from("profiles")
+        .select("role")
+        .eq("id", user.id)
+        .maybeSingle();
+
+      if (!active) return;
+      if (error) {
+        console.error("RequireAdmin profiles fetch failed:", error);
+        setAllowed(false);
+        return;
+      }
+      setAllowed((data?.role || "") === "admin");
+    })();
+
+    return () => {
+      active = false;
+    };
+  }, [user, profile, loading]);
+
+  if (loading || allowed === null) return <div className="p-8">Loading...</div>;
   if (!user) return <Navigate to="/signin" replace state={{ from: location }} />;
-  if ((profile as any)?.role !== "admin") return <Navigate to="/dashboard" replace />;
+  if (!allowed) {
+    // Render a clear message instead of redirecting (prevents confusing "fallback to Home")
+    return <div className="p-6 text-sm text-red-600">Admins only.</div>;
+  }
   return <>{children}</>;
 }
 
