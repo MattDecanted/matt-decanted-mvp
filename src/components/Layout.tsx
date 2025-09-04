@@ -1,9 +1,10 @@
 // src/components/Layout.tsx
 import * as React from "react";
-import { NavLink, Link, useLocation } from "react-router-dom";
+import { NavLink, Link, useLocation, useNavigate } from "react-router-dom";
 import { Globe, Trophy, Flame, Menu, X } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 import { usePoints } from "@/context/PointsContext";
+import { useLocale } from "@/context/LocaleContext";
 
 function cx(...xs: Array<string | false | null | undefined>) {
   return xs.filter(Boolean).join(" ");
@@ -13,9 +14,22 @@ function cx(...xs: Array<string | false | null | undefined>) {
 const LOGO_URL =
   "https://matt-decanted.s3.ap-southeast-2.amazonaws.com/brand/matt-decanted-logo.png";
 
+// Supported languages for the switcher
+const LANGS = [
+  { code: "en", label: "English", flag: "🇺🇸" },
+  { code: "ko", label: "한국어", flag: "🇰🇷" },
+  { code: "zh", label: "中文", flag: "🇨🇳" },
+  { code: "es", label: "Español", flag: "🇪🇸" },
+  { code: "fr", label: "Français", flag: "🇫🇷" },
+  { code: "de", label: "Deutsch", flag: "🇩🇪" },
+  { code: "ja", label: "日本語", flag: "🇯🇵" },
+];
+
 export default function Layout({ children }: { children: React.ReactNode }) {
   const { user, signOut, profile } = useAuth();
   const pointsCtx = usePoints?.();
+  const { locale, setLocale } = useLocale();
+  const navigate = useNavigate();
 
   // Be flexible: accept totalPoints | points | balance
   const displayPoints = Number(
@@ -46,6 +60,48 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   const hideChrome =
     loc.pathname.startsWith("/auth/callback") ||
     loc.pathname.startsWith("/reset-password");
+
+  // ---- Language handling ----
+  // 1) Pick up ?lang=xx from URL and persist
+  React.useEffect(() => {
+    const params = new URLSearchParams(loc.search);
+    const qLang = params.get("lang");
+    if (!qLang) return;
+    const supported = LANGS.some((l) => l.code === qLang);
+    if (supported && qLang !== locale) {
+      setLocale(qLang);
+      try {
+        localStorage.setItem("md_locale", qLang);
+      } catch {}
+    }
+  }, [loc.search, locale, setLocale]);
+
+  // 2) On first load, restore locale from localStorage if not set
+  React.useEffect(() => {
+    if (!locale) {
+      try {
+        const saved = localStorage.getItem("md_locale");
+        if (saved && LANGS.some((l) => l.code === saved)) {
+          setLocale(saved);
+        } else {
+          setLocale("en");
+        }
+      } catch {
+        setLocale("en");
+      }
+    }
+  }, [locale, setLocale]);
+
+  // 3) Changing the select updates context, persists, and rewrites ?lang= for shareable links
+  function handleLangChange(next: string) {
+    setLocale(next);
+    try {
+      localStorage.setItem("md_locale", next);
+    } catch {}
+    const url = new URL(window.location.href);
+    url.searchParams.set("lang", next);
+    navigate(url.pathname + "?" + url.searchParams.toString(), { replace: true });
+  }
 
   if (hideChrome) {
     return (
@@ -123,14 +179,25 @@ export default function Layout({ children }: { children: React.ReactNode }) {
 
             {/* Right cluster */}
             <div className="hidden md:flex items-center gap-2">
-              {/* Language (enabled – stubbed to EN for now) */}
-              <div
+              {/* Language switcher */}
+              <label
                 className="inline-flex items-center gap-1 rounded-md border border-gray-200 px-2.5 py-1 text-xs text-gray-700 bg-white"
                 title="Language"
               >
                 <Globe className="w-3.5 h-3.5" />
-                <span>EN</span>
-              </div>
+                <select
+                  aria-label="Choose language"
+                  className="bg-transparent outline-none"
+                  value={locale || "en"}
+                  onChange={(e) => handleLangChange(e.target.value)}
+                >
+                  {LANGS.map((l) => (
+                    <option key={l.code} value={l.code}>
+                      {l.flag} {l.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
 
               {/* Points / streak pill */}
               <Link
@@ -218,10 +285,27 @@ export default function Layout({ children }: { children: React.ReactNode }) {
 
               <div className="my-2 h-px bg-gray-200" />
 
+              {/* Language (mobile) */}
+              <label className="inline-flex items-center gap-2 text-xs text-gray-700">
+                <Globe className="w-4 h-4" />
+                <select
+                  aria-label="Choose language"
+                  className="flex-1 rounded-md border border-gray-200 px-2 py-1"
+                  value={locale || "en"}
+                  onChange={(e) => handleLangChange(e.target.value)}
+                >
+                  {LANGS.map((l) => (
+                    <option key={l.code} value={l.code}>
+                      {l.flag} {l.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
               {/* Points pill (mobile) */}
               <Link
                 to={user ? "/account" : "/signin"}
-                className="inline-flex items-center gap-2 rounded-md border border-gray-200 bg-white px-2.5 py-2 text-xs text-gray-800"
+                className="mt-2 inline-flex items-center gap-2 rounded-md border border-gray-200 bg-white px-2.5 py-2 text-xs text-gray-800"
                 onClick={() => setOpen(false)}
               >
                 <Trophy className="w-3.5 h-3.5 text-amber-500" />
@@ -281,8 +365,10 @@ export default function Layout({ children }: { children: React.ReactNode }) {
         />
       </header>
 
-      {/* Page body */}
-      <main className="flex-1">{children}</main>
+      {/* Page body — warmer canvas */}
+      <main className="flex-1 bg-[linear-gradient(180deg,#ffffff,#fff8f5)]">
+        {children}
+      </main>
 
       <footer className="border-t border-gray-200 py-6 text-center text-xs text-gray-500">
         © {new Date().getFullYear()} Matt Decanted
