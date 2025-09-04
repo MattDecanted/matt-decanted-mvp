@@ -11,6 +11,8 @@ import { usePoints } from '@/context/PointsContext';
 import { useAnalytics } from '@/context/AnalyticsContext';
 import { useLocale } from '@/context/LocaleContext';
 import BrandButton from '@/components/ui/BrandButton';
+import ChoiceButton from "@/components/ui/ChoiceButton";
+
 
 import { supabase } from '@/lib/supabase';
 import { toast } from 'sonner';
@@ -609,30 +611,25 @@ export default function ShortDetailPage() {
                       {questions[quizState.currentQuestion].question}
                     </h3>
 
-                    <div className="space-y-2" ref={optionsWrapRef}>
-                      {(questions[quizState.currentQuestion].options || ['True', 'False']).map((option, index) => {
-                        const selected = quizState.answers[quizState.currentQuestion] === index;
+<div className="space-y-2" ref={optionsWrapRef}>
+  {(questions[quizState.currentQuestion].options || ["True", "False"]).map((option, index) => {
+    const selected = quizState.answers[quizState.currentQuestion] === index;
 
-                        const base =
-                          'block w-full text-left px-4 py-3 rounded-lg border transition select-none h-auto justify-start';
-                        const selectedCls = 'bg-indigo-600 text-white border-indigo-600 hover:bg-indigo-600';
-                        const unselectedCls = 'bg-white text-gray-900 border-gray-300 hover:bg-gray-50';
+    return (
+      <ChoiceButton
+        key={index}
+        label={option}
+        index={index}
+        state={selected ? "selected" : "idle"}
+        onClick={() => handleAnswerSelect(index)}
+        dataIndex={index}
+        dataSelected={selected}
+        autoFocus={selected ? true : index === 0}
+      />
+    );
+  })}
+</div>
 
-                        return (
-                          <button
-                            key={index}
-                            type="button"
-                            data-opt-index={index}
-                            data-opt-selected={selected ? 'true' : 'false'}
-                            className={`${base} ${selected ? selectedCls : unselectedCls}`}
-                            onClick={() => handleAnswerSelect(index)}
-                          >
-                            <span className="mr-2 text-xs opacity-60">{index + 1}.</span>
-                            {option}
-                          </button>
-                        );
-                      })}
-                    </div>
                   </div>
 
                   {/* Navigation */}
