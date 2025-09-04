@@ -2,9 +2,10 @@ import React, { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import {
   BookOpen, Plus, Edit, Trash2, Eye, HelpCircle,
-  CheckCircle, X, FileText, Globe, Lock
+  CheckCircle, X, FileText, Globe, Lock, ExternalLink
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
+import ChoiceButton from "@/components/ui/ChoiceButton";
 
 /* ---------- Types (align with your DB) ---------- */
 type Short = {
@@ -251,6 +252,18 @@ export default function ShortsManager() {
                         <IconBtn title="View details" onClick={() => setExpandedShort(expandedShort === s.id ? "" : s.id)}>
                           <Eye className="w-4 h-4" />
                         </IconBtn>
+
+                        {/* Open public page in new tab */}
+                        <Link
+                          to={`/shorts/${s.slug}`}
+                          target="_blank"
+                          rel="noreferrer"
+                          title="Open public page"
+                          className="p-2 hover:bg-gray-50 rounded-lg transition-colors"
+                        >
+                          <ExternalLink className="w-4 h-4 text-gray-700" />
+                        </Link>
+
                         <IconBtn title="Add Quiz" onClick={() => { setQuizShortId(s.id); setEditingQuiz(null); setShowQuizForm(true); }}>
                           <HelpCircle className="w-4 h-4 text-purple-600" />
                         </IconBtn>
@@ -492,17 +505,17 @@ function ShortForm({
       if (error) { alert(error.message); return; }
     }
 
-await supabase.from("content_shorts").upsert(
-  {
-    slug: form.slug,
-    title: form.title,        // ⬅️ add this
-    summary: null,            // ⬅️ optional, safe default
-    required_points: gateForm.required_points,
-    required_tier: gateForm.required_tier,
-    is_active: gateForm.is_active,
-  },
-  { onConflict: "slug" }
-);
+    await supabase.from("content_shorts").upsert(
+      {
+        slug: form.slug,
+        title: form.title,        // keep gate row warm for UI
+        summary: null,            // optional, safe default
+        required_points: gateForm.required_points,
+        required_tier: gateForm.required_tier,
+        is_active: gateForm.is_active,
+      },
+      { onConflict: "slug" }
+    );
     await onSaved();
   }
 
@@ -635,7 +648,7 @@ function QuizForm({
                 const t = e.target.value as "multiple_choice" | "true_false";
                 setType(t);
                 if (t === "true_false") {
-                  setOptions(["true", "false"]);
+                  setOptions(["True", "False"]);
                   setCorrectIdx(0);
                 } else {
                   setOptions((prev) => {
@@ -697,7 +710,7 @@ function QuizForm({
               <button
                 type="button"
                 className="px-3 py-1 border rounded"
-                onClick={() => setOptions((prev) => prev.slice(0, Math.max(1, prev.length - 1)))}
+                onClick={() => setOptions((prev) => prev.slice(0, Math.max(2, prev.length - 1)))}
               >
                 − Remove last
               </button>
@@ -725,6 +738,22 @@ function QuizForm({
             </label>
           </div>
         )}
+
+        {/* --- Preview (author sees what users will see) --- */}
+        <div className="mt-4 border-t pt-4">
+          <div className="text-sm text-gray-600 mb-2">Preview</div>
+          <div className="space-y-2">
+            {(type === "true_false" ? ["True", "False"] : options).map((opt, i) => (
+              <ChoiceButton
+                key={i}
+                label={opt || `Option ${i + 1}`}
+                index={i}
+                state={i === (correctIdx ?? -1) ? "correct" : "idle"}
+                onClick={() => setCorrectIdx(i)}
+              />
+            ))}
+          </div>
+        </div>
 
         <div className="flex gap-3 pt-4">
           <button type="submit" className="flex-1 bg-blue-600 hover:bg-blue-700 text-white py-2 px-4 rounded-lg font-medium">
@@ -857,7 +886,7 @@ function Modal({
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center">
       <div className="absolute inset-0 bg-black/40" onClick={onClose} />
-      <div className={`relative bg-white rounded-xl shadow-xl p-6 mx-4 w-full ${wide ? "max-w-3xl" : "max-w-xl"}`}>
+      <div className={`relativ e bg-white rounded-xl shadow-xl p-6 mx-4 w-full ${wide ? "max-w-3xl" : "max-w-xl"}`}>
         <div className="flex items-start justify-between mb-4">
           <h3 className="text-lg font-semibold">{title}</h3>
           <button onClick={onClose} className="p-1 rounded hover:bg-gray-100" type="button" aria-label="Close">
