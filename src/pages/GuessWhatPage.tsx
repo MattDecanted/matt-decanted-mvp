@@ -29,6 +29,7 @@ import { toast } from "sonner";
 
 import { supabase } from "@/lib/supabase";
 import { useQuizKeyboard } from "@/hooks/useQuizKeyboard";
+import { awardPoints } from "@/lib/points";
 
 /** ---------- Types aligned to DB ---------- */
 type BankRow = {
@@ -201,7 +202,7 @@ export default function GuessWhatPage() {
       const attempts: AttemptInsert[] = rows.map((r, i) => ({
         user_id: user.id,
         bank_id: r.id,
-        selected_index: answers[i] as number, // safe: all answered on finish
+        selected_index: answers[i] as number, // all answered on finish
         is_correct: (answers[i] as number) === (r.correct_index ?? -1),
       }));
 
@@ -210,28 +211,27 @@ export default function GuessWhatPage() {
         if (aErr) throw aErr;
       }
 
-      // Award points (non-fatal)
+      // Award points via your RPC (best-effort, deduped server-side)
       if (pointsEarned > 0) {
-        try {
-          await supabase.from("points_ledger").insert([
-            {
-              user_id: user.id,
-              points: pointsEarned,
-              reason: "Guess What",
-              meta: {
-                count: rows.length,
-                correct: correctCount,
-                locale: resolvedLocale,
-              },
-            },
-          ]);
-          setJustGained((n) => n + pointsEarned);
-          if (typeof refreshPoints === "function") await refreshPoints();
-          toast.success(`Nice! +${pointsEarned} points from Guess What`);
-        } catch (pErr) {
-          // ignore if your points flow is handled elsewhere
-          console.warn("Points insert skipped:", pErr);
-        }
+        const roundRef = `${Date.now()}::${rows.map((r) => r.id).join(",")}`;
+        await awardPoints("guess_what", roundRef, {
+          total_questions: rows.length,
+          correct: correctCount,
+          locale: resolvedLocale,
+          bank_ids: rows.map((r) => r.id),
+          // optionally, send a per-question breakdown
+          detail: rows.map((r, i) => ({
+            bank_id: r.id,
+            selected_index: answers[i],
+            correct_index: r.correct_index,
+            awarded: (answers[i] === (r.correct_index ?? -1)) ? (r.points_award ?? 0) : 0,
+          })),
+        });
+
+        // UI candy (we still show the computed total locally)
+        setJustGained((n) => n + pointsEarned);
+        if (typeof refreshPoints === "function") await refreshPoints();
+        toast.success(`Nice! +${pointsEarned} points from Guess What`);
       }
     } catch (e) {
       console.error("persistAttemptsAndPoints", e);
