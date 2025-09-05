@@ -65,11 +65,7 @@ import ModuleDetail from "@/pages/ModuleDetail";
 import ContentGateManager from "@/pages/admin/ContentGateManager";
 import UsersManager from "@/pages/admin/UsersManager";
 import AdminGuessWhat from "@/pages/admin/AdminGuessWhat";
-
-
-// AdminDashboard intentionally omitted
 import ShortsManager from "@/pages/admin/ShortsManager";
-
 
 const FN_SUBMIT = "/.netlify/functions/trial-quiz-attempt";
 const PENDING_KEY = "md_trial_pending";
@@ -114,65 +110,8 @@ function AutoResumeOnAccount() {
 }
 
 /* ---------- Route guards ---------- */
-function RequireAdmin({ children }: { children: React.ReactNode }) {
-  const { user, profile, loading } = useAuth();
-  const location = useLocation();
-  const [allowed, setAllowed] = React.useState<boolean | null>(null);
 
-  React.useEffect(() => {
-    let active = true;
-    (async () => {
-      if (loading) return setAllowed(null);
-      if (!user) return setAllowed(false);
-
-      // 1) Try fast paths first
-      const roleFromCtx = (profile as any)?.role;
-      const roleFromAuth = (user as any)?.user_metadata?.role;
-      const isAdminQuick =
-        roleFromCtx === "admin" ||
-        roleFromAuth === "admin" ||
-        (profile as any)?.is_admin === true;
-
-      if (isAdminQuick) {
-        if (active) setAllowed(true);
-        return;
-      }
-
-      // 2) DB fallback: handle both schemas (id or user_id)
-      const uid = user.id;
-      const { data, error } = await supabase
-        .from("profiles")
-        .select("role, is_admin")
-        .or(`id.eq.${uid},user_id.eq.${uid}`)
-        .maybeSingle();
-
-      if (!active) return;
-
-      if (error) {
-        console.error("RequireAdmin profiles fetch failed:", error);
-        setAllowed(false);
-        return;
-      }
-
-      const dbIsAdmin =
-        (data?.role === "admin") || Boolean((data as any)?.is_admin);
-      setAllowed(dbIsAdmin);
-    })();
-
-    return () => {
-      active = false;
-    };
-  }, [user, profile, loading]);
-
-  if (loading || allowed === null) return <div className="p-8">Loading...</div>;
-  if (!user) return <Navigate to="/signin" replace state={{ from: location }} />;
-  if (!allowed) return <div className="p-6 text-sm text-red-600">Admins only.</div>;
-  return <>{children}</>;
-}
-
-}
-
-/** Onboarding guard: needs alias + terms_accepted_at */
+/** Onboarding guard: needs alias + terms_accepted_at (profiles.user_id) */
 function RequireOnboarded({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuth();
   const location = useLocation();
@@ -190,7 +129,6 @@ function RequireOnboarded({ children }: { children: React.ReactNode }) {
         return;
       }
 
-      // 🔧 profiles uses user_id (not id)
       const { data, error } = await supabase
         .from("profiles")
         .select("alias, terms_accepted_at")
@@ -229,7 +167,7 @@ function RequireOnboarded({ children }: { children: React.ReactNode }) {
   return <>{ok ? children : null}</>;
 }
 
-/** Admin guard — robust: checks context, user metadata, then DB */
+/** Admin guard — robust: checks context, user metadata, then DB (id OR user_id) */
 function RequireAdmin({ children }: { children: React.ReactNode }) {
   const { user, profile, loading } = useAuth();
   const location = useLocation();
@@ -242,23 +180,36 @@ function RequireAdmin({ children }: { children: React.ReactNode }) {
       if (!user) return setAllowed(false);
 
       // 1) From context or auth metadata
-      const roleFromCtx = (profile as any)?.role ?? (user.user_metadata as any)?.role;
-      if (roleFromCtx === "admin") return setAllowed(true);
+      const roleFromCtx = (profile as any)?.role;
+      const roleFromAuth = (user as any)?.user_metadata?.role;
+      const quick =
+        roleFromCtx === "admin" ||
+        roleFromAuth === "admin" ||
+        (profile as any)?.is_admin === true;
 
-      // 2) Fallback: fetch from DB (🔧 uses user_id)
+      if (quick) {
+        if (active) setAllowed(true);
+        return;
+      }
+
+      // 2) Fallback: DB check by id OR user_id
+      const uid = user.id;
       const { data, error } = await supabase
         .from("profiles")
-        .select("role")
-        .eq("user_id", user.id)
+        .select("role, is_admin")
+        .or(`id.eq.${uid},user_id.eq.${uid}`)
         .maybeSingle();
 
       if (!active) return;
+
       if (error) {
         console.error("RequireAdmin profiles fetch failed:", error);
         setAllowed(false);
         return;
       }
-      setAllowed((data?.role || "") === "admin");
+
+      const ok = data?.role === "admin" || Boolean((data as any)?.is_admin);
+      setAllowed(ok);
     })();
 
     return () => {
@@ -268,58 +219,8 @@ function RequireAdmin({ children }: { children: React.ReactNode }) {
 
   if (loading || allowed === null) return <div className="p-8">Loading...</div>;
   if (!user) return <Navigate to="/signin" replace state={{ from: location }} />;
-  if (!allowed) {
-    return <div className="p-6 text-sm text-red-600">Admins only.</div>;
-  }
+  if (!allowed) return <div className="p-6 text-sm text-red-600">Admins only.</div>;
   return <>{children}</>;
-}
-
-/* ---------- Error boundary ---------- */
-class AppErrorBoundary extends React.Component<
-  { children: React.ReactNode },
-  { error: any; info: React.ErrorInfo | null }
-> {
-  constructor(props: any) {
-    super(props);
-    this.state = { error: null, info: null };
-  }
-  static getDerivedStateFromError(error: any) {
-    return { error, info: null };
-  }
-  componentDidCatch(error: any, info: React.ErrorInfo) {
-    this.setState({ info });
-    console.error("[AppErrorBoundary]", error, info?.componentStack);
-  }
-  render() {
-    if (this.state.error) {
-      const showDetails =
-        import.meta.env.DEV || String(import.meta.env.VITE_DEBUG_ERRORS) === "1";
-      return (
-        <div style={{ padding: 24, maxWidth: 900, margin: "0 auto" }}>
-          <h1 className="text-xl font-bold mb-2">Something went wrong</h1>
-          {!showDetails ? (
-            <p className="text-sm text-gray-600">
-              An error occurred. Enable details by setting <code>VITE_DEBUG_ERRORS=1</code> and redeploying.
-            </p>
-          ) : (
-            <>
-              <h2 className="font-semibold mt-4 mb-1">Error</h2>
-              <pre style={{ whiteSpace: "pre-wrap" }}>
-                {String(this.state.error?.stack || this.state.error?.message || this.state.error)}
-              </pre>
-              {this.state.info?.componentStack && (
-                <>
-                  <h2 className="font-semibold mt-4 mb-1">Component stack</h2>
-                  <pre style={{ whiteSpace: "pre-wrap" }}>{this.state.info.componentStack}</pre>
-                </>
-              )}
-            </>
-          )}
-        </div>
-      );
-    }
-    return this.props.children as React.ReactNode;
-  }
 }
 
 function App() {
@@ -345,6 +246,7 @@ function App() {
               </Routes>
 
               <AppErrorBoundary>
+                {/* 🌐 Global Suspense protects ALL lazy chunks on any route */}
                 <Suspense
                   fallback={
                     <div className="min-h-screen flex items-center justify-center">
@@ -478,15 +380,17 @@ function App() {
                         }
                       />
                       <Route path="/trial-quiz" element={<Navigate to="/daily-quiz" replace />} />
-<Route
-  path="/admin/guess-what"
-  element={
-    <RequireAdmin>
-      <AdminGuessWhat />
-    </RequireAdmin>
-  }
-/>
- 
+
+                      {/* Admin: Guess What */}
+                      <Route
+                        path="/admin/guess-what"
+                        element={
+                          <RequireAdmin>
+                            <AdminGuessWhat />
+                          </RequireAdmin>
+                        }
+                      />
+
                       {/* Vocab (gated) */}
                       <Route
                         path="/vocab"
@@ -499,7 +403,7 @@ function App() {
                         }
                       />
 
-                      {/* Admin */}
+                      {/* Admin (other) */}
                       <Route path="/admin" element={<Navigate to="/admin/users" replace />} />
                       <Route
                         path="/admin/shorts"
@@ -614,6 +518,54 @@ function App() {
       </AuthProvider>
     </AnalyticsProvider>
   );
+}
+
+/* ---------- Error boundary ---------- */
+class AppErrorBoundary extends React.Component<
+  { children: React.ReactNode },
+  { error: any; info: React.ErrorInfo | null }
+> {
+  constructor(props: any) {
+    super(props);
+    this.state = { error: null, info: null };
+  }
+  static getDerivedStateFromError(error: any) {
+    return { error, info: null };
+  }
+  componentDidCatch(error: any, info: React.ErrorInfo) {
+    this.setState({ info });
+    console.error("[AppErrorBoundary]", error, info?.componentStack);
+  }
+  render() {
+    if (this.state.error) {
+      const showDetails =
+        import.meta.env.DEV || String(import.meta.env.VITE_DEBUG_ERRORS) === "1";
+      return (
+        <div style={{ padding: 24, maxWidth: 900, margin: "0 auto" }}>
+          <h1 className="text-xl font-bold mb-2">Something went wrong</h1>
+          {!showDetails ? (
+            <p className="text-sm text-gray-600">
+              An error occurred. Enable details by setting <code>VITE_DEBUG_ERRORS=1</code> and redeploying.
+            </p>
+          ) : (
+            <>
+              <h2 className="font-semibold mt-4 mb-1">Error</h2>
+              <pre style={{ whiteSpace: "pre-wrap" }}>
+                {String(this.state.error?.stack || this.state.error?.message || this.state.error)}
+              </pre>
+              {this.state.info?.componentStack && (
+                <>
+                  <h2 className="font-semibold mt-4 mb-1">Component stack</h2>
+                  <pre style={{ whiteSpace: "pre-wrap" }}>{this.state.info.componentStack}</pre>
+                </>
+              )}
+            </>
+          )}
+        </div>
+      );
+    }
+    return this.props.children as React.ReactNode;
+  }
 }
 
 export default App;
