@@ -1,3 +1,4 @@
+// src/components/LevelUpBanner.tsx
 import * as React from "react";
 import { X, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -19,14 +20,23 @@ export default function LevelUpBanner({
   ctaText = "Explore",
   ctaHref = "/shorts",
 }: Props) {
+  React.useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [open, onClose]);
+
   if (!open) return null;
 
   return (
-    <div className="fixed inset-x-0 bottom-4 z-50">
+    <div className="fixed inset-x-0 bottom-4 z-50" role="dialog" aria-live="polite" aria-label="Unlocked content">
       <div className="mx-auto w-[94%] sm:max-w-xl rounded-xl border border-amber-200 bg-white shadow-lg">
         <div className="flex items-start gap-3 p-4">
           <div className="mt-0.5 rounded-md bg-amber-100 p-2">
-            <Sparkles className="h-5 w-5 text-amber-600" />
+            <Sparkles className="h-5 w-5 text-amber-600" aria-hidden="true" />
           </div>
           <div className="flex-1">
             <div className="font-semibold">{title}</div>
