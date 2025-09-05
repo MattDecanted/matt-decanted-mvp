@@ -64,8 +64,12 @@ import ModuleDetail from "@/pages/ModuleDetail";
 // Admin
 import ContentGateManager from "@/pages/admin/ContentGateManager";
 import UsersManager from "@/pages/admin/UsersManager";
+import AdminGuessWhat from "@/pages/admin/AdminGuessWhat";
+
+
 // AdminDashboard intentionally omitted
 import ShortsManager from "@/pages/admin/ShortsManager";
+
 
 const FN_SUBMIT = "/.netlify/functions/trial-quiz-attempt";
 const PENDING_KEY = "md_trial_pending";
@@ -424,7 +428,15 @@ function App() {
                         }
                       />
                       <Route path="/trial-quiz" element={<Navigate to="/daily-quiz" replace />} />
-
+<Route
+  path="/admin/guess-what"
+  element={
+    <RequireAdmin>
+      <AdminGuessWhat />
+    </RequireAdmin>
+  }
+/>
+ 
                       {/* Vocab (gated) */}
                       <Route
                         path="/vocab"
