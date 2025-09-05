@@ -1,4 +1,4 @@
-=// src/pages/GuessWhatPage.tsx
+// src/pages/GuessWhatPage.tsx
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
