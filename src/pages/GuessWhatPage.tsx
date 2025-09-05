@@ -1,4 +1,4 @@
-// src/pages/GuessWhatPage.tsx
+=// src/pages/GuessWhatPage.tsx
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -25,6 +25,7 @@ import ChoiceButton from "@/components/ui/ChoiceButton";
 import BrandButton from "@/components/ui/BrandButton";
 import PointsGainBubble from "@/components/PointsGainBubble";
 import LevelUpBanner from "@/components/LevelUpBanner";
+import VideoPlayer from "@/components/VideoPlayer"; // ← reveal video uses this
 import { toast } from "sonner";
 
 import { supabase } from "@/lib/supabase";
@@ -44,6 +45,7 @@ type BankRow = {
   active: boolean;
   created_at: string;
   updated_at: string;
+  reveal_video_url: string | null; // ← NEW: optional reveal video per question
 };
 
 type AttemptInsert = {
@@ -55,7 +57,8 @@ type AttemptInsert = {
 
 /** ---------- Helpers ---------- */
 function bottlePlaceholder() {
-  const w = 1200, h = 675;
+  const w = 1200,
+    h = 675;
   const svg = `
   <svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">
     <defs>
@@ -66,10 +69,10 @@ function bottlePlaceholder() {
     </defs>
     <rect width="${w}" height="${h}" fill="url(#g)"/>
     <g fill="rgba(255,255,255,0.12)">
-      <circle cx="${w*0.2}" cy="${h*0.8}" r="160"/>
-      <circle cx="${w*0.9}" cy="${h*0.2}" r="120"/>
+      <circle cx="${w * 0.2}" cy="${h * 0.8}" r="160"/>
+      <circle cx="${w * 0.9}" cy="${h * 0.2}" r="120"/>
     </g>
-    <g transform="translate(${w/2}, ${h/2})">
+    <g transform="translate(${w / 2}, ${h / 2})">
       <rect x="-55" y="-90" width="110" height="180" rx="10" fill="white" fill-opacity="0.85"/>
       <rect x="-10" y="-170" width="20" height="60" rx="5" fill="white" fill-opacity="0.85"/>
     </g>
@@ -120,6 +123,7 @@ export default function GuessWhatPage() {
           .order("created_at", { ascending: false });
 
         if (error) throw error;
+
         const prioritized = (data || []).sort((a: BankRow, b: BankRow) => {
           const as = a.locale === resolvedLocale ? 0 : 1;
           const bs = b.locale === resolvedLocale ? 0 : 1;
@@ -144,9 +148,7 @@ export default function GuessWhatPage() {
     if (!optionsWrapRef.current || finished) return;
     const selectedIdx = answers[current];
     const sel = optionsWrapRef.current.querySelector<HTMLButtonElement>(
-      selectedIdx !== undefined
-        ? `button[data-opt-selected="true"]`
-        : `button[data-opt-index="0"]`
+      selectedIdx !== undefined ? `button[data-opt-selected="true"]` : `button[data-opt-index="0"]`
     );
     sel?.focus();
   }, [current, finished, answers]);
@@ -186,6 +188,12 @@ export default function GuessWhatPage() {
     [rows, answers]
   );
 
+  // Pick the first available reveal video in this round (optional)
+  const revealUrl = useMemo(
+    () => rows.find((r) => r.reveal_video_url)?.reveal_video_url || null,
+    [rows]
+  );
+
   function handleSelect(index: number) {
     setAnswers((prev) => {
       const next = prev.slice();
@@ -219,16 +227,15 @@ export default function GuessWhatPage() {
           correct: correctCount,
           locale: resolvedLocale,
           bank_ids: rows.map((r) => r.id),
-          // optionally, send a per-question breakdown
           detail: rows.map((r, i) => ({
             bank_id: r.id,
             selected_index: answers[i],
             correct_index: r.correct_index,
-            awarded: (answers[i] === (r.correct_index ?? -1)) ? (r.points_award ?? 0) : 0,
+            awarded:
+              answers[i] === (r.correct_index ?? -1) ? Number(r.points_award ?? 0) : 0,
           })),
         });
 
-        // UI candy (we still show the computed total locally)
         setJustGained((n) => n + pointsEarned);
         if (typeof refreshPoints === "function") await refreshPoints();
         toast.success(`Nice! +${pointsEarned} points from Guess What`);
@@ -270,7 +277,11 @@ export default function GuessWhatPage() {
     return (
       <div className="max-w-3xl mx-auto space-y-6">
         <div className="flex items-center justify-between">
-          <Button variant="ghost" onClick={() => navigate("/play")} className="flex items-center space-x-2">
+          <Button
+            variant="ghost"
+            onClick={() => navigate("/play")}
+            className="flex items-center space-x-2"
+          >
             <ArrowLeft className="h-4 w-4" />
             <span>Back to Challenges</span>
           </Button>
@@ -287,7 +298,8 @@ export default function GuessWhatPage() {
           <CardContent className="p-8 text-center">
             <HelpCircle className="w-12 h-12 text-muted-foreground mx-auto mb-3" />
             <p className="text-muted-foreground">
-              No questions found for your language yet. Try switching languages or check back soon.
+              No questions found for your language yet. Try switching languages or check back
+              soon.
             </p>
           </CardContent>
         </Card>
@@ -299,7 +311,11 @@ export default function GuessWhatPage() {
     <div className="max-w-3xl mx-auto space-y-6">
       {/* Header */}
       <div className="flex items-center justify-between">
-        <Button variant="ghost" onClick={() => navigate("/play")} className="flex items-center space-x-2">
+        <Button
+          variant="ghost"
+          onClick={() => navigate("/play")}
+          className="flex items-center space-x-2"
+        >
           <ArrowLeft className="h-4 w-4" />
           <span>Back to Challenges</span>
         </Button>
@@ -332,7 +348,9 @@ export default function GuessWhatPage() {
       {!finished ? (
         <Card>
           <CardHeader>
-            <CardTitle className="text-lg">Question {current + 1} of {rows.length}</CardTitle>
+            <CardTitle className="text-lg">
+              Question {current + 1} of {rows.length}
+            </CardTitle>
           </CardHeader>
           <CardContent className="space-y-5">
             {/* Progress */}
@@ -407,92 +425,121 @@ export default function GuessWhatPage() {
           </CardContent>
         </Card>
       ) : (
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Trophy className="h-6 w-6 text-primary" />
-              Results
-              <Badge variant="secondary" className="ml-1">{pointsEarned} pts</Badge>
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-6">
-            {/* Summary */}
-            <div className="grid grid-cols-2 gap-4">
-              <div className="text-center p-4 bg-green-50 border border-green-200 rounded-lg">
-                <div className="text-2xl font-bold text-green-700">{correctCount}/{rows.length}</div>
-                <div className="text-green-800 font-medium">Correct</div>
-              </div>
-              <div className="text-center p-4 bg-amber-50 border border-amber-200 rounded-lg">
-                <div className="text-2xl font-bold text-amber-700">{pointsEarned}</div>
-                <div className="text-amber-800 font-medium">Points Earned</div>
+        <>
+          {/* Reveal video (optional) */}
+          {revealUrl && (
+            <div className="rounded-2xl overflow-hidden shadow bg-white">
+              <div className="p-4 sm:p-6">
+                <h2 className="text-lg font-semibold mb-3">Reveal Video</h2>
+                <div className="aspect-video rounded-xl overflow-hidden">
+                  <VideoPlayer url={revealUrl} controls light />
+                </div>
               </div>
             </div>
+          )}
 
-            {/* Breakdown */}
-            <div className="space-y-4">
-              {rows.map((r, i) => {
-                const userIdx = answers[i];
-                const correctIdx = r.correct_index ?? -1;
-                const ok = userIdx === correctIdx;
-                return (
-                  <div key={r.id} className="border border-gray-200 rounded-lg p-4">
-                    <div className="font-medium text-gray-900 mb-3">{r.prompt}</div>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                      <div className={`p-3 rounded-lg ${ok ? "bg-green-50 border border-green-200" : "bg-red-50 border border-red-200"}`}>
-                        <div className="flex items-center mb-1">
-                          {ok ? (
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Trophy className="h-6 w-6 text-primary" />
+                Results
+                <Badge variant="secondary" className="ml-1">
+                  {pointsEarned} pts
+                </Badge>
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-6">
+              {/* Summary */}
+              <div className="grid grid-cols-2 gap-4">
+                <div className="text-center p-4 bg-green-50 border border-green-200 rounded-lg">
+                  <div className="text-2xl font-bold text-green-700">
+                    {correctCount}/{rows.length}
+                  </div>
+                  <div className="text-green-800 font-medium">Correct</div>
+                </div>
+                <div className="text-center p-4 bg-amber-50 border border-amber-200 rounded-lg">
+                  <div className="text-2xl font-bold text-amber-700">{pointsEarned}</div>
+                  <div className="text-amber-800 font-medium">Points Earned</div>
+                </div>
+              </div>
+
+              {/* Breakdown */}
+              <div className="space-y-4">
+                {rows.map((r, i) => {
+                  const userIdx = answers[i];
+                  const correctIdx = r.correct_index ?? -1;
+                  const ok = userIdx === correctIdx;
+                  return (
+                    <div key={r.id} className="border border-gray-200 rounded-lg p-4">
+                      <div className="font-medium text-gray-900 mb-3">{r.prompt}</div>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <div
+                          className={`p-3 rounded-lg ${
+                            ok
+                              ? "bg-green-50 border border-green-200"
+                              : "bg-red-50 border border-red-200"
+                          }`}
+                        >
+                          <div className="flex items-center mb-1">
+                            {ok ? (
+                              <CheckCircle className="w-4 h-4 text-green-600 mr-2" />
+                            ) : (
+                              <XCircle className="w-4 h-4 text-red-600 mr-2" />
+                            )}
+                            <span className="font-medium text-sm">Your Answer</span>
+                          </div>
+                          <div className={ok ? "text-green-800" : "text-red-800"}>
+                            {r.options?.[userIdx as number] ?? "—"}
+                          </div>
+                        </div>
+
+                        <div className="p-3 bg-gray-50 border border-gray-200 rounded-lg">
+                          <div className="flex items-center mb-1">
                             <CheckCircle className="w-4 h-4 text-green-600 mr-2" />
-                          ) : (
-                            <XCircle className="w-4 h-4 text-red-600 mr-2" />
-                          )}
-                          <span className="font-medium text-sm">Your Answer</span>
+                            <span className="font-medium text-sm">Correct Answer</span>
+                          </div>
+                          <div className="text-gray-900">{r.options?.[correctIdx] ?? "—"}</div>
                         </div>
-                        <div className={ok ? "text-green-800" : "text-red-800"}>
-                          {r.options?.[userIdx as number] ?? "—"}
-                        </div>
-                      </div>
-
-                      <div className="p-3 bg-gray-50 border border-gray-200 rounded-lg">
-                        <div className="flex items-center mb-1">
-                          <CheckCircle className="w-4 h-4 text-green-600 mr-2" />
-                          <span className="font-medium text-sm">Correct Answer</span>
-                        </div>
-                        <div className="text-gray-900">{r.options?.[correctIdx] ?? "—"}</div>
                       </div>
                     </div>
-                  </div>
-                );
-              })}
-            </div>
+                  );
+                })}
+              </div>
 
-            {/* Actions */}
-            <div className="flex flex-col sm:flex-row gap-3 justify-center">
-              <BrandButton onClick={() => navigate("/play")} className="inline-flex items-center justify-center">
-                <ArrowLeft className="w-4 h-4 mr-2" />
-                Back to Challenges
-              </BrandButton>
-              <Button
-                variant="outline"
-                onClick={() => {
-                  const reshuffled = shuffle(rows);
-                  setRows(reshuffled);
-                  setAnswers(Array(reshuffled.length).fill(undefined));
-                  setCurrent(0);
-                  setFinished(false);
-                  setJustGained(0);
-                }}
-                className="inline-flex items-center justify-center"
-              >
-                <Play className="w-4 h-4 mr-2" />
-                Play Again
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
+              {/* Actions */}
+              <div className="flex flex-col sm:flex-row gap-3 justify-center">
+                <BrandButton
+                  onClick={() => navigate("/play")}
+                  className="inline-flex items-center justify-center"
+                >
+                  <ArrowLeft className="w-4 h-4 mr-2" />
+                  Back to Challenges
+                </BrandButton>
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    const reshuffled = shuffle(rows);
+                    setRows(reshuffled);
+                    setAnswers(Array(reshuffled.length).fill(undefined));
+                    setCurrent(0);
+                    setFinished(false);
+                    setJustGained(0);
+                  }}
+                  className="inline-flex items-center justify-center"
+                >
+                  <Play className="w-4 h-4 mr-2" />
+                  Play Again
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        </>
       )}
 
       {/* Floating +points chip */}
-      {justGained > 0 && <PointsGainBubble amount={justGained} onDone={() => setJustGained(0)} />}
+      {justGained > 0 && (
+        <PointsGainBubble amount={justGained} onDone={() => setJustGained(0)} />
+      )}
 
       {/* Optional level-up banner */}
       <LevelUpBanner
