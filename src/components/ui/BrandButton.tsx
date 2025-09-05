@@ -1,15 +1,26 @@
+// src/components/ui/BrandButton.tsx
 import * as React from "react";
 import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 
 type ButtonProps = React.ComponentProps<typeof Button>;
 
-/** Brand-coloured primary button that still accepts all shadcn Button props */
+/** Brand-flavoured primary button that still accepts all shadcn Button props */
 const BrandButton = React.forwardRef<HTMLButtonElement, ButtonProps>(
-  ({ className, ...props }, ref) => {
-    const base = "bg-brand-orange text-white shadow hover:opacity-95 [&_svg]:text-white";
-    return <Button ref={ref} className={[base, className].filter(Boolean).join(" ")} {...props} />;
+  ({ className, variant, ...props }, ref) => {
+    const base =
+      "bg-primary text-primary-foreground hover:bg-primary/90 [&_svg]:text-primary-foreground";
+
+    return (
+      <Button
+        ref={ref}
+        variant={variant ?? "default"}
+        className={cn(base, className)}
+        {...props}
+      />
+    );
   }
 );
-BrandButton.displayName = "BrandButton";
 
+BrandButton.displayName = "BrandButton";
 export default BrandButton;
