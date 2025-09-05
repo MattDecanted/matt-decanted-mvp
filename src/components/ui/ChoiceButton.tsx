@@ -16,37 +16,27 @@ type Props = React.ButtonHTMLAttributes<HTMLButtonElement> & {
 };
 
 const stateClasses: Record<ChoiceState, string> = {
-  idle:
-    "border-gray-200 hover:border-gray-300 hover:bg-gray-50 text-gray-900",
-  selected:
-    "border-blue-500 bg-blue-50 text-blue-800",
-  correct:
-    "border-green-500 bg-green-50 text-green-800",
-  incorrect:
-    "border-red-500 bg-red-50 text-red-800",
+  idle: "border-gray-200 hover:border-gray-300 hover:bg-gray-50 text-gray-900",
+  selected: "border-blue-500 bg-blue-50 text-blue-800",
+  correct: "border-green-500 bg-green-50 text-green-800",
+  incorrect: "border-red-500 bg-red-50 text-red-800",
 };
 
 /** Accessible multiple-choice button used by GuessWhatPage */
 const ChoiceButton = React.forwardRef<HTMLButtonElement, Props>(
   (
-    {
-      label,
-      index,
-      state = "idle",
-      className,
-      dataIndex,
-      dataSelected,
-      disabled,
-      ...rest
-    },
+    { label, index, state = "idle", className, dataIndex, dataSelected, disabled, ...rest },
     ref
   ) => {
+    const dataOptIndex =
+      typeof dataIndex === "number" ? dataIndex : undefined;
+
     return (
       <button
         ref={ref}
         type="button"
-        // data-* are used by the page’s focus hook; keep names as-is
-        data-opt-index={dataIndex}
+        // data-* used by page focus hook; keep names as-is
+        data-opt-index={dataOptIndex}
         data-opt-selected={dataSelected ? "true" : undefined}
         className={cn(
           "w-full text-left p-4 rounded-lg border transition-all",
@@ -56,6 +46,8 @@ const ChoiceButton = React.forwardRef<HTMLButtonElement, Props>(
           className
         )}
         aria-pressed={state === "selected"}
+        aria-selected={state === "selected"}
+        aria-disabled={disabled || undefined}
         {...rest}
       >
         <span className="font-medium mr-3">
