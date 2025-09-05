@@ -114,12 +114,62 @@ function AutoResumeOnAccount() {
 }
 
 /* ---------- Route guards ---------- */
-function RequireAuth({ children }: { children: React.ReactNode }) {
-  const { user, loading } = useAuth();
+function RequireAdmin({ children }: { children: React.ReactNode }) {
+  const { user, profile, loading } = useAuth();
   const location = useLocation();
-  if (loading) return <div className="p-8">Loading...</div>;
+  const [allowed, setAllowed] = React.useState<boolean | null>(null);
+
+  React.useEffect(() => {
+    let active = true;
+    (async () => {
+      if (loading) return setAllowed(null);
+      if (!user) return setAllowed(false);
+
+      // 1) Try fast paths first
+      const roleFromCtx = (profile as any)?.role;
+      const roleFromAuth = (user as any)?.user_metadata?.role;
+      const isAdminQuick =
+        roleFromCtx === "admin" ||
+        roleFromAuth === "admin" ||
+        (profile as any)?.is_admin === true;
+
+      if (isAdminQuick) {
+        if (active) setAllowed(true);
+        return;
+      }
+
+      // 2) DB fallback: handle both schemas (id or user_id)
+      const uid = user.id;
+      const { data, error } = await supabase
+        .from("profiles")
+        .select("role, is_admin")
+        .or(`id.eq.${uid},user_id.eq.${uid}`)
+        .maybeSingle();
+
+      if (!active) return;
+
+      if (error) {
+        console.error("RequireAdmin profiles fetch failed:", error);
+        setAllowed(false);
+        return;
+      }
+
+      const dbIsAdmin =
+        (data?.role === "admin") || Boolean((data as any)?.is_admin);
+      setAllowed(dbIsAdmin);
+    })();
+
+    return () => {
+      active = false;
+    };
+  }, [user, profile, loading]);
+
+  if (loading || allowed === null) return <div className="p-8">Loading...</div>;
   if (!user) return <Navigate to="/signin" replace state={{ from: location }} />;
+  if (!allowed) return <div className="p-6 text-sm text-red-600">Admins only.</div>;
   return <>{children}</>;
+}
+
 }
 
 /** Onboarding guard: needs alias + terms_accepted_at */
