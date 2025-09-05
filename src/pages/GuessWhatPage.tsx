@@ -30,32 +30,7 @@ import { toast } from "sonner";
 import { supabase } from "@/lib/supabase";
 import { useQuizKeyboard } from "@/hooks/useQuizKeyboard";
 
-/** Optional: nice placeholder if a row has no image_url */
-function bottlePlaceholder() {
-  const w = 600,
-    h = 400;
-  const svg = `
-  <svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">
-    <defs>
-      <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
-        <stop offset="0%" stop-color="#ff8a00"/>
-        <stop offset="100%" stop-color="#ff5e00"/>
-      </linearGradient>
-    </defs>
-    <rect width="${w}" height="${h}" fill="url(#g)"/>
-    <g fill="rgba(255,255,255,0.12)">
-      <circle cx="${w * 0.2}" cy="${h * 0.8}" r="120"/>
-      <circle cx="${w * 0.9}" cy="${h * 0.2}" r="90"/>
-    </g>
-    <g transform="translate(${w / 2}, ${h / 2})">
-      <rect x="-45" y="-80" width="90" height="160" rx="8" fill="white" fill-opacity="0.85"/>
-      <rect x="-8" y="-150" width="16" height="50" rx="4" fill="white" fill-opacity="0.85"/>
-    </g>
-  </svg>`;
-  return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
-}
-
-/* ========= Types aligned to your DB ========= */
+/** ---------- Types aligned to DB ---------- */
 type BankRow = {
   id: string;
   slug: string;
@@ -77,6 +52,30 @@ type AttemptInsert = {
   is_correct: boolean;
 };
 
+/** ---------- Helpers ---------- */
+function bottlePlaceholder() {
+  const w = 1200, h = 675;
+  const svg = `
+  <svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">
+    <defs>
+      <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+        <stop offset="0%" stop-color="#ff8a00"/>
+        <stop offset="100%" stop-color="#ff5e00"/>
+      </linearGradient>
+    </defs>
+    <rect width="${w}" height="${h}" fill="url(#g)"/>
+    <g fill="rgba(255,255,255,0.12)">
+      <circle cx="${w*0.2}" cy="${h*0.8}" r="160"/>
+      <circle cx="${w*0.9}" cy="${h*0.2}" r="120"/>
+    </g>
+    <g transform="translate(${w/2}, ${h/2})">
+      <rect x="-55" y="-90" width="110" height="180" rx="10" fill="white" fill-opacity="0.85"/>
+      <rect x="-10" y="-170" width="20" height="60" rx="5" fill="white" fill-opacity="0.85"/>
+    </g>
+  </svg>`;
+  return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+}
+
 const shuffle = <T,>(arr: T[]) => {
   const a = arr.slice();
   for (let i = a.length - 1; i > 0; i--) {
@@ -90,13 +89,14 @@ export default function GuessWhatPage() {
   const navigate = useNavigate();
   const { user } = useAuth() as any;
   const { resolvedLocale } = useLocale();
-  const { track } = useAnalytics();
-  const { refreshPoints } = (usePoints() as any) || {};
+  const analytics = useAnalytics() as any;
+  const pointsCtx = (usePoints() as any) || {};
+  const refreshPoints: undefined | (() => Promise<void>) = pointsCtx?.refreshPoints;
 
   const [loading, setLoading] = useState(true);
   const [rows, setRows] = useState<BankRow[]>([]);
   const [current, setCurrent] = useState(0);
-  const [answers, setAnswers] = useState<Array<number | null>>([]);
+  const [answers, setAnswers] = useState<(number | undefined)[]>([]);
   const [finished, setFinished] = useState(false);
 
   const [justGained, setJustGained] = useState(0);
@@ -105,30 +105,29 @@ export default function GuessWhatPage() {
 
   const optionsWrapRef = useRef<HTMLDivElement>(null);
 
-  /* -------- Load questions for locale with 'en' fallback -------- */
+  /** Load questions (prefer user locale, fallback to en) */
   useEffect(() => {
     (async () => {
       setLoading(true);
       try {
-        const locales = Array.from(new Set([resolvedLocale, "en"].filter(Boolean))) as string[];
+        const locales = Array.from(new Set([resolvedLocale, "en"].filter(Boolean)));
         const { data, error } = await supabase
           .from("guess_what_bank")
           .select("*")
           .eq("active", true)
           .in("locale", locales)
           .order("created_at", { ascending: false });
-        if (error) throw error;
 
-        const byLocaleFirst = (data || []).sort((a: BankRow, b: BankRow) => {
-          const aScore = a.locale === resolvedLocale ? 0 : 1;
-          const bScore = b.locale === resolvedLocale ? 0 : 1;
-          return aScore - bScore;
+        if (error) throw error;
+        const prioritized = (data || []).sort((a: BankRow, b: BankRow) => {
+          const as = a.locale === resolvedLocale ? 0 : 1;
+          const bs = b.locale === resolvedLocale ? 0 : 1;
+          return as - bs;
         });
 
-        // Shuffle and take up to 6 for a snappy round
-        const pick = shuffle(byLocaleFirst).slice(0, Math.min(6, byLocaleFirst.length));
+        const pick = shuffle(prioritized).slice(0, Math.min(6, prioritized.length));
         setRows(pick);
-        setAnswers(Array(pick.length).fill(null));
+        setAnswers(Array(pick.length).fill(undefined));
       } catch (e) {
         console.error(e);
         toast.error("Failed to load Guess What");
@@ -139,12 +138,14 @@ export default function GuessWhatPage() {
     })();
   }, [resolvedLocale]);
 
-  /* -------- Auto-focus first (or selected) option on question change -------- */
+  /** Autofocus */
   useEffect(() => {
     if (!optionsWrapRef.current || finished) return;
     const selectedIdx = answers[current];
     const sel = optionsWrapRef.current.querySelector<HTMLButtonElement>(
-      selectedIdx != null ? `button[data-opt-selected="true"]` : `button[data-opt-index="0"]`
+      selectedIdx !== undefined
+        ? `button[data-opt-selected="true"]`
+        : `button[data-opt-index="0"]`
     );
     sel?.focus();
   }, [current, finished, answers]);
@@ -156,7 +157,7 @@ export default function GuessWhatPage() {
     optionsCount,
     onSelect: (idx) => handleSelect(idx),
     onNext: () => handleNext(),
-    allowNext: answers[current] != null,
+    allowNext: answers[current] !== undefined,
   });
 
   const currentRow = rows[current];
@@ -165,7 +166,7 @@ export default function GuessWhatPage() {
     () =>
       rows.reduce((n, r, i) => {
         const c = r.correct_index ?? -1;
-        return n + ((answers[i] as number) === c ? 1 : 0);
+        return n + (answers[i] === c ? 1 : 0);
       }, 0),
     [rows, answers]
   );
@@ -178,7 +179,7 @@ export default function GuessWhatPage() {
   const pointsEarned = useMemo(
     () =>
       rows.reduce((sum, r, i) => {
-        const ok = (answers[i] as number) === (r.correct_index ?? -1);
+        const ok = answers[i] === (r.correct_index ?? -1);
         return sum + (ok ? Number(r.points_award ?? 0) : 0);
       }, 0),
     [rows, answers]
@@ -196,42 +197,43 @@ export default function GuessWhatPage() {
     if (!user) return;
 
     try {
-      // Save each attempt
-      const payload: AttemptInsert[] = rows.map((r, i) => {
-        const sel = answers[i] as number; // guaranteed by UI gating
-        return {
-          user_id: user.id,
-          bank_id: r.id,
-          selected_index: sel,
-          is_correct: sel === (r.correct_index ?? -1),
-        };
-      });
+      // Save attempts
+      const attempts: AttemptInsert[] = rows.map((r, i) => ({
+        user_id: user.id,
+        bank_id: r.id,
+        selected_index: answers[i] as number, // safe: all answered on finish
+        is_correct: (answers[i] as number) === (r.correct_index ?? -1),
+      }));
 
-      if (payload.length) {
-        const { error: aErr } = await supabase.from("guess_what_attempts").insert(payload);
+      if (attempts.length) {
+        const { error: aErr } = await supabase.from("guess_what_attempts").insert(attempts);
         if (aErr) throw aErr;
       }
 
-      // Award points
+      // Award points (non-fatal)
       if (pointsEarned > 0) {
-        await supabase.from("points_ledger").insert([
-          {
-            user_id: user.id,
-            points: pointsEarned,
-            reason: "Guess What",
-            meta: {
-              count: rows.length,
-              correct: correctCount,
-              locale: resolvedLocale,
+        try {
+          await supabase.from("points_ledger").insert([
+            {
+              user_id: user.id,
+              points: pointsEarned,
+              reason: "Guess What",
+              meta: {
+                count: rows.length,
+                correct: correctCount,
+                locale: resolvedLocale,
+              },
             },
-          },
-        ]);
-        setJustGained((n) => n + pointsEarned);
-        if (typeof refreshPoints === "function") await refreshPoints();
-
-        toast.success(`Nice! +${pointsEarned} points from Guess What`);
+          ]);
+          setJustGained((n) => n + pointsEarned);
+          if (typeof refreshPoints === "function") await refreshPoints();
+          toast.success(`Nice! +${pointsEarned} points from Guess What`);
+        } catch (pErr) {
+          // ignore if your points flow is handled elsewhere
+          console.warn("Points insert skipped:", pErr);
+        }
       }
-    } catch (e: any) {
+    } catch (e) {
       console.error("persistAttemptsAndPoints", e);
       toast.error("Could not save your results, but you can still continue.");
     }
@@ -243,7 +245,7 @@ export default function GuessWhatPage() {
     } else {
       setFinished(true);
       await persistAttemptsAndPoints();
-      track("guess_what_complete", {
+      analytics?.track?.("guess_what_complete", {
         total: rows.length,
         correct: correctCount,
         points_earned: pointsEarned,
@@ -293,7 +295,6 @@ export default function GuessWhatPage() {
     );
   }
 
-  /* ================== GAME ================== */
   return (
     <div className="max-w-3xl mx-auto space-y-6">
       {/* Header */}
@@ -302,7 +303,6 @@ export default function GuessWhatPage() {
           <ArrowLeft className="h-4 w-4" />
           <span>Back to Challenges</span>
         </Button>
-
         <div className="flex items-center gap-2">
           <Badge variant="secondary" className="flex items-center gap-1">
             <Trophy className="h-3 w-3" />
@@ -315,7 +315,7 @@ export default function GuessWhatPage() {
         </div>
       </div>
 
-      {/* Warm hero */}
+      {/* Hero */}
       <div className="rounded-2xl overflow-hidden border shadow-card bg-white">
         <div className="bg-gradient-to-br from-brand-300 to-brand-100 p-6 md:p-8">
           <h1 className="text-2xl md:text-3xl font-bold text-brand-900">Guess What</h1>
@@ -328,13 +328,11 @@ export default function GuessWhatPage() {
         </div>
       </div>
 
-      {/* In-progress OR Finished */}
+      {/* Game */}
       {!finished ? (
         <Card>
           <CardHeader>
-            <CardTitle className="text-lg">
-              Question {current + 1} of {rows.length}
-            </CardTitle>
+            <CardTitle className="text-lg">Question {current + 1} of {rows.length}</CardTitle>
           </CardHeader>
           <CardContent className="space-y-5">
             {/* Progress */}
@@ -345,17 +343,22 @@ export default function GuessWhatPage() {
               <Progress value={((current + 1) / rows.length) * 100} className="h-2" />
             </div>
 
-            {/* Image (optional) */}
+            {/* Image */}
             <div className="rounded-lg overflow-hidden bg-muted/40 border">
               {currentRow?.image_url ? (
                 <img
                   src={currentRow.image_url}
-                  alt="Question context"
+                  alt="Question illustration"
                   className="w-full h-48 object-cover"
                   loading="lazy"
                 />
               ) : (
-                <img src={bottlePlaceholder()} alt="Placeholder" className="w-full h-48 object-cover" loading="lazy" />
+                <img
+                  src={bottlePlaceholder()}
+                  alt="Placeholder"
+                  className="w-full h-48 object-cover"
+                  loading="lazy"
+                />
               )}
             </div>
 
@@ -383,7 +386,11 @@ export default function GuessWhatPage() {
 
             {/* Nav */}
             <div className="mt-3 flex justify-end">
-              <BrandButton onClick={handleNext} disabled={answers[current] == null} className="inline-flex items-center">
+              <BrandButton
+                onClick={handleNext}
+                disabled={answers[current] === undefined}
+                className="inline-flex items-center"
+              >
                 {current === rows.length - 1 ? (
                   <>
                     Finish
@@ -405,18 +412,14 @@ export default function GuessWhatPage() {
             <CardTitle className="flex items-center gap-2">
               <Trophy className="h-6 w-6 text-primary" />
               Results
-              <Badge variant="secondary" className="ml-1">
-                {pointsEarned} pts
-              </Badge>
+              <Badge variant="secondary" className="ml-1">{pointsEarned} pts</Badge>
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-6">
             {/* Summary */}
             <div className="grid grid-cols-2 gap-4">
               <div className="text-center p-4 bg-green-50 border border-green-200 rounded-lg">
-                <div className="text-2xl font-bold text-green-700">
-                  {correctCount}/{rows.length}
-                </div>
+                <div className="text-2xl font-bold text-green-700">{correctCount}/{rows.length}</div>
                 <div className="text-green-800 font-medium">Correct</div>
               </div>
               <div className="text-center p-4 bg-amber-50 border border-amber-200 rounded-lg">
@@ -428,7 +431,7 @@ export default function GuessWhatPage() {
             {/* Breakdown */}
             <div className="space-y-4">
               {rows.map((r, i) => {
-                const userIdx = answers[i] as number;
+                const userIdx = answers[i];
                 const correctIdx = r.correct_index ?? -1;
                 const ok = userIdx === correctIdx;
                 return (
@@ -444,7 +447,9 @@ export default function GuessWhatPage() {
                           )}
                           <span className="font-medium text-sm">Your Answer</span>
                         </div>
-                        <div className={ok ? "text-green-800" : "text-red-800"}>{r.options?.[userIdx] ?? "—"}</div>
+                        <div className={ok ? "text-green-800" : "text-red-800"}>
+                          {r.options?.[userIdx as number] ?? "—"}
+                        </div>
                       </div>
 
                       <div className="p-3 bg-gray-50 border border-gray-200 rounded-lg">
@@ -471,7 +476,7 @@ export default function GuessWhatPage() {
                 onClick={() => {
                   const reshuffled = shuffle(rows);
                   setRows(reshuffled);
-                  setAnswers(Array(reshuffled.length).fill(null));
+                  setAnswers(Array(reshuffled.length).fill(undefined));
                   setCurrent(0);
                   setFinished(false);
                   setJustGained(0);
@@ -486,10 +491,10 @@ export default function GuessWhatPage() {
         </Card>
       )}
 
-      {/* Float-in “+points” chip */}
+      {/* Floating +points chip */}
       {justGained > 0 && <PointsGainBubble amount={justGained} onDone={() => setJustGained(0)} />}
 
-      {/* 🎉 Level-up banner (kept, you can trigger off real gates later) */}
+      {/* Optional level-up banner */}
       <LevelUpBanner
         open={levelOpen}
         onClose={() => setLevelOpen(false)}
