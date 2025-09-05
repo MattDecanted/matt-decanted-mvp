@@ -136,10 +136,11 @@ function RequireOnboarded({ children }: { children: React.ReactNode }) {
         return;
       }
 
+      // 🔧 profiles uses user_id (not id)
       const { data, error } = await supabase
         .from("profiles")
         .select("alias, terms_accepted_at")
-        .eq("id", user.id)
+        .eq("user_id", user.id)
         .single();
 
       if (!active) return;
@@ -190,11 +191,11 @@ function RequireAdmin({ children }: { children: React.ReactNode }) {
       const roleFromCtx = (profile as any)?.role ?? (user.user_metadata as any)?.role;
       if (roleFromCtx === "admin") return setAllowed(true);
 
-      // 2) Fallback: fetch from DB
+      // 2) Fallback: fetch from DB (🔧 uses user_id)
       const { data, error } = await supabase
         .from("profiles")
         .select("role")
-        .eq("id", user.id)
+        .eq("user_id", user.id)
         .maybeSingle();
 
       if (!active) return;
@@ -214,7 +215,6 @@ function RequireAdmin({ children }: { children: React.ReactNode }) {
   if (loading || allowed === null) return <div className="p-8">Loading...</div>;
   if (!user) return <Navigate to="/signin" replace state={{ from: location }} />;
   if (!allowed) {
-    // Render a clear message instead of redirecting (prevents confusing "fallback to Home")
     return <div className="p-6 text-sm text-red-600">Admins only.</div>;
   }
   return <>{children}</>;
@@ -291,7 +291,6 @@ function App() {
               </Routes>
 
               <AppErrorBoundary>
-                {/* 🌐 Global Suspense protects ALL lazy chunks on any route */}
                 <Suspense
                   fallback={
                     <div className="min-h-screen flex items-center justify-center">
@@ -325,6 +324,9 @@ function App() {
                       <Route path="/blog/wset-level-2-questions" element={<WSETLevel2Questions />} />
                       <Route path="/blog/wine-tasting-guide" element={<WineTastingGuide />} />
                       <Route path="/blog/wine-vocabulary-quiz" element={<WineVocabularyQuiz />} />
+
+                      {/* ✅ Legacy redirect so /guess-what works */}
+                      <Route path="/guess-what" element={<Navigate to="/games/guess-what" replace />} />
 
                       {/* Games */}
                       <Route
