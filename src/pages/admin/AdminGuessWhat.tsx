@@ -4,7 +4,7 @@ import { supabase } from "@/lib/supabase";
 import { useAuth } from "@/context/AuthContext";
 import {
   Plus, Edit, Trash2, Eye, EyeOff, Save, X, Globe, HelpCircle, Image as ImageIcon,
-  Star, CheckCircle, AlertCircle, Copy as DuplicateIcon, PlayCircle, Link as LinkIcon, ChevronRight
+  CheckCircle, AlertCircle, Copy as DuplicateIcon, PlayCircle, Link as LinkIcon
 } from "lucide-react";
 
 /* ================= Types ================= */
@@ -13,10 +13,11 @@ type Round = {
   locale: string;
   week_number: number | null;
   title: string | null;
-  date: string | null; // ISO
-  hero_image_url: string | null;
-  descriptors: string | null;
-  video_url: string | null;
+  date: string | null; // ISO (YYYY-MM-DD)
+  hero_image_url: string | null;      // placeholder shown before selecting
+  descriptors: string | null;         // Matt’s tasting descriptors (free text)
+  video_url: string | null;           // main tasting video (Matt tasting)
+  reveal_video_url: string | null;    // ✅ reveal video (your request)
   locked_vintage: string | null;
   locked_variety: string | null;
   locked_region: string | null;
@@ -26,7 +27,7 @@ type Round = {
   reveal_variety: string | null;
   reveal_region: string | null;
   reveal_notes: string | null;
-  reveal_image_url: string | null;
+  reveal_image_url: string | null;    // optional image if you don’t use a reveal video
   active: boolean;
   created_at: string;
   updated_at: string;
@@ -49,24 +50,40 @@ type BankRow = {
 
 const LANGS = [
   { code: "en", name: "English", flag: "🇺🇸" },
-  { code: "ko", name: "한국어", flag: "🇰🇷" },
-  { code: "zh", name: "中文", flag: "🇨🇳" },
-  { code: "es", name: "Español", flag: "🇪🇸" },
-  { code: "fr", name: "Français", flag: "🇫🇷" },
+  { code: "ko", name: "한국어",  flag: "🇰🇷" },
+  { code: "zh", name: "中文",   flag: "🇨🇳" },
+  { code: "es", name: "Español",flag: "🇪🇸" },
+  { code: "fr", name: "Français",flag: "🇫🇷" },
   { code: "de", name: "Deutsch", flag: "🇩🇪" },
-  { code: "ja", name: "日本語", flag: "🇯🇵" },
+  { code: "ja", name: "日本語",  flag: "🇯🇵" },
 ];
 
 /* ================ Page ================ */
 export default function AdminGuessWhat() {
-  const { profile } = useAuth() as any;
+  const { profile, user } = useAuth() as any;
   const [rounds, setRounds] = useState<Round[]>([]);
   const [loading, setLoading] = useState(true);
   const [filterLocale, setFilterLocale] = useState("all");
   const [editing, setEditing] = useState<Round | null>(null);
 
-  // gate
-  if (profile?.role !== "admin" && profile?.is_admin !== true) {
+  // 🛡️ Admin gate: context, user metadata; UI fallback (router should already protect)
+  const isAdmin =
+    profile?.role === "admin" ||
+    profile?.is_admin === true ||
+    user?.user_metadata?.role === "admin";
+
+  // 🚫 SEO: ensure this page is not indexed/crawled
+  useEffect(() => {
+    const meta = document.createElement("meta");
+    meta.name = "robots";
+    meta.content = "noindex,nofollow";
+    document.head.appendChild(meta);
+    return () => {
+      document.head.removeChild(meta);
+    };
+  }, []);
+
+  if (!isAdmin) {
     return (
       <div className="min-h-screen grid place-items-center bg-gray-50 p-8">
         <div className="text-center">
@@ -110,13 +127,30 @@ export default function AdminGuessWhat() {
   }, [rounds]);
 
   async function toggleRoundActive(r: Round) {
-    await supabase.from("guess_what_rounds").update({ active: !r.active }).eq("id", r.id);
-    setRounds((prev) => prev.map((x) => (x.id === r.id ? { ...x, active: !x.active } : x)));
+    const next = !r.active;
+    const { error } = await supabase.from("guess_what_rounds").update({ active: next }).eq("id", r.id);
+    if (error) {
+      console.error(error);
+      return;
+    }
+    setRounds((prev) => prev.map((x) => (x.id === r.id ? { ...x, active: next } : x)));
   }
 
   async function removeRound(id: string) {
-    if (!confirm("Delete this round and its questions?")) return;
-    await supabase.from("guess_what_rounds").delete().eq("id", id);
+    if (!confirm("Delete this round and ALL of its questions?")) return;
+    // Delete questions first (covers missing DB cascade)
+    const { error: qErr } = await supabase.from("guess_what_bank").delete().eq("round_id", id);
+    if (qErr) {
+      console.error(qErr);
+      alert("Failed to delete questions for this round.");
+      return;
+    }
+    const { error: rErr } = await supabase.from("guess_what_rounds").delete().eq("id", id);
+    if (rErr) {
+      console.error(rErr);
+      alert("Failed to delete the round.");
+      return;
+    }
     setRounds((prev) => prev.filter((r) => r.id !== id));
   }
 
@@ -126,7 +160,9 @@ export default function AdminGuessWhat() {
         <div className="flex items-start justify-between mb-8">
           <div>
             <h1 className="text-3xl font-bold text-gray-900 mb-1">Guess What — Rounds</h1>
-            <p className="text-gray-600">Create weekly challenges, add multiple questions, and set the reveal video.</p>
+            <p className="text-gray-600">
+              Create a game with a placeholder image, tasting video, 3–5 unique questions, and a reveal video or image.
+            </p>
           </div>
           <div className="flex items-center gap-2">
             <select
@@ -153,6 +189,7 @@ export default function AdminGuessWhat() {
                   hero_image_url: "",
                   descriptors: "",
                   video_url: "",
+                  reveal_video_url: "", // ✅ default empty
                   locked_region: "",
                   locked_style: "",
                   locked_variety: "",
@@ -197,7 +234,9 @@ export default function AdminGuessWhat() {
                     <div className="flex items-start justify-between">
                       <div className="flex-1 pr-4">
                         <div className="flex flex-wrap items-center gap-2 mb-2">
-                          <span className="px-2 py-0.5 text-xs rounded bg-gray-100">Week {r.week_number ?? "—"}</span>
+                          <span className="px-2 py-0.5 text-xs rounded bg-gray-100">
+                            Week {r.week_number ?? "—"}
+                          </span>
                           <span className="px-2 py-0.5 text-xs rounded bg-amber-50 text-amber-700">
                             {r.date || "No date"}
                           </span>
@@ -207,6 +246,15 @@ export default function AdminGuessWhat() {
                           {r.video_url ? (
                             <span className="px-2 py-0.5 text-xs rounded bg-purple-50 text-purple-700 inline-flex items-center">
                               <PlayCircle className="w-3.5 h-3.5 mr-1" /> Video
+                            </span>
+                          ) : null}
+                          {r.reveal_video_url ? (
+                            <span className="px-2 py-0.5 text-xs rounded bg-blue-50 text-blue-700">
+                              Reveal Video
+                            </span>
+                          ) : r.reveal_image_url ? (
+                            <span className="px-2 py-0.5 text-xs rounded bg-blue-50 text-blue-700">
+                              Reveal Image
                             </span>
                           ) : null}
                           <span
@@ -224,7 +272,11 @@ export default function AdminGuessWhat() {
                       </div>
                       <div className="flex items-center gap-2">
                         <IconBtn title={r.active ? "Hide" : "Publish"} onClick={() => toggleRoundActive(r)}>
-                          {r.active ? <EyeOff className="w-4 h-4 text-amber-600" /> : <Eye className="w-4 h-4 text-green-600" />}
+                          {r.active ? (
+                            <EyeOff className="w-4 h-4 text-amber-600" />
+                          ) : (
+                            <Eye className="w-4 h-4 text-green-600" />
+                          )}
                         </IconBtn>
                         <IconBtn title="Edit" onClick={() => setEditing(r)}>
                           <Edit className="w-4 h-4 text-blue-600" />
@@ -245,7 +297,7 @@ export default function AdminGuessWhat() {
           <RoundEditor
             round={editing}
             onClose={() => setEditing(null)}
-            onSaved={async (saved) => {
+            onSaved={async () => {
               setEditing(null);
               // refresh list
               const { data } = await supabase
@@ -254,8 +306,6 @@ export default function AdminGuessWhat() {
                 .order("date", { ascending: false })
                 .order("created_at", { ascending: false });
               setRounds((data || []) as Round[]);
-              // keep focus on the round we edited
-              setEditing(saved);
             }}
           />
         )}
@@ -272,7 +322,7 @@ function RoundEditor({
 }: {
   round: Round;
   onClose(): void;
-  onSaved(saved: Round): void;
+  onSaved(): void;
 }) {
   const creating = !round.id;
   const [form, setForm] = useState<Round>(round);
@@ -315,6 +365,7 @@ function RoundEditor({
               hero_image_url: form.hero_image_url || null,
               descriptors: form.descriptors || null,
               video_url: form.video_url || null,
+              reveal_video_url: form.reveal_video_url || null, // ✅ new
               locked_region: form.locked_region || null,
               locked_style: form.locked_style || null,
               locked_variety: form.locked_variety || null,
@@ -331,9 +382,11 @@ function RoundEditor({
           .select()
           .single();
         if (error) throw error;
-        onSaved(data as Round);
+        // Put created id back into state so questions UI works immediately
+        setForm(data as Round);
+        onSaved();
       } else {
-        const { data, error } = await supabase
+        const { error } = await supabase
           .from("guess_what_rounds")
           .update({
             locale: form.locale,
@@ -343,6 +396,7 @@ function RoundEditor({
             hero_image_url: form.hero_image_url || null,
             descriptors: form.descriptors || null,
             video_url: form.video_url || null,
+            reveal_video_url: form.reveal_video_url || null, // ✅ new
             locked_region: form.locked_region || null,
             locked_style: form.locked_style || null,
             locked_variety: form.locked_variety || null,
@@ -355,11 +409,9 @@ function RoundEditor({
             reveal_wine_name: form.reveal_wine_name || null,
             active: form.active ?? false,
           })
-          .eq("id", form.id)
-          .select()
-          .single();
+          .eq("id", form.id);
         if (error) throw error;
-        onSaved(data as Round);
+        onSaved();
       }
     } catch (e: any) {
       setError(e?.message || "Failed to save.");
@@ -371,7 +423,11 @@ function RoundEditor({
   return (
     <Modal title={creating ? "Create Round" : "Edit Round"} onClose={onClose} wide>
       <form onSubmit={saveRound} className="space-y-5">
-        {error && <div className="p-3 rounded bg-red-50 text-red-700 border border-red-200 text-sm">{error}</div>}
+        {error && (
+          <div className="p-3 rounded bg-red-50 text-red-700 border border-red-200 text-sm">
+            {error}
+          </div>
+        )}
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <Field label="Language">
@@ -392,7 +448,12 @@ function RoundEditor({
               type="number"
               className="w-full px-3 py-2 border rounded-md"
               value={form.week_number ?? ""}
-              onChange={(e) => setForm({ ...form, week_number: e.target.value ? Number(e.target.value) : null })}
+              onChange={(e) =>
+                setForm({
+                  ...form,
+                  week_number: e.target.value ? Number(e.target.value) : null,
+                })
+              }
               placeholder="e.g. 1"
             />
           </Field>
@@ -438,7 +499,7 @@ function RoundEditor({
             </p>
           </Field>
 
-          <Field label="Video URL (YouTube/Vimeo/mp4)">
+          <Field label="Main Tasting Video URL (YouTube/Vimeo/mp4)">
             <div className="flex items-center gap-2">
               <input
                 className="flex-1 px-3 py-2 border rounded-md"
@@ -462,32 +523,97 @@ function RoundEditor({
         </Field>
 
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-          <Field label="Locked Vintage"><input className="w-full px-3 py-2 border rounded-md" value={form.locked_vintage ?? ""} onChange={(e)=>setForm({...form,locked_vintage:e.target.value})}/></Field>
-          <Field label="Locked Variety"><input className="w-full px-3 py-2 border rounded-md" value={form.locked_variety ?? ""} onChange={(e)=>setForm({...form,locked_variety:e.target.value})}/></Field>
-          <Field label="Locked Region"><input className="w-full px-3 py-2 border rounded-md" value={form.locked_region ?? ""} onChange={(e)=>setForm({...form,locked_region:e.target.value})}/></Field>
-          <Field label="Locked Style/Level"><input className="w-full px-3 py-2 border rounded-md" value={form.locked_style ?? ""} onChange={(e)=>setForm({...form,locked_style:e.target.value})}/></Field>
-        </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <Field label="Reveal: Wine Name / Producer"><input className="w-full px-3 py-2 border rounded-md" value={form.reveal_wine_name ?? ""} onChange={(e)=>setForm({...form,reveal_wine_name:e.target.value})}/></Field>
-          <Field label="Reveal: Variety/Blend"><input className="w-full px-3 py-2 border rounded-md" value={form.reveal_variety ?? ""} onChange={(e)=>setForm({...form,reveal_variety:e.target.value})}/></Field>
-          <Field label="Reveal: Vintage"><input className="w-full px-3 py-2 border rounded-md" value={form.reveal_vintage ?? ""} onChange={(e)=>setForm({...form,reveal_vintage:e.target.value})}/></Field>
+          <Field label="Locked Vintage">
+            <input
+              className="w-full px-3 py-2 border rounded-md"
+              value={form.locked_vintage ?? ""}
+              onChange={(e) => setForm({ ...form, locked_vintage: e.target.value })}
+            />
+          </Field>
+          <Field label="Locked Variety">
+            <input
+              className="w-full px-3 py-2 border rounded-md"
+              value={form.locked_variety ?? ""}
+              onChange={(e) => setForm({ ...form, locked_variety: e.target.value })}
+            />
+          </Field>
+          <Field label="Locked Region">
+            <input
+              className="w-full px-3 py-2 border rounded-md"
+              value={form.locked_region ?? ""}
+              onChange={(e) => setForm({ ...form, locked_region: e.target.value })}
+            />
+          </Field>
+          <Field label="Locked Style/Level">
+            <input
+              className="w-full px-3 py-2 border rounded-md"
+              value={form.locked_style ?? ""}
+              onChange={(e) => setForm({ ...form, locked_style: e.target.value })}
+            />
+          </Field>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <Field label="Reveal: Region/Appellation"><input className="w-full px-3 py-2 border rounded-md" value={form.reveal_region ?? ""} onChange={(e)=>setForm({...form,reveal_region:e.target.value})}/></Field>
-          <Field label="Reveal: Image URL"><input className="w-full px-3 py-2 border rounded-md" value={form.reveal_image_url ?? ""} onChange={(e)=>setForm({...form,reveal_image_url:e.target.value})}/></Field>
+          <Field label="Reveal Video URL (YouTube/Vimeo/mp4)">
+            <input
+              className="w-full px-3 py-2 border rounded-md"
+              value={form.reveal_video_url ?? ""}
+              onChange={(e) => setForm({ ...form, reveal_video_url: e.target.value })}
+              placeholder="https://youtu.be/… or https://…/reveal.mp4"
+            />
+          </Field>
+          <Field label="Reveal Image URL (optional)">
+            <input
+              className="w-full px-3 py-2 border rounded-md"
+              value={form.reveal_image_url ?? ""}
+              onChange={(e) => setForm({ ...form, reveal_image_url: e.target.value })}
+              placeholder="https://…/reveal.jpg (used if no video)"
+            />
+          </Field>
         </div>
 
-        <Field label="Reveal: Notes">
-          <textarea
-            rows={3}
-            className="w-full px-3 py-2 border rounded-md"
-            value={form.reveal_notes ?? ""}
-            onChange={(e) => setForm({ ...form, reveal_notes: e.target.value })}
-            placeholder="High — classic Bordeaux structure…"
-          />
-        </Field>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <Field label="Reveal: Wine / Producer">
+            <input
+              className="w-full px-3 py-2 border rounded-md"
+              value={form.reveal_wine_name ?? ""}
+              onChange={(e) => setForm({ ...form, reveal_wine_name: e.target.value })}
+            />
+          </Field>
+          <Field label="Reveal: Variety/Blend">
+            <input
+              className="w-full px-3 py-2 border rounded-md"
+              value={form.reveal_variety ?? ""}
+              onChange={(e) => setForm({ ...form, reveal_variety: e.target.value })}
+            />
+          </Field>
+          <Field label="Reveal: Vintage">
+            <input
+              className="w-full px-3 py-2 border rounded-md"
+              value={form.reveal_vintage ?? ""}
+              onChange={(e) => setForm({ ...form, reveal_vintage: e.target.value })}
+            />
+          </Field>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <Field label="Reveal: Region/Appellation">
+            <input
+              className="w-full px-3 py-2 border rounded-md"
+              value={form.reveal_region ?? ""}
+              onChange={(e) => setForm({ ...form, reveal_region: e.target.value })}
+            />
+          </Field>
+          <Field label="Reveal: Notes">
+            <textarea
+              rows={3}
+              className="w-full px-3 py-2 border rounded-md"
+              value={form.reveal_notes ?? ""}
+              onChange={(e) => setForm({ ...form, reveal_notes: e.target.value })}
+              placeholder="High — classic Bordeaux structure…"
+            />
+          </Field>
+        </div>
 
         <div className="flex gap-3">
           <button
@@ -504,9 +630,7 @@ function RoundEditor({
         </div>
 
         {/* Questions for this round */}
-        {!creating && (
-          <RoundQuestions roundId={form.id} locale={form.locale || "en"} />
-        )}
+        {!creating && <RoundQuestions roundId={form.id} locale={form.locale || "en"} />}
       </form>
     </Modal>
   );
@@ -531,7 +655,11 @@ function RoundQuestions({ roundId, locale }: { roundId: string; locale: string }
   }, [roundId]);
 
   async function toggleActive(row: BankRow) {
-    await supabase.from("guess_what_bank").update({ active: !row.active }).eq("id", row.id);
+    const { error } = await supabase.from("guess_what_bank").update({ active: !row.active }).eq("id", row.id);
+    if (error) {
+      console.error(error);
+      return;
+    }
     setRows((prev) => prev!.map((r) => (r.id === row.id ? { ...r, active: !r.active } : r)));
   }
 
@@ -547,13 +675,19 @@ function RoundQuestions({ roundId, locale }: { roundId: string; locale: string }
       points_award: row.points_award,
       active: false,
     };
-    await supabase.from("guess_what_bank").insert([payload]);
+    const { error } = await supabase.from("guess_what_bank").insert([payload]);
+    if (error) {
+      console.error(error);
+    }
     await load();
   }
 
   async function removeRow(id: string) {
     if (!confirm("Delete this question?")) return;
-    await supabase.from("guess_what_bank").delete().eq("id", id);
+    const { error } = await supabase.from("guess_what_bank").delete().eq("id", id);
+    if (error) {
+      console.error(error);
+    }
     await load();
   }
 
@@ -574,7 +708,7 @@ function RoundQuestions({ roundId, locale }: { roundId: string; locale: string }
               slug: "",
               locale,
               prompt: "",
-              options: ["", "", "", ""],
+              options: ["", "", ""],
               correct_index: 0,
               image_url: "",
               points_award: 50,
@@ -614,11 +748,17 @@ function RoundQuestions({ roundId, locale }: { roundId: string; locale: string }
                       )
                     )}
                   </div>
-                  <div className="mt-1 text-xs text-amber-700">+{Number(r.points_award ?? 0)} pts</div>
+                  <div className="mt-1 text-xs text-amber-700">
+                    +{Number(r.points_award ?? 0)} pts
+                  </div>
                 </div>
                 <div className="flex items-center gap-2">
                   <IconBtn title={r.active ? "Hide" : "Publish"} onClick={() => toggleActive(r)}>
-                    {r.active ? <EyeOff className="w-4 h-4 text-amber-600" /> : <Eye className="w-4 h-4 text-green-600" />}
+                    {r.active ? (
+                      <EyeOff className="w-4 h-4 text-amber-600" />
+                    ) : (
+                      <Eye className="w-4 h-4 text-green-600" />
+                    )}
                   </IconBtn>
                   <IconBtn title="Duplicate" onClick={() => duplicate(r)}>
                     <DuplicateIcon className="w-4 h-4 text-purple-600" />
@@ -682,8 +822,17 @@ function QuestionForm({
     setForm((f) => ({ ...f, options: [...(f.options || []), ""] }));
   }
   function removeOption() {
-    setForm((f) => ({ ...f, options: (f.options || []).slice(0, Math.max(2, (f.options || []).length - 1)) }));
-    setForm((f) => ({ ...f, correct_index: Math.min(Number(f.correct_index ?? 0), Math.max(0, (f.options?.length || 1) - 2)) }));
+    setForm((f) => ({
+      ...f,
+      options: (f.options || []).slice(0, Math.max(2, (f.options || []).length - 1)),
+    }));
+    setForm((f) => ({
+      ...f,
+      correct_index: Math.min(
+        Number(f.correct_index ?? 0),
+        Math.max(0, (f.options?.length || 1) - 2)
+      ),
+    }));
   }
 
   async function save(e: React.FormEvent) {
@@ -692,12 +841,24 @@ function QuestionForm({
     setError("");
 
     try {
+      const cleanOptions = (form.options || []).map((o) => o.trim()).filter(Boolean);
+      if (cleanOptions.length < 2) {
+        throw new Error("Please provide at least two options.");
+      }
+      if (
+        typeof form.correct_index !== "number" ||
+        form.correct_index < 0 ||
+        form.correct_index >= cleanOptions.length
+      ) {
+        throw new Error("Please mark a valid correct option.");
+      }
+
       const payload = {
         round_id: form.round_id,
         slug: form.slug || `gw-${Date.now()}`,
         locale: form.locale,
         prompt: form.prompt,
-        options: (form.options || []).map((o) => o.trim()).filter(Boolean),
+        options: cleanOptions.slice(0, 6), // keep things tidy (2–6)
         correct_index: Number(form.correct_index ?? 0),
         image_url: form.image_url || null,
         points_award: Number(form.points_award ?? 0),
@@ -722,27 +883,56 @@ function QuestionForm({
   return (
     <Modal title={creating ? "Add Question" : "Edit Question"} onClose={onClose}>
       <form onSubmit={save} className="space-y-4">
-        {error && <div className="p-3 rounded bg-red-50 text-red-700 border border-red-200 text-sm">{error}</div>}
+        {error && (
+          <div className="p-3 rounded bg-red-50 text-red-700 border border-red-200 text-sm">
+            {error}
+          </div>
+        )}
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <Field label="Slug">
-            <input className="w-full px-3 py-2 border rounded-md" value={form.slug} onChange={(e)=>setForm({...form, slug: e.target.value})} placeholder="unique-slug" />
+            <input
+              className="w-full px-3 py-2 border rounded-md"
+              value={form.slug}
+              onChange={(e) => setForm({ ...form, slug: e.target.value })}
+              placeholder="unique-slug"
+            />
           </Field>
           <Field label="Points">
-            <input type="number" min={0} className="w-full px-3 py-2 border rounded-md" value={Number(form.points_award ?? 0)} onChange={(e)=>setForm({...form, points_award: Number(e.target.value || 0)})}/>
+            <input
+              type="number"
+              min={0}
+              className="w-full px-3 py-2 border rounded-md"
+              value={Number(form.points_award ?? 0)}
+              onChange={(e) => setForm({ ...form, points_award: Number(e.target.value || 0) })}
+            />
           </Field>
         </div>
 
         <Field label="Prompt">
-          <textarea className="w-full px-3 py-2 border rounded-md" rows={3} value={form.prompt} onChange={(e)=>setForm({...form, prompt: e.target.value})}/>
+          <textarea
+            className="w-full px-3 py-2 border rounded-md"
+            rows={3}
+            value={form.prompt}
+            onChange={(e) => setForm({ ...form, prompt: e.target.value })}
+          />
         </Field>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <Field label="Question Image (optional)">
-            <input className="w-full px-3 py-2 border rounded-md" value={form.image_url || ""} onChange={(e)=>setForm({...form, image_url: e.target.value})} placeholder="https://…"/>
+            <input
+              className="w-full px-3 py-2 border rounded-md"
+              value={form.image_url || ""}
+              onChange={(e) => setForm({ ...form, image_url: e.target.value })}
+              placeholder="https://…"
+            />
           </Field>
           <Field label="Visibility">
-            <select className="w-full px-3 py-2 border rounded-md" value={form.active ? "1":"0"} onChange={(e)=>setForm({...form, active: e.target.value==="1"})}>
+            <select
+              className="w-full px-3 py-2 border rounded-md"
+              value={form.active ? "1" : "0"}
+              onChange={(e) => setForm({ ...form, active: e.target.value === "1" })}
+            >
               <option value="1">Active (shown)</option>
               <option value="0">Hidden</option>
             </select>
@@ -752,17 +942,31 @@ function QuestionForm({
         <div className="flex items-center justify-between">
           <label className="text-sm font-medium">Options</label>
           <div className="flex items-center gap-2">
-            <button type="button" onClick={addOption} className="px-3 py-1 border rounded text-sm">+ Add</button>
-            <button type="button" onClick={removeOption} className="px-3 py-1 border rounded text-sm">− Remove</button>
+            <button type="button" onClick={addOption} className="px-3 py-1 border rounded text-sm">
+              + Add
+            </button>
+            <button type="button" onClick={removeOption} className="px-3 py-1 border rounded text-sm">
+              − Remove
+            </button>
           </div>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           {(form.options || []).map((opt, i) => (
             <div key={i} className="flex items-center gap-2">
-              <input className="flex-1 px-3 py-2 border rounded-md" placeholder={`Option ${i+1}`} value={opt} onChange={(e)=>updateOption(i, e.target.value)}/>
+              <input
+                className="flex-1 px-3 py-2 border rounded-md"
+                placeholder={`Option ${i + 1}`}
+                value={opt}
+                onChange={(e) => updateOption(i, e.target.value)}
+              />
               <label className="text-sm flex items-center gap-1">
-                <input type="radio" name="correct" checked={Number(form.correct_index ?? 0) === i} onChange={()=>setForm({...form, correct_index: i})}/>
+                <input
+                  type="radio"
+                  name="correct"
+                  checked={Number(form.correct_index ?? 0) === i}
+                  onChange={() => setForm({ ...form, correct_index: i })}
+                />
                 Correct
               </label>
             </div>
@@ -770,11 +974,17 @@ function QuestionForm({
         </div>
 
         <div className="flex gap-3">
-          <button type="submit" disabled={saving} className="flex-1 inline-flex items-center justify-center bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg font-medium disabled:opacity-60">
+          <button
+            type="submit"
+            disabled={saving}
+            className="flex-1 inline-flex items-center justify-center bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg font-medium disabled:opacity-60"
+          >
             <Save className="w-4 h-4 mr-2" />
             {saving ? "Saving…" : creating ? "Create Question" : "Save Question"}
           </button>
-          <button type="button" onClick={onClose} className="flex-1 border px-4 py-2 rounded-lg">Cancel</button>
+          <button type="button" onClick={onClose} className="flex-1 border px-4 py-2 rounded-lg">
+            Cancel
+          </button>
         </div>
       </form>
     </Modal>
@@ -804,7 +1014,17 @@ function IconBtn({ title, onClick, children }: React.PropsWithChildren<{ title: 
   );
 }
 
-function Modal({ title, children, onClose, wide }: { title: string; children: React.ReactNode; onClose(): void; wide?: boolean }) {
+function Modal({
+  title,
+  children,
+  onClose,
+  wide,
+}: {
+  title: string;
+  children: React.ReactNode;
+  onClose(): void;
+  wide?: boolean;
+}) {
   return (
     <div className="fixed inset-0 z-50">
       <div className="absolute inset-0 bg-black/40" onClick={onClose} />
