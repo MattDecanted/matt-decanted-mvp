@@ -105,16 +105,6 @@ export default function AdminGuessWhat() {
     filterLocale === "all" ? rows : rows.filter((r) => r.locale === filterLocale);
 
   // Restrict to admins
-  //if (profile?.role !== "admin") {
-    //return (
-      //<div className="min-h-screen flex items-center justify-center bg-gray-50">
-        //<div className="text-center">
-          //<AlertCircle className="w-16 h-16 text-red-500 mx-auto mb-4" />
-          //<h1 className="text-2xl font-bold text-gray-900 mb-4">Access Denied</h1>
-          //<p className="text-gray-600">This page is restricted to administrators only.</p>
-        //</div>
-      //</div>
-    );
   }
 
   return (
