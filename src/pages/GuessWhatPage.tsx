@@ -25,7 +25,8 @@ import ChoiceButton from "@/components/ui/ChoiceButton";
 import BrandButton from "@/components/ui/BrandButton";
 import PointsGainBubble from "@/components/PointsGainBubble";
 import LevelUpBanner from "@/components/LevelUpBanner";
-import VideoPlayer from "@/components/VideoPlayer"; // ← reveal video uses this
+import VideoPlayer from "@/components/VideoPlayer";
+import HowItWorks from "@/components/HowItWorks"; // ← 4-box explainer
 import { toast } from "sonner";
 
 import { supabase } from "@/lib/supabase";
@@ -45,7 +46,7 @@ type BankRow = {
   active: boolean;
   created_at: string;
   updated_at: string;
-  reveal_video_url: string | null; // ← NEW: optional reveal video per question
+  reveal_video_url: string | null;
 };
 
 type AttemptInsert = {
@@ -57,8 +58,7 @@ type AttemptInsert = {
 
 /** ---------- Helpers ---------- */
 function bottlePlaceholder() {
-  const w = 1200,
-    h = 675;
+  const w = 1200, h = 675;
   const svg = `
   <svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">
     <defs>
@@ -188,7 +188,7 @@ export default function GuessWhatPage() {
     [rows, answers]
   );
 
-  // Pick the first available reveal video in this round (optional)
+  // First available reveal video in this round (optional)
   const revealUrl = useMemo(
     () => rows.find((r) => r.reveal_video_url)?.reveal_video_url || null,
     [rows]
@@ -206,11 +206,10 @@ export default function GuessWhatPage() {
     if (!user) return;
 
     try {
-      // Save attempts
       const attempts: AttemptInsert[] = rows.map((r, i) => ({
         user_id: user.id,
         bank_id: r.id,
-        selected_index: answers[i] as number, // all answered on finish
+        selected_index: answers[i] as number,
         is_correct: (answers[i] as number) === (r.correct_index ?? -1),
       }));
 
@@ -219,7 +218,6 @@ export default function GuessWhatPage() {
         if (aErr) throw aErr;
       }
 
-      // Award points via your RPC (best-effort, deduped server-side)
       if (pointsEarned > 0) {
         const roundRef = `${Date.now()}::${rows.map((r) => r.id).join(",")}`;
         await awardPoints("guess_what", roundRef, {
@@ -277,11 +275,7 @@ export default function GuessWhatPage() {
     return (
       <div className="max-w-3xl mx-auto space-y-6">
         <div className="flex items-center justify-between">
-          <Button
-            variant="ghost"
-            onClick={() => navigate("/play")}
-            className="flex items-center space-x-2"
-          >
+          <Button variant="ghost" onClick={() => navigate("/play")} className="flex items-center space-x-2">
             <ArrowLeft className="h-4 w-4" />
             <span>Back to Challenges</span>
           </Button>
@@ -298,8 +292,7 @@ export default function GuessWhatPage() {
           <CardContent className="p-8 text-center">
             <HelpCircle className="w-12 h-12 text-muted-foreground mx-auto mb-3" />
             <p className="text-muted-foreground">
-              No questions found for your language yet. Try switching languages or check back
-              soon.
+              No questions found for your language yet. Try switching languages or check back soon.
             </p>
           </CardContent>
         </Card>
@@ -311,11 +304,7 @@ export default function GuessWhatPage() {
     <div className="max-w-3xl mx-auto space-y-6">
       {/* Header */}
       <div className="flex items-center justify-between">
-        <Button
-          variant="ghost"
-          onClick={() => navigate("/play")}
-          className="flex items-center space-x-2"
-        >
+        <Button variant="ghost" onClick={() => navigate("/play")} className="flex items-center space-x-2">
           <ArrowLeft className="h-4 w-4" />
           <span>Back to Challenges</span>
         </Button>
@@ -336,7 +325,7 @@ export default function GuessWhatPage() {
         <div className="bg-gradient-to-br from-brand-300 to-brand-100 p-6 md:p-8">
           <h1 className="text-2xl md:text-3xl font-bold text-brand-900">Guess What</h1>
           <p className="mt-2 text-brand-900/80">
-            Quick-fire blind tasting questions. Pick the most likely answer and rack up points.
+            Weekly blind tasting challenges where you guess alongside Matt. Make your picks and rack up points.
           </p>
           <div className="mt-3 text-xs text-brand-900/70">
             {rows.length} questions • {totalPotentialPoints} total points
@@ -344,13 +333,14 @@ export default function GuessWhatPage() {
         </div>
       </div>
 
+      {/* 4-box explainer (kept visible above the game) */}
+      <HowItWorks className="mt-2" />
+
       {/* Game */}
       {!finished ? (
         <Card>
           <CardHeader>
-            <CardTitle className="text-lg">
-              Question {current + 1} of {rows.length}
-            </CardTitle>
+            <CardTitle className="text-lg">Question {current + 1} of {rows.length}</CardTitle>
           </CardHeader>
           <CardContent className="space-y-5">
             {/* Progress */}
@@ -364,19 +354,9 @@ export default function GuessWhatPage() {
             {/* Image */}
             <div className="rounded-lg overflow-hidden bg-muted/40 border">
               {currentRow?.image_url ? (
-                <img
-                  src={currentRow.image_url}
-                  alt="Question illustration"
-                  className="w-full h-48 object-cover"
-                  loading="lazy"
-                />
+                <img src={currentRow.image_url} alt="Question illustration" className="w-full h-48 object-cover" loading="lazy" />
               ) : (
-                <img
-                  src={bottlePlaceholder()}
-                  alt="Placeholder"
-                  className="w-full h-48 object-cover"
-                  loading="lazy"
-                />
+                <img src={bottlePlaceholder()} alt="Placeholder" className="w-full h-48 object-cover" loading="lazy" />
               )}
             </div>
 
@@ -443,18 +423,14 @@ export default function GuessWhatPage() {
               <CardTitle className="flex items-center gap-2">
                 <Trophy className="h-6 w-6 text-primary" />
                 Results
-                <Badge variant="secondary" className="ml-1">
-                  {pointsEarned} pts
-                </Badge>
+                <Badge variant="secondary" className="ml-1">{pointsEarned} pts</Badge>
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-6">
               {/* Summary */}
               <div className="grid grid-cols-2 gap-4">
                 <div className="text-center p-4 bg-green-50 border border-green-200 rounded-lg">
-                  <div className="text-2xl font-bold text-green-700">
-                    {correctCount}/{rows.length}
-                  </div>
+                  <div className="text-2xl font-bold text-green-700">{correctCount}/{rows.length}</div>
                   <div className="text-green-800 font-medium">Correct</div>
                 </div>
                 <div className="text-center p-4 bg-amber-50 border border-amber-200 rounded-lg">
@@ -473,13 +449,7 @@ export default function GuessWhatPage() {
                     <div key={r.id} className="border border-gray-200 rounded-lg p-4">
                       <div className="font-medium text-gray-900 mb-3">{r.prompt}</div>
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                        <div
-                          className={`p-3 rounded-lg ${
-                            ok
-                              ? "bg-green-50 border border-green-200"
-                              : "bg-red-50 border border-red-200"
-                          }`}
-                        >
+                        <div className={`p-3 rounded-lg ${ok ? "bg-green-50 border border-green-200" : "bg-red-50 border border-red-200"}`}>
                           <div className="flex items-center mb-1">
                             {ok ? (
                               <CheckCircle className="w-4 h-4 text-green-600 mr-2" />
@@ -508,10 +478,7 @@ export default function GuessWhatPage() {
 
               {/* Actions */}
               <div className="flex flex-col sm:flex-row gap-3 justify-center">
-                <BrandButton
-                  onClick={() => navigate("/play")}
-                  className="inline-flex items-center justify-center"
-                >
+                <BrandButton onClick={() => navigate("/play")} className="inline-flex items-center justify-center">
                   <ArrowLeft className="w-4 h-4 mr-2" />
                   Back to Challenges
                 </BrandButton>
@@ -537,9 +504,7 @@ export default function GuessWhatPage() {
       )}
 
       {/* Floating +points chip */}
-      {justGained > 0 && (
-        <PointsGainBubble amount={justGained} onDone={() => setJustGained(0)} />
-      )}
+      {justGained > 0 && <PointsGainBubble amount={justGained} onDone={() => setJustGained(0)} />}
 
       {/* Optional level-up banner */}
       <LevelUpBanner
