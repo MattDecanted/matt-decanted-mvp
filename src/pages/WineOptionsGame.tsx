@@ -99,7 +99,6 @@ const RED_POOL = [
   "Carménère","Pinotage","Saperavi","Kadarka","Plavac Mali","Xinomavro","Agiorgitiko","Negroamaro","Lambrusco","Schiava"
 ];
 const GRAPE_SYNONYMS: Record<string, string[]> = {
-  // (… keep the same synonyms as your current file …)
   "Chardonnay": ["blanc de bourgogne","chablis"],
   "Sauvignon Blanc": ["fumé blanc","blanc fumé","sauv blanc"],
   "Riesling": ["johannisberg riesling","weisser riesling","weißer riesling","white riesling"],
@@ -257,7 +256,7 @@ async function fetchGeoFromWineReference(ocrText: string): Promise<GeoPick | nul
                    .sort((a,b)=>b.s-a.s)[0].r;
 
   const countryCorrect = best.country || undefined;
-  const regionCorrect  = best.region || undefined;
+  const regionCorrect  = best.region  || undefined;
 
   const countries = unique(rows.map(r => r.country || "").filter(Boolean));
   const regions   = unique(rows.filter(r => r.country === countryCorrect).map(r => r.region || "").filter(Boolean));
@@ -457,10 +456,6 @@ async function buildRoundPayloadFromOCR(file: File): Promise<{ questions: StepQu
 }
 
 /* ---------- UI bits ---------- */
-function SectionTitle({ title }: { title: string }) {
-  return <div className="text-lg font-semibold text-gray-900">{title}</div>;
-}
-
 function InviteBar({ inviteCode }: { inviteCode: string }) {
   const [copied, setCopied] = useState(false);
   const base = typeof window !== "undefined" ? window.location.origin : "";
@@ -494,10 +489,10 @@ function ProcessingCard() {
   );
 }
 
-/** Top intro + tagline + Len Evans text */
-function GameIntro() {
+/** Heading + tagline + Len Evans intro (OUTSIDE any card) */
+function PageHeader() {
   return (
-    <div className="rounded-2xl border bg-white shadow-sm p-6 sm:p-8">
+    <div className="not-prose">
       <div className="flex items-center gap-2 text-3xl sm:text-4xl font-bold text-gray-900">
         <span role="img" aria-label="wine">🍷</span>
         <h1>Wine Options Game</h1>
@@ -512,32 +507,37 @@ function GameIntro() {
         is how it strips things back to simple choices, letting you build confidence step by step,
         and reminding us all that wine is meant to be enjoyed together.
       </p>
+    </div>
+  );
+}
 
-      <div className="mt-6 grid sm:grid-cols-2 gap-4">
-        <div className="rounded-2xl bg-white border p-4">
-          <div className="font-semibold mb-2">How to play</div>
-          <ol className="list-decimal pl-5 space-y-2 text-sm text-gray-700">
-            <li className="flex items-center gap-2"><Users className="h-4 w-4 text-gray-500" /> Choose a display name and <strong>host</strong> a game or <strong>join</strong> with a friend’s code.</li>
-            <li className="flex items-center gap-2"><Camera className="h-4 w-4 text-gray-500" /> The host <strong>uploads/snaps a wine label</strong> (or covers it for true blind).</li>
-            <li className="flex items-center gap-2"><ChevronRight className="h-4 w-4 text-gray-500" /> Everyone answers step-by-step: Old/New World, vintage, variety, country, region, subregion.</li>
-            <li className="flex items-center gap-2"><Trophy className="h-4 w-4 text-gray-500" /> Earn <strong>10 points per correct</strong>. Scores update on the results board.</li>
-          </ol>
-        </div>
+/** Two cards: How to play + Tips (clean bullets, left-aligned text) */
+function HowAndTips() {
+  return (
+    <div className="mt-6 grid sm:grid-cols-2 gap-4">
+      <div className="rounded-2xl bg-white border p-4">
+        <div className="font-semibold mb-2">How to play</div>
+        <ul className="list-disc pl-5 space-y-2 text-sm text-gray-700 text-left leading-relaxed">
+          <li>Choose a display name and <strong>host</strong> a game or <strong>join</strong> with a friend’s code.</li>
+          <li>The host <strong>uploads/snaps a wine label</strong> (or covers it for true blind).</li>
+          <li>Everyone answers step-by-step: Old/New World, vintage, variety, country, region, subregion.</li>
+          <li>Earn <strong>10 points</strong> per correct. Scores update on the results board.</li>
+        </ul>
+      </div>
 
-        <div className="rounded-2xl bg-white border p-4">
-          <div className="font-semibold mb-2">Tips</div>
-          <ul className="space-y-2 text-sm text-gray-700">
-            <li>Ask a friend who isn’t playing to take or upload the label for you (or cover the label).</li>
-            <li>Debate with friends before locking in answers — it’s half the fun.</li>
-            <li>Clear, well-lit label photos give the best results.</li>
-          </ul>
-        </div>
+      <div className="rounded-2xl bg-white border p-4">
+        <div className="font-semibold mb-2">Tips</div>
+        <ul className="list-disc pl-5 space-y-2 text-sm text-gray-700 text-left leading-relaxed">
+          <li>Ask a friend who isn’t playing to take or upload the label for you (or cover the label).</li>
+          <li>Debate with friends before locking in answers — it’s half the fun.</li>
+          <li>Clear, well-lit label photos give the best results.</li>
+        </ul>
       </div>
     </div>
   );
 }
 
-/** Blue “Play with friends” information strip (visible before a session exists) */
+/** Blue strip */
 function PlayWithFriendsStrip() {
   return (
     <div className="rounded-2xl border border-blue-200 bg-blue-50 p-4 flex items-start gap-3">
@@ -553,7 +553,7 @@ function PlayWithFriendsStrip() {
   );
 }
 
-/** Yellow “How to play it truly blind” callout */
+/** Yellow callout */
 function BlindTips() {
   return (
     <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4">
@@ -567,7 +567,11 @@ function BlindTips() {
   );
 }
 
-function QuestionStepper({ round, me, onFinished }: { round: GameRound; me: Participant; onFinished: () => void; }) {
+function QuestionStepper({
+  round, me, onFinished, bumpMyScore,
+}: {
+  round: GameRound; me: Participant; onFinished: () => void; bumpMyScore: (delta: number) => void;
+}) {
   const questions: StepQuestion[] = round.payload?.questions ?? [];
   const [index, setIndex] = useState(0);
   const [selected, setSelected] = useState<number | null>(null);
@@ -582,7 +586,10 @@ function QuestionStepper({ round, me, onFinished }: { round: GameRound; me: Part
     const isCorrect = selected === q.correctIndex;
     try {
       await submitAnswer(round.id, me.id, selected, isCorrect).catch(() => {});
-      if (isCorrect) await awardPoints(me.id, 10).catch(() => {});
+      if (isCorrect) {
+        bumpMyScore(10);                 // local instant feedback
+        await awardPoints(me.id, 10).catch(() => {});
+      }
     } finally {
       if (index < questions.length - 1) { setIndex(i => i + 1); setSelected(null); }
       else { onFinished(); }
@@ -637,6 +644,7 @@ export default function WineOptionsGame({ initialCode = "" }: { initialCode?: st
   const [me, setMe] = useState<Participant | null>(null);
   const [participants, setParticipants] = useState<Participant[]>([]);
   const [round, setRound] = useState<GameRound | null>(null);
+  const [lastRound, setLastRound] = useState<GameRound | null>(null); // keep for reveal
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [uploadBusy, setUploadBusy] = useState(false);
@@ -803,6 +811,7 @@ export default function WineOptionsGame({ initialCode = "" }: { initialCode?: st
       const { round: r } = await res.json();
 
       setRound(r);
+      setLastRound(r); // prime reveal
     } catch (er: any) {
       setUploadErr(er?.message || "OCR/Start round failed");
     } finally {
@@ -812,17 +821,20 @@ export default function WineOptionsGame({ initialCode = "" }: { initialCode?: st
 
   async function finishGame() {
     if (!session || !round) return;
-    await endRound(round.id);
-    await setSessionStatus(session.id, WRITE_STATUS["finished"]);
+    setLastRound(round); // keep for reveal
+    await endRound(round.id).catch(() => {});
+    await setSessionStatus(session.id, WRITE_STATUS["finished"]).catch(() => {});
+    await refetchParticipants(session.id).catch(() => {});
     setRound(null);
     setSession(s => (s ? { ...s, status: "finished" } as GameSession : s));
   }
 
   async function playAgain() {
     if (!session) return;
-    await setSessionStatus(session.id, WRITE_STATUS["waiting"]);
+    await setSessionStatus(session.id, WRITE_STATUS["waiting"]).catch(() => {});
     setSession((s) => (s ? ({ ...s, status: "open" } as GameSession) : s));
     setRound(null);
+    setLastRound(null);
   }
 
   const uiStatus = round ? "in_progress" : (session ? READ_STATUS[session.status] : "waiting");
@@ -831,11 +843,19 @@ export default function WineOptionsGame({ initialCode = "" }: { initialCode?: st
   const isParticipantHost = (p: Participant, s: GameSession) =>
     (!!s.host_user_id && !!p.user_id && p.user_id === s.host_user_id) || !!p.is_host;
 
+  const bumpMyScore = (delta: number) => {
+    if (!me) return;
+    setParticipants((prev) =>
+      prev.map((p) => (p.id === me.id ? { ...p, score: (p.score || 0) + delta } : p))
+    );
+  };
+
   /* ----------- PAGE LAYOUT ----------- */
 
   return (
     <div className="max-w-3xl mx-auto p-6 space-y-6">
-      <GameIntro />
+      <PageHeader />
+      <HowAndTips />
 
       {!session && <PlayWithFriendsStrip />}
 
@@ -850,7 +870,12 @@ export default function WineOptionsGame({ initialCode = "" }: { initialCode?: st
           </div>
 
           <div className="space-y-2">
-            <label className="block text-sm font-medium">Display name</label>
+            <label className="block text-sm font-medium">
+              Display name{" "}
+              <span className="text-gray-500">
+                (put your name/alias — points scored will save in your account)
+              </span>
+            </label>
             <input
               className="w-full border rounded-2xl p-2"
               value={displayName}
@@ -886,9 +911,8 @@ export default function WineOptionsGame({ initialCode = "" }: { initialCode?: st
         </div>
       )}
 
-      {/* Upload section header */}
-      <SectionTitle title="Upload Wine Label Photo" />
-
+      {/* Upload section header + callout */}
+      <div className="text-lg font-semibold text-gray-900">Upload Wine Label Photo</div>
       <BlindTips />
 
       {/* Upload zone (enabled only for host+waiting) */}
@@ -978,13 +1002,13 @@ export default function WineOptionsGame({ initialCode = "" }: { initialCode?: st
 
       {round && uiStatus !== "finished" && (
         <div className="p-4 rounded-2xl border bg-white shadow-sm">
-          {me && <QuestionStepper round={round} me={me} onFinished={finishGame} />}
+          {me && <QuestionStepper round={round} me={me} onFinished={finishGame} bumpMyScore={bumpMyScore} />}
         </div>
       )}
 
-      {/* Results */}
+      {/* Results + Reveal */}
       {uiStatus === "finished" && (
-        <div className="p-4 rounded-2xl border bg-white shadow-sm space-y-3">
+        <div className="p-4 rounded-2xl border bg-white shadow-sm space-y-4">
           <div className="text-xl font-semibold flex items-center gap-2">
             <Trophy className="h-5 w-5" /> Results
           </div>
@@ -997,6 +1021,22 @@ export default function WineOptionsGame({ initialCode = "" }: { initialCode?: st
               </li>
             ))}
           </ul>
+
+          {lastRound?.payload?.questions?.length ? (
+            <div className="mt-2">
+              <div className="font-medium mb-2">Reveal: correct answers</div>
+              <ul className="space-y-2 text-sm">
+                {lastRound.payload.questions.map((q, idx) => (
+                  <li key={idx} className="rounded-lg border p-2">
+                    <div className="text-gray-700">{q.prompt}</div>
+                    <div className="font-semibold">
+                      {q.options[q.correctIndex]}
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
 
           <div className="flex items-center justify-between">
             {!isHost ? (
