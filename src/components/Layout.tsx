@@ -209,12 +209,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
 
               {/* 🔒 Admin tab (only visible to admins) */}
               {isAdmin && (
-                <NavLink
-                  to="/admin/guess-what"
-                  className={linkClass}
-                  // helps SEO even further
-                  rel="nofollow"
-                >
+                <NavLink to="/admin" className={linkClass} rel="nofollow">
                   Admin
                 </NavLink>
               )}
@@ -329,7 +324,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
               {/* 🔒 Admin (mobile) */}
               {isAdmin && (
                 <NavLink
-                  to="/admin/guess-what"
+                  to="/admin"
                   className={linkClass}
                   rel="nofollow"
                   onClick={() => setOpen(false)}
