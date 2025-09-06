@@ -1,8 +1,6 @@
-//src/pages/admin/AdminGuessWhat.tsx
-
+// src/pages/admin/AdminGuessWhat.tsx
 import React, { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabase";
-import { useAuth } from "@/context/AuthContext";
 import {
   Plus,
   Edit,
@@ -16,7 +14,6 @@ import {
   Image as ImageIcon,
   Star,
   CheckCircle,
-  AlertCircle,
 } from "lucide-react";
 
 /* ========= Types aligned to your DB ========= */
@@ -54,11 +51,8 @@ function slugify(s: string) {
 
 /* =======================================================================================
    ADMIN: Guess What (manages guess_what_bank)
-   - List all questions
-   - Create/edit rows with locale, prompt, options[], correct_index, points, image_url, active
 ======================================================================================= */
 export default function AdminGuessWhat() {
-  const { profile } = useAuth() as any;
   const [loading, setLoading] = useState(true);
   const [rows, setRows] = useState<BankRow[]>([]);
   const [filterLocale, setFilterLocale] = useState<string>("all");
@@ -81,8 +75,10 @@ export default function AdminGuessWhat() {
   async function loadAll() {
     setLoading(true);
     try {
-      const q = supabase.from("guess_what_bank").select("*").order("created_at", { ascending: false });
-      const { data, error } = await q;
+      const { data, error } = await supabase
+        .from("guess_what_bank")
+        .select("*")
+        .order("created_at", { ascending: false });
       if (error) throw error;
       setRows((data || []) as BankRow[]);
     } finally {
@@ -101,11 +97,7 @@ export default function AdminGuessWhat() {
     setRows((prev) => prev.map((r) => (r.id === row.id ? { ...r, active: !r.active } : r)));
   }
 
-  const filteredRows =
-    filterLocale === "all" ? rows : rows.filter((r) => r.locale === filterLocale);
-
-  // Restrict to admins
-  }
+  const filteredRows = filterLocale === "all" ? rows : rows.filter((r) => r.locale === filterLocale);
 
   return (
     <div className="min-h-screen py-12 bg-gray-50">
@@ -114,9 +106,7 @@ export default function AdminGuessWhat() {
         <div className="flex flex-wrap items-center justify-between gap-3 mb-8">
           <div>
             <h1 className="text-3xl font-bold text-gray-900 mb-1">Guess What — Question Bank</h1>
-            <p className="text-gray-600">
-              Create and manage blind-tasting questions used by the Guess What game.
-            </p>
+            <p className="text-gray-600">Create and manage blind-tasting questions for the game.</p>
           </div>
           <div className="flex items-center gap-2">
             <select
@@ -148,26 +138,10 @@ export default function AdminGuessWhat() {
 
         {/* KPIs */}
         <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
-          <KpiCard
-            icon={<HelpCircle className="w-8 h-8 text-blue-600 mr-3" />}
-            label="Total Questions"
-            value={kpi.total}
-          />
-          <KpiCard
-            icon={<CheckCircle className="w-8 h-8 text-green-600 mr-3" />}
-            label="Active"
-            value={kpi.active}
-          />
-          <KpiCard
-            icon={<Globe className="w-8 h-8 text-teal-600 mr-3" />}
-            label="Languages"
-            value={kpi.locales}
-          />
-          <KpiCard
-            icon={<Star className="w-8 h-8 text-amber-600 mr-3" />}
-            label="Total Points"
-            value={kpi.totalPts}
-          />
+          <KpiCard icon={<HelpCircle className="w-8 h-8 text-blue-600 mr-3" />} label="Total Questions" value={kpi.total} />
+          <KpiCard icon={<CheckCircle className="w-8 h-8 text-green-600 mr-3" />} label="Active" value={kpi.active} />
+          <KpiCard icon={<Globe className="w-8 h-8 text-teal-600 mr-3" />} label="Languages" value={kpi.locales} />
+          <KpiCard icon={<Star className="w-8 h-8 text-amber-600 mr-3" />} label="Total Points" value={kpi.totalPts} />
         </div>
 
         {/* List */}
@@ -186,9 +160,7 @@ export default function AdminGuessWhat() {
                       {/* Left */}
                       <div className="flex-1 pr-4">
                         <div className="flex items-center gap-2 mb-1">
-                          <span className="text-sm px-2 py-0.5 rounded-full bg-gray-100 text-gray-700">
-                            {r.slug}
-                          </span>
+                          <span className="text-sm px-2 py-0.5 rounded-full bg-gray-100 text-gray-700">{r.slug}</span>
                           <span className="text-xs px-2 py-0.5 rounded-full bg-teal-50 text-teal-700 flex items-center">
                             <span className="mr-1">{lang?.flag || "🏳️"}</span>
                             {r.locale}
@@ -235,15 +207,8 @@ export default function AdminGuessWhat() {
 
                       {/* Right actions */}
                       <div className="flex items-center gap-2">
-                        <IconBtn
-                          title={r.active ? "Hide" : "Publish"}
-                          onClick={() => toggleActive(r)}
-                        >
-                          {r.active ? (
-                            <EyeOff className="w-4 h-4 text-amber-600" />
-                          ) : (
-                            <Eye className="w-4 h-4 text-green-600" />
-                          )}
+                        <IconBtn title={r.active ? "Hide" : "Publish"} onClick={() => toggleActive(r)}>
+                          {r.active ? <EyeOff className="w-4 h-4 text-amber-600" /> : <Eye className="w-4 h-4 text-green-600" />}
                         </IconBtn>
                         <IconBtn
                           title="Edit"
@@ -426,9 +391,7 @@ function QuestionForm({
               min={0}
               className="w-full px-3 py-2 border rounded-md"
               value={form.points_award}
-              onChange={(e) =>
-                setForm({ ...form, points_award: Number(e.target.value || 0) })
-              }
+              onChange={(e) => setForm({ ...form, points_award: Number(e.target.value || 0) })}
             />
           </Field>
         </div>
@@ -455,9 +418,7 @@ function QuestionForm({
               />
               <ImageIcon className="w-5 h-5 text-gray-400" />
             </div>
-            <p className="mt-1 text-xs text-gray-500">
-              Recommended: 1200×675 (or 600×338) JPG/PNG for consistent layout.
-            </p>
+            <p className="mt-1 text-xs text-gray-500">Recommended: 1200×675 (or 600×338) JPG/PNG.</p>
           </Field>
 
           <Field label="Visibility">
@@ -477,18 +438,10 @@ function QuestionForm({
           <div className="flex items-center justify-between">
             <label className="block text-sm font-medium text-gray-700">Options</label>
             <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={addOption}
-                className="px-3 py-1 border rounded text-sm"
-              >
+              <button type="button" onClick={addOption} className="px-3 py-1 border rounded text-sm">
                 + Add option
               </button>
-              <button
-                type="button"
-                onClick={removeOption}
-                className="px-3 py-1 border rounded text-sm"
-              >
+              <button type="button" onClick={removeOption} className="px-3 py-1 border rounded text-sm">
                 − Remove last
               </button>
             </div>
@@ -504,12 +457,7 @@ function QuestionForm({
                   onChange={(e) => updateOption(i, e.target.value)}
                 />
                 <label className="flex items-center gap-1 text-sm">
-                  <input
-                    type="radio"
-                    name="correct"
-                    checked={correctIdx === i}
-                    onChange={() => setCorrectIdx(i)}
-                  />
+                  <input type="radio" name="correct" checked={correctIdx === i} onChange={() => setCorrectIdx(i)} />
                   Correct
                 </label>
               </div>
@@ -540,15 +488,7 @@ function QuestionForm({
 }
 
 /* ======= UI bits ======= */
-function KpiCard({
-  icon,
-  label,
-  value,
-}: {
-  icon: React.ReactNode;
-  label: string;
-  value: number | string;
-}) {
+function KpiCard({ icon, label, value }: { icon: React.ReactNode; label: string; value: number | string }) {
   return (
     <div className="bg-white rounded-lg shadow-lg p-6">
       <div className="flex items-center">
@@ -568,12 +508,7 @@ function IconBtn({
   onClick,
 }: React.PropsWithChildren<{ title: string; onClick(): void }>) {
   return (
-    <button
-      className="p-2 hover:bg-gray-50 rounded-lg transition-colors"
-      title={title}
-      onClick={onClick}
-      type="button"
-    >
+    <button className="p-2 hover:bg-gray-50 rounded-lg transition-colors" title={title} onClick={onClick} type="button">
       {children}
     </button>
   );
@@ -593,19 +528,10 @@ function Modal({
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center">
       <div className="absolute inset-0 bg-black/40" onClick={onClose} />
-      <div
-        className={`relative bg-white rounded-xl shadow-xl p-6 mx-4 w-full ${
-          wide ? "max-w-3xl" : "max-w-xl"
-        }`}
-      >
+      <div className={`relative bg-white rounded-xl shadow-xl p-6 mx-4 w-full ${wide ? "max-w-3xl" : "max-w-xl"}`}>
         <div className="flex items-start justify-between mb-4">
           <h3 className="text-lg font-semibold">{title}</h3>
-          <button
-            onClick={onClose}
-            className="p-1 rounded hover:bg-gray-100"
-            type="button"
-            aria-label="Close"
-          >
+          <button onClick={onClose} className="p-1 rounded hover:bg-gray-100" type="button" aria-label="Close">
             <X className="w-5 h-5" />
           </button>
         </div>
