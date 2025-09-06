@@ -1,6 +1,13 @@
 // src/App.tsx
 import React, { Suspense, lazy, useEffect, useState } from "react";
-import { BrowserRouter as Router, Routes, Route, Navigate, useLocation } from "react-router-dom";
+import {
+  BrowserRouter as Router,
+  Routes,
+  Route,
+  Navigate,
+  useLocation,
+  useParams,
+} from "react-router-dom";
 
 // ✅ Lazy where useful
 const SwirdleLeaderboardPage = lazy(() => import("@/pages/SwirdleLeaderboardPage"));
@@ -283,6 +290,12 @@ class AppErrorBoundary extends React.Component<
   }
 }
 
+/* ---------- Wrapper to support /join/:code deep link ---------- */
+function WineOptionsJoinRoute() {
+  const { code } = useParams();
+  return <WineOptionsGame initialCode={(code || "").toUpperCase()} />;
+}
+
 function App() {
   useEffect(() => {
     // Helpful diagnostics in production
@@ -524,6 +537,9 @@ function App() {
                       />
 
                       {/* Wine Options (gated) */}
+                      {/* Redirect /wine-options -> multiplayer */}
+                      <Route path="/wine-options" element={<Navigate to="/wine-options/multiplayer" replace />} />
+
                       <Route
                         path="/wine-options/solo"
                         element={
@@ -540,6 +556,17 @@ function App() {
                           <RequireAuth>
                             <RequireOnboarded>
                               <WineOptionsGame />
+                            </RequireOnboarded>
+                          </RequireAuth>
+                        }
+                      />
+                      {/* Deep link: /join/ABCD autofills invite code */}
+                      <Route
+                        path="/join/:code"
+                        element={
+                          <RequireAuth>
+                            <RequireOnboarded>
+                              <WineOptionsJoinRoute />
                             </RequireOnboarded>
                           </RequireAuth>
                         }
