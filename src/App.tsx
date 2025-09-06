@@ -2,7 +2,7 @@
 import React, { Suspense, lazy, useEffect, useState } from "react";
 import { BrowserRouter as Router, Routes, Route, Navigate, useLocation } from "react-router-dom";
 
-// ✅ Lazy where useful (keeps initial bundle small)
+// ✅ Lazy where useful
 const SwirdleLeaderboardPage = lazy(() => import("@/pages/SwirdleLeaderboardPage"));
 
 // UI / Providers
@@ -70,7 +70,7 @@ import ShortsManager from "@/pages/admin/ShortsManager";
 const FN_SUBMIT = "/.netlify/functions/trial-quiz-attempt";
 const PENDING_KEY = "md_trial_pending";
 
-/* ---------- Small page wrapper (no-op, keeps your earlier JSX intact) ---------- */
+/* ---------- Small page wrapper ---------- */
 function PageBoundary({ children }: { children: React.ReactNode }) {
   return <>{children}</>;
 }
@@ -110,6 +110,15 @@ function AutoResumeOnAccount() {
 }
 
 /* ---------- Route guards ---------- */
+
+/** Basic auth guard */
+function RequireAuth({ children }: { children: React.ReactNode }) {
+  const { user, loading } = useAuth();
+  const location = useLocation();
+  if (loading) return <div className="p-8">Loading...</div>;
+  if (!user) return <Navigate to="/signin" replace state={{ from: location }} />;
+  return <>{children}</>;
+}
 
 /** Onboarding guard: needs alias + terms_accepted_at (profiles.user_id) */
 function RequireOnboarded({ children }: { children: React.ReactNode }) {
@@ -167,7 +176,7 @@ function RequireOnboarded({ children }: { children: React.ReactNode }) {
   return <>{ok ? children : null}</>;
 }
 
-/** Admin guard — robust: checks context, user metadata, then DB (id OR user_id) */
+/** Admin guard — checks context → auth metadata → DB (id OR user_id) */
 function RequireAdmin({ children }: { children: React.ReactNode }) {
   const { user, profile, loading } = useAuth();
   const location = useLocation();
@@ -179,7 +188,7 @@ function RequireAdmin({ children }: { children: React.ReactNode }) {
       if (loading) return setAllowed(null);
       if (!user) return setAllowed(false);
 
-      // 1) From context or auth metadata
+      // 1) Fast paths
       const roleFromCtx = (profile as any)?.role;
       const roleFromAuth = (user as any)?.user_metadata?.role;
       const quick =
@@ -192,7 +201,7 @@ function RequireAdmin({ children }: { children: React.ReactNode }) {
         return;
       }
 
-      // 2) Fallback: DB check by id OR user_id
+      // 2) DB fallback by id OR user_id
       const uid = user.id;
       const { data, error } = await supabase
         .from("profiles")
@@ -221,6 +230,54 @@ function RequireAdmin({ children }: { children: React.ReactNode }) {
   if (!user) return <Navigate to="/signin" replace state={{ from: location }} />;
   if (!allowed) return <div className="p-6 text-sm text-red-600">Admins only.</div>;
   return <>{children}</>;
+}
+
+/* ---------- Error boundary (defined before use) ---------- */
+class AppErrorBoundary extends React.Component<
+  { children: React.ReactNode },
+  { error: any; info: React.ErrorInfo | null }
+> {
+  constructor(props: any) {
+    super(props);
+    this.state = { error: null, info: null };
+  }
+  static getDerivedStateFromError(error: any) {
+    return { error, info: null };
+  }
+  componentDidCatch(error: any, info: React.ErrorInfo) {
+    this.setState({ info });
+    console.error("[AppErrorBoundary]", error, info?.componentStack);
+  }
+  render() {
+    if (this.state.error) {
+      const showDetails =
+        import.meta.env.DEV || String(import.meta.env.VITE_DEBUG_ERRORS) === "1";
+      return (
+        <div style={{ padding: 24, maxWidth: 900, margin: "0 auto" }}>
+          <h1 className="text-xl font-bold mb-2">Something went wrong</h1>
+          {!showDetails ? (
+            <p className="text-sm text-gray-600">
+              An error occurred. Enable details by setting <code>VITE_DEBUG_ERRORS=1</code> and redeploying.
+            </p>
+          ) : (
+            <>
+              <h2 className="font-semibold mt-4 mb-1">Error</h2>
+              <pre style={{ whiteSpace: "pre-wrap" }}>
+                {String(this.state.error?.stack || this.state.error?.message || this.state.error)}
+              </pre>
+              {this.state.info?.componentStack && (
+                <>
+                  <h2 className="font-semibold mt-4 mb-1">Component stack</h2>
+                  <pre style={{ whiteSpace: "pre-wrap" }}>{this.state.info.componentStack}</pre>
+                </>
+              )}
+            </>
+          )}
+        </div>
+      );
+    }
+    return this.props.children as React.ReactNode;
+  }
 }
 
 function App() {
@@ -518,54 +575,6 @@ function App() {
       </AuthProvider>
     </AnalyticsProvider>
   );
-}
-
-/* ---------- Error boundary ---------- */
-class AppErrorBoundary extends React.Component<
-  { children: React.ReactNode },
-  { error: any; info: React.ErrorInfo | null }
-> {
-  constructor(props: any) {
-    super(props);
-    this.state = { error: null, info: null };
-  }
-  static getDerivedStateFromError(error: any) {
-    return { error, info: null };
-  }
-  componentDidCatch(error: any, info: React.ErrorInfo) {
-    this.setState({ info });
-    console.error("[AppErrorBoundary]", error, info?.componentStack);
-  }
-  render() {
-    if (this.state.error) {
-      const showDetails =
-        import.meta.env.DEV || String(import.meta.env.VITE_DEBUG_ERRORS) === "1";
-      return (
-        <div style={{ padding: 24, maxWidth: 900, margin: "0 auto" }}>
-          <h1 className="text-xl font-bold mb-2">Something went wrong</h1>
-          {!showDetails ? (
-            <p className="text-sm text-gray-600">
-              An error occurred. Enable details by setting <code>VITE_DEBUG_ERRORS=1</code> and redeploying.
-            </p>
-          ) : (
-            <>
-              <h2 className="font-semibold mt-4 mb-1">Error</h2>
-              <pre style={{ whiteSpace: "pre-wrap" }}>
-                {String(this.state.error?.stack || this.state.error?.message || this.state.error)}
-              </pre>
-              {this.state.info?.componentStack && (
-                <>
-                  <h2 className="font-semibold mt-4 mb-1">Component stack</h2>
-                  <pre style={{ whiteSpace: "pre-wrap" }}>{this.state.info.componentStack}</pre>
-                </>
-              )}
-            </>
-          )}
-        </div>
-      );
-    }
-    return this.props.children as React.ReactNode;
-  }
 }
 
 export default App;
