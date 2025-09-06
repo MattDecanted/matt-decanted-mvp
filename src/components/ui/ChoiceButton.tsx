@@ -1,3 +1,4 @@
+// src/components/ui/ChoiceButton.tsx
 import * as React from "react";
 import { cn } from "@/lib/utils";
 
@@ -16,10 +17,17 @@ type Props = React.ButtonHTMLAttributes<HTMLButtonElement> & {
 };
 
 const stateClasses: Record<ChoiceState, string> = {
-  idle: "border-gray-200 hover:border-gray-300 hover:bg-gray-50 text-gray-900",
-  selected: "border-blue-500 bg-blue-50 text-blue-800",
-  correct: "border-green-500 bg-green-50 text-green-800",
-  incorrect: "border-red-500 bg-red-50 text-red-800",
+  // Dark pill baseline
+  idle:
+    "bg-gray-900 text-white border-gray-900 hover:bg-gray-800",
+  // Brand pick
+  selected:
+    "bg-brand-orange text-white border-brand-orange hover:opacity-95 shadow",
+  // Answer review styles (if ever reused in results)
+  correct:
+    "bg-emerald-600 text-white border-emerald-600",
+  incorrect:
+    "bg-rose-600 text-white border-rose-600",
 };
 
 /** Accessible multiple-choice button used by GuessWhatPage */
@@ -28,8 +36,7 @@ const ChoiceButton = React.forwardRef<HTMLButtonElement, Props>(
     { label, index, state = "idle", className, dataIndex, dataSelected, disabled, ...rest },
     ref
   ) => {
-    const dataOptIndex =
-      typeof dataIndex === "number" ? dataIndex : undefined;
+    const dataOptIndex = typeof dataIndex === "number" ? dataIndex : undefined;
 
     return (
       <button
@@ -39,8 +46,9 @@ const ChoiceButton = React.forwardRef<HTMLButtonElement, Props>(
         data-opt-index={dataOptIndex}
         data-opt-selected={dataSelected ? "true" : undefined}
         className={cn(
-          "w-full text-left p-4 rounded-lg border transition-all",
-          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40",
+          "w-full text-left px-4 py-3 rounded-xl border transition-all",
+          "flex items-center gap-3",
+          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-orange/40",
           disabled && "opacity-60 cursor-not-allowed",
           stateClasses[state],
           className
@@ -50,10 +58,22 @@ const ChoiceButton = React.forwardRef<HTMLButtonElement, Props>(
         aria-disabled={disabled || undefined}
         {...rest}
       >
-        <span className="font-medium mr-3">
-          {typeof index === "number" ? `${String.fromCharCode(65 + index)}.` : null}
-        </span>
-        <span>{label}</span>
+        {/* A/B/C badge */}
+        {typeof index === "number" ? (
+          <span
+            aria-hidden
+            className={cn(
+              "inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full",
+              "text-[11px] font-bold",
+              // subtle contrast ring for dark pills
+              "bg-white/10 ring-1 ring-white/15"
+            )}
+          >
+            {String.fromCharCode(65 + index)}
+          </span>
+        ) : null}
+
+        <span className="font-medium">{label}</span>
       </button>
     );
   }
