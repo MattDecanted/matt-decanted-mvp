@@ -59,7 +59,7 @@ const OLD_WORLD = new Set(["france","italy","spain","germany","portugal","austri
 const hasStrongFrenchCue = (t: string) =>
   /(appellation|grand\s+cru|premier\s+cru|mis\s+en\s+bouteille|ch[âa]teau|c[ôo]te)/i.test(t);
 
-/* ---------- Region pools (incl. Canada/China/India + expanded AU) ---------- */
+/* ---------- Region pools ---------- */
 const REGION_POOLS: Record<string, string[]> = {
   France: ["Bordeaux","Burgundy","Beaujolais","Loire","Rhône","Champagne","Alsace","Provence"],
   Italy: ["Tuscany","Piedmont","Veneto","Sicily"],
@@ -83,7 +83,7 @@ const REGION_POOLS: Record<string, string[]> = {
   India: ["Nashik","Nandi Hills","Akluj","Baramati"],
 };
 
-/* ---------- (3) comprehensive grape dictionary + detectors ---------- */
+/* ---------- (3) grape dictionary + detectors ---------- */
 const WHITE_POOL = [
   "Chardonnay","Sauvignon Blanc","Riesling","Pinot Gris","Pinot Grigio","Gewürztraminer","Chenin Blanc","Viognier",
   "Semillon","Muscat Blanc à Petits Grains","Trebbiano","Verdelho","Albariño","Garganega","Marsanne","Roussanne",
@@ -99,7 +99,7 @@ const RED_POOL = [
   "Carménère","Pinotage","Saperavi","Kadarka","Plavac Mali","Xinomavro","Agiorgitiko","Negroamaro","Lambrusco","Schiava"
 ];
 const GRAPE_SYNONYMS: Record<string, string[]> = {
-  // Whites
+  // (…same as before…)
   "Chardonnay": ["blanc de bourgogne","chablis"],
   "Sauvignon Blanc": ["fumé blanc","blanc fumé","sauv blanc"],
   "Riesling": ["johannisberg riesling","weisser riesling","weißer riesling","white riesling"],
@@ -202,7 +202,7 @@ function findGrapesInText(text: string): string[] {
   return Array.from(new Set(hits));
 }
 
-/* ---------- (2) Burgundy vocabulary (stronger cues) ---------- */
+/* ---------- (2) Burgundy helpers ---------- */
 const BOURGOGNE_MARKERS = [
   "bourgogne","burgundy","cote d'or","côte d'or",
   "cote de beaune","côte de beaune","cote de nuits","côte de nuits",
@@ -218,7 +218,7 @@ const VILLAGES_Nuits = [
   "vougeot","morey-saint-denis","nuits-saint-georges","fixin","marsannay"
 ];
 
-/* ---------- DB-first geo fetch from wine_reference ---------- */
+/* ---------- wine_reference DB lookup ---------- */
 type GeoPick = {
   countryCorrect?: string;
   countryOptions: string[];
@@ -258,7 +258,7 @@ async function fetchGeoFromWineReference(ocrText: string): Promise<GeoPick | nul
                    .sort((a,b)=>b.s-a.s)[0].r;
 
   const countryCorrect = best.country || undefined;
-  const regionCorrect = best.region || undefined;
+  const regionCorrect  = best.region || undefined;
 
   const countries = unique(rows.map(r => r.country || "").filter(Boolean));
   const regions   = unique(rows.filter(r => r.country === countryCorrect).map(r => r.region || "").filter(Boolean));
@@ -281,7 +281,7 @@ async function fetchGeoFromWineReference(ocrText: string): Promise<GeoPick | nul
   };
 }
 
-/* ---------- Variety/blend with Champagne + Burgundy rules ---------- */
+/* ---------- Variety/blend rules ---------- */
 function detectVarietyOrBlend(
   textRaw: string,
   ocrHint?: string | null,
@@ -296,11 +296,10 @@ function detectVarietyOrBlend(
     return { label: "Blend", distractors: ["Pinot Noir","Chardonnay","Pinot Meunier"] };
   }
 
-  // Burgundy villages (tolerant)
+  // Burgundy villages
   const whiteBurg = hasAny(t, VILLAGES_Beaune) || /\b(chablis|corton-charlemagne)\b/i.test(t);
   const redBurg   = hasAny(t, VILLAGES_Nuits)  || /\b(gevrey|vosne|volnay|pommard|nuits)\b/i.test(t);
 
-  // Blends or 2+ grapes
   const explicitBlend = /\b(?:blend|assemblage|field\s*blend|gs?m)\b/i.test(t);
   const hits = findGrapesInText(t);
   if (explicitBlend || hits.length >= 2) return { label: "Blend", distractors: ["Cabernet Sauvignon","Pinot Noir","Chardonnay"] };
@@ -315,7 +314,6 @@ function detectVarietyOrBlend(
   if (whiteBurg) return { label: "Chardonnay", distractors: ["Sauvignon Blanc","Riesling","Blend"] };
   if (redBurg)   return { label: "Pinot Noir", distractors: ["Gamay","Merlot","Blend"] };
 
-  // Table hint if available
   if (typical && typical[0]) {
     const v = typical[0];
     const isWhite = WHITE_POOL.includes(v);
@@ -323,7 +321,6 @@ function detectVarietyOrBlend(
     return { label: v, distractors: more };
   }
 
-  // OCR hint if sensible
   if (ocrHint && (WHITE_POOL.includes(ocrHint) || RED_POOL.includes(ocrHint))) {
     const isWhite = WHITE_POOL.includes(ocrHint);
     const more = isWhite ? ["Sauvignon Blanc","Riesling","Pinot Gris"] : ["Merlot","Syrah","Grenache"];
@@ -332,7 +329,7 @@ function detectVarietyOrBlend(
   return { label: "Blend", distractors: ["Cabernet Sauvignon","Pinot Noir","Chardonnay"] };
 }
 
-/* ---------- (2) Country & Region detection (OCR fallback, tolerant) ---------- */
+/* ---------- Country & Region fallback ---------- */
 function detectCountryRegionFallback(textRaw: string) {
   const t = textRaw;
 
@@ -356,7 +353,7 @@ function detectCountryRegionFallback(textRaw: string) {
   let country: string | undefined;
   for (const [name, rx] of countryRules) if (rx.test(t)) { country = name; break; }
 
-  // Burgundy force with flexible spacing/hyphens
+  // Burgundy force
   let regionFromBurgundy: string | undefined;
   let subregionFromBurgundy: string | null = null;
 
@@ -433,7 +430,7 @@ function detectVintage(text: string) {
   return ["NV", String(now), String(now-1), String(now-2)];
 }
 
-/* ---------- (4)(5) Build round payload from OCR (DB-first, robust fallback, debug logs) ---------- */
+/* ---------- Build round payload from OCR ---------- */
 async function buildRoundPayloadFromOCR(file: File): Promise<{ questions: StepQuestion[] }> {
   const form = new FormData();
   form.append("file", file);
@@ -441,14 +438,8 @@ async function buildRoundPayloadFromOCR(file: File): Promise<{ questions: StepQu
   if (!res.ok) throw new Error(await res.text());
   const { text } = await res.json();
 
-  console.debug("[OCR text]", (text || "").slice(0, 400));
-
-  // 1) Try DB
   const fromDB = await fetchGeoFromWineReference(text || "");
-  // 2) Fallback to OCR heuristics
   const fall = detectCountryRegionFallback(text || "");
-
-  console.debug("[Geo pick]", { fromDB, fall });
 
   const isOld = fromDB?.isOldWorld ?? fall.isOldWorld;
   const hemiCorrect = isOld ? 0 : 1;
@@ -460,7 +451,6 @@ async function buildRoundPayloadFromOCR(file: File): Promise<{ questions: StepQu
   const subregionOptions = fromDB?.subregionOptions ?? fall.subregionOptions;
 
   const vintageOpts = detectVintage(text || "");
-
   const vb = detectVarietyOrBlend(text || "", undefined, fromDB?.typicalVarieties);
   const varietyOpts = ensureFour(vb.label, vb.distractors);
 
@@ -491,10 +481,10 @@ function InviteBar({ inviteCode }: { inviteCode: string }) {
         <div className="font-mono text-2xl font-semibold tracking-wide">{inviteCode}</div>
       </div>
       <div className="flex-1" />
-      <button onClick={copy} className="inline-flex items-center gap-2 px-3 py-2 rounded-2xl border hover:shadow">
+      <button onClick={copy} className="inline-flex items-center gap-2 px-3 py-2 rounded-2xl bg-black text-white hover:opacity-95">
         <Copy className="h-4 w-4" /> {copied ? "Copied" : "Copy"}
       </button>
-      <button onClick={share} className="inline-flex items-center gap-2 px-3 py-2 rounded-2xl bg-black text-white hover:shadow">
+      <button onClick={share} className="inline-flex items-center gap-2 px-3 py-2 rounded-2xl bg-black text-white hover:opacity-95">
         <Share2 className="h-4 w-4" /> Share
       </button>
     </div>
@@ -506,20 +496,28 @@ function ProcessingCard() {
     <div className="rounded-2xl border bg-white shadow-sm p-10 text-center">
       <div className="mx-auto mb-4 h-10 w-10 animate-spin rounded-full border-2 border-violet-500 border-t-transparent" />
       <div className="text-xl font-semibold">Processing Your Wine Label</div>
-      <div className="text-sm text-gray-500 mt-1">Hang tight—just a moment…</div>
+      <div className="text-sm text-gray-500 mt-1">Just a moment…</div>
     </div>
   );
 }
 
-/** Intro + “How to play” (Bolt-like tone/colors) */
+/** Intro (keeps the Len Evans paragraph) + heading/tagline */
 function GameIntro() {
   return (
-    <div className="rounded-2xl border bg-gradient-to-br from-violet-50 to-blue-50 p-6 sm:p-8 shadow-sm">
-      <h1 className="text-3xl sm:text-4xl font-bold text-gray-900">Wine Options Game</h1>
-      <p className="mt-3 text-gray-700 leading-relaxed">
-        Wine Options, thanks to Len Evans, is proof that blind tasting doesn’t need to be intimidating — it should be
-        fun, challenging, and a little bit cheeky. What I like about it is how it strips things back to simple choices,
-        letting you build confidence step by step, and reminding us all that wine is meant to be enjoyed together.
+    <div className="rounded-2xl border bg-white shadow-sm p-6 sm:p-8">
+      <div className="flex items-center gap-2 text-3xl sm:text-4xl font-bold text-gray-900">
+        <span role="img" aria-label="wine">🍷</span>
+        <h1>Wine Options Game</h1>
+      </div>
+      <p className="mt-1 text-sm sm:text-base text-gray-600">
+        Upload a wine label and test your knowledge with AI-powered questions.
+      </p>
+
+      <p className="mt-4 text-gray-800 leading-relaxed">
+        Wine Options, thanks to Len Evans, is proof that blind tasting doesn’t need to be
+        intimidating — it should be fun, challenging, and a little bit cheeky. What I like about it
+        is how it strips things back to simple choices, letting you build confidence step by step,
+        and reminding us all that wine is meant to be enjoyed together.
       </p>
 
       <div className="mt-6 grid sm:grid-cols-2 gap-4">
@@ -536,7 +534,7 @@ function GameIntro() {
         <div className="rounded-2xl bg-white border p-4">
           <div className="font-semibold mb-2">Tips</div>
           <ul className="space-y-2 text-sm text-gray-700">
-            <li>Black glass or a simple blindfold makes it truly blind.</li>
+            <li>Ask a friend who isn’t playing to take or upload the label for you (or cover the label).</li>
             <li>Debate with friends before locking in answers — it’s half the fun.</li>
             <li>Clear, well-lit label photos give the best results.</li>
           </ul>
@@ -582,7 +580,7 @@ function QuestionStepper({ round, me, onFinished }: { round: GameRound; me: Part
             <button
               key={i}
               onClick={() => setSelected(i)}
-              className={`p-4 rounded-2xl border text-left hover:shadow-sm focus:outline-none focus:ring-2 ${active ? "ring-2 ring-black" : ""}`}
+              className={`p-4 rounded-2xl border text-left hover:shadow-sm focus:outline-none ${active ? "ring-2 ring-black" : ""}`}
               aria-pressed={active}
               disabled={busy}
             >
@@ -797,7 +795,6 @@ export default function WineOptionsGame({ initialCode = "" }: { initialCode?: st
     setSession(s => (s ? { ...s, status: "finished" } as GameSession : s));
   }
 
-  /* (7) Play again – keep results on screen until host starts again */
   async function playAgain() {
     if (!session) return;
     await setSessionStatus(session.id, WRITE_STATUS["waiting"]);
@@ -836,7 +833,7 @@ export default function WineOptionsGame({ initialCode = "" }: { initialCode?: st
           <button
             disabled={loading}
             onClick={handleHost}
-            className="px-4 py-2 rounded-2xl bg-black text-white inline-flex items-center gap-2 disabled:opacity-60"
+            className="px-4 py-2 rounded-2xl bg-black text-white inline-flex items-center gap-2 disabled:opacity-60 hover:opacity-95"
           >
             {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Users className="h-4 w-4" />}
             Host new game
@@ -851,7 +848,7 @@ export default function WineOptionsGame({ initialCode = "" }: { initialCode?: st
           <button
             disabled={loading || codeInput.length < 4}
             onClick={handleJoin}
-            className="px-4 py-2 rounded-2xl border"
+            className="px-4 py-2 rounded-2xl bg-black text-white disabled:opacity-60 hover:opacity-95"
           >
             Join
           </button>
@@ -891,7 +888,7 @@ export default function WineOptionsGame({ initialCode = "" }: { initialCode?: st
 
       {/* Host-only upload */}
       {!round && uiStatus === "waiting" && isHost && (
-        <div className="space-y-3 p-4 rounded-2xl border bg-white shadow-sm">
+        <div className="space-y-4 p-4 rounded-2xl border bg-white shadow-sm">
           <div className="flex items-center gap-2 text-sm font-medium">
             <Camera className="h-4 w-4" />
             <span>You are the host — upload or take a photo to start the round</span>
@@ -903,21 +900,44 @@ export default function WineOptionsGame({ initialCode = "" }: { initialCode?: st
             </div>
           )}
 
-          <label className="inline-flex items-center gap-2 px-3 py-2 rounded-2xl border cursor-pointer w-fit">
-            <Upload className="h-4 w-4" />
-            <span>{uploadBusy ? "Reading…" : "Choose image / Take photo"}</span>
-            <input
-              type="file"
-              accept="image/*"
-              capture="environment"
-              className="hidden"
-              disabled={uploadBusy}
-              onChange={(e) => {
-                const file = e.target.files?.[0];
-                if (file) startGameFromUpload(file);
-              }}
-            />
-          </label>
+          <div className="rounded-2xl border-2 border-dashed p-6 text-center">
+            <Camera className="h-8 w-8 mx-auto text-gray-500" />
+            <div className="mt-2 font-semibold">Add Wine Label Photo</div>
+            <div className="text-sm text-gray-600">Upload a clear photo of the wine label for AI analysis</div>
+            <div className="mt-4 flex items-center justify-center gap-3">
+              {/* Take Photo */}
+              <label className="inline-flex items-center gap-2 px-4 py-2 rounded-2xl bg-black text-white cursor-pointer hover:opacity-95">
+                <Camera className="h-4 w-4" />
+                <span>{uploadBusy ? "Reading…" : "Take Photo"}</span>
+                <input
+                  type="file"
+                  accept="image/*"
+                  capture="environment"
+                  className="hidden"
+                  disabled={uploadBusy}
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (file) startGameFromUpload(file);
+                  }}
+                />
+              </label>
+              {/* Choose Photo */}
+              <label className="inline-flex items-center gap-2 px-4 py-2 rounded-2xl bg-black text-white cursor-pointer hover:opacity-95">
+                <Upload className="h-4 w-4" />
+                <span>{uploadBusy ? "Reading…" : "Choose Photo"}</span>
+                <input
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  disabled={uploadBusy}
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (file) startGameFromUpload(file);
+                  }}
+                />
+              </label>
+            </div>
+          </div>
         </div>
       )}
 
@@ -956,7 +976,7 @@ export default function WineOptionsGame({ initialCode = "" }: { initialCode?: st
             ) : (
               <button
                 onClick={playAgain}
-                className="inline-flex items-center gap-2 px-3 py-2 rounded-2xl bg-black text-white"
+                className="inline-flex items-center gap-2 px-3 py-2 rounded-2xl bg-black text-white hover:opacity-95"
               >
                 Play again
               </button>
