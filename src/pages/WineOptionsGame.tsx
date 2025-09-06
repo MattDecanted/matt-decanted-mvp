@@ -46,6 +46,14 @@ const READ_STATUS: Record<GameSession["status"], string> = {
 /* ---------- OCR helper ---------- */
 const FN_OCR = "/.netlify/functions/ocr-label";
 
+/* ---------- Bolt buttons ---------- */
+const BTN_SOLID =
+  "rounded-2xl px-4 py-2 font-semibold text-white shadow " +
+  "bg-gradient-to-r from-violet-600 to-blue-600 hover:opacity-95 disabled:opacity-60";
+const BTN_GHOST =
+  "rounded-2xl px-3 py-2 font-medium border border-violet-300 text-violet-700 bg-white hover:bg-violet-50";
+
+/* ---------- types ---------- */
 export type StepQuestion = {
   key: "vintage" | "variety" | "hemisphere" | "country" | "region" | "subregion";
   prompt: string;
@@ -99,6 +107,7 @@ const RED_POOL = [
   "Carménère","Pinotage","Saperavi","Kadarka","Plavac Mali","Xinomavro","Agiorgitiko","Negroamaro","Lambrusco","Schiava"
 ];
 const GRAPE_SYNONYMS: Record<string, string[]> = {
+  // … (unchanged; keep full list)
   "Chardonnay": ["blanc de bourgogne","chablis"],
   "Sauvignon Blanc": ["fumé blanc","blanc fumé","sauv blanc"],
   "Riesling": ["johannisberg riesling","weisser riesling","weißer riesling","white riesling"],
@@ -173,7 +182,7 @@ const GRAPE_SYNONYMS: Record<string, string[]> = {
   "Touriga Franca": [],
   "Trincadeira": ["tinta amarela"],
   "Castelão": ["periquita","castelao"],
-  "Blaufränkisch": ["lemberger","kékfrankos","kekfrankos","blaufrankisch"],
+  "Blaufränkisch": ["lemberger","kékfrankos","kekfrankisch","blaufrankisch"],
   "Zweigelt": [],
   "St. Laurent": ["saint laurent","st laurent"],
   "Gamay": [],
@@ -433,7 +442,7 @@ async function buildRoundPayloadFromOCR(file: File): Promise<{ questions: StepQu
   const hemiCorrect = isOld ? 0 : 1;
 
   const countryCorrect = fromDB?.countryCorrect ?? fall.countryCorrect!;
-  const regionCorrect  = fromDB?.regionCorrect  ?? fall.regionCorrect!;
+  the regionCorrect  = fromDB?.regionCorrect  ?? fall.regionCorrect!;
   const countryOptions = fromDB?.countryOptions?.length ? fromDB.countryOptions : fall.countryOptions;
   const regionOptions  = fromDB?.regionOptions?.length  ? fromDB.regionOptions  : fall.regionOptions;
   const subregionOptions = fromDB?.subregionOptions ?? fall.subregionOptions;
@@ -469,10 +478,10 @@ function InviteBar({ inviteCode }: { inviteCode: string }) {
         <div className="font-mono text-2xl font-semibold tracking-wide">{inviteCode}</div>
       </div>
       <div className="flex-1" />
-      <button onClick={copy} className="inline-flex items-center gap-2 px-3 py-2 rounded-2xl bg-black text-white hover:opacity-95">
+      <button onClick={copy} className={BTN_SOLID}>
         <Copy className="h-4 w-4" /> {copied ? "Copied" : "Copy"}
       </button>
-      <button onClick={share} className="inline-flex items-center gap-2 px-3 py-2 rounded-2xl bg-black text-white hover:opacity-95">
+      <button onClick={share} className={BTN_SOLID}>
         <Share2 className="h-4 w-4" /> Share
       </button>
     </div>
@@ -511,7 +520,7 @@ function PageHeader() {
   );
 }
 
-/** Two cards: How to play + Tips (clean bullets, left-aligned text) */
+/** Two cards: How to play + Tips (clean bullets) */
 function HowAndTips() {
   return (
     <div className="mt-6 grid sm:grid-cols-2 gap-4">
@@ -528,7 +537,7 @@ function HowAndTips() {
       <div className="rounded-2xl bg-white border p-4">
         <div className="font-semibold mb-2">Tips</div>
         <ul className="list-disc pl-5 space-y-2 text-sm text-gray-700 text-left leading-relaxed">
-          <li>Ask a friend who isn’t playing to take or upload the label for you (or cover the label).</li>
+          <li>Ask a friend who isn’t playing to take or upload the label (or cover the label).</li>
           <li>Debate with friends before locking in answers — it’s half the fun.</li>
           <li>Clear, well-lit label photos give the best results.</li>
         </ul>
@@ -570,7 +579,7 @@ function BlindTips() {
 function QuestionStepper({
   round, me, onFinished, bumpMyScore,
 }: {
-  round: GameRound; me: Participant; onFinished: () => void; bumpMyScore: (delta: number) => void;
+  round: GameRound; me: Participant; onFinished: () => void; bumpMyScore: (delta: number) => Promise<void>;
 }) {
   const questions: StepQuestion[] = round.payload?.questions ?? [];
   const [index, setIndex] = useState(0);
@@ -587,8 +596,8 @@ function QuestionStepper({
     try {
       await submitAnswer(round.id, me.id, selected, isCorrect).catch(() => {});
       if (isCorrect) {
-        bumpMyScore(10);                 // local instant feedback
-        await awardPoints(me.id, 10).catch(() => {});
+        await bumpMyScore(10);      // persist + local bump
+        await awardPoints(me.id, 10).catch(() => {}); // global account points if you use them
       }
     } finally {
       if (index < questions.length - 1) { setIndex(i => i + 1); setSelected(null); }
@@ -610,7 +619,7 @@ function QuestionStepper({
             <button
               key={i}
               onClick={() => setSelected(i)}
-              className={`p-4 rounded-2xl border text-left hover:shadow-sm focus:outline-none ${active ? "ring-2 ring-black" : ""}`}
+              className={`p-4 rounded-2xl border text-left hover:shadow-sm focus:outline-none ${active ? "ring-2 ring-violet-600" : ""}`}
               aria-pressed={active}
               disabled={busy}
             >
@@ -627,7 +636,7 @@ function QuestionStepper({
         <button
           onClick={handleNext}
           disabled={selected == null || busy}
-          className="inline-flex items-center gap-2 px-5 py-2.5 rounded-2xl bg-black text-white disabled:opacity-60"
+          className={BTN_SOLID}
         >
           {index < questions.length - 1 ? (busy ? "Saving…" : "Next") : (busy ? "Finishing…" : "See Results")}
         </button>
@@ -649,6 +658,7 @@ export default function WineOptionsGame({ initialCode = "" }: { initialCode?: st
   const [err, setErr] = useState<string | null>(null);
   const [uploadBusy, setUploadBusy] = useState(false);
   const [uploadErr, setUploadErr] = useState<string | null>(null);
+  const [showPlayAgainChoices, setShowPlayAgainChoices] = useState(false);
   const channelRef = useRef<RealtimeChannel | null>(null);
 
   useEffect(() => () => unsubscribe(channelRef.current), []);
@@ -749,7 +759,7 @@ export default function WineOptionsGame({ initialCode = "" }: { initialCode?: st
       const { data: psMe } = await supabase
         .from("session_participants").select("*")
         .eq("session_id", s.id)
-        .or(`is_host.eq.true,user_id.eq.${uid}`).limit(1);
+        .or(`is_host.eq.true,user_id.eq.${data?.user?.id}`).limit(1);
       if (psMe && psMe[0]) setMe(psMe[0] as Participant);
 
       setCodeInput(s.invite_code);
@@ -819,6 +829,20 @@ export default function WineOptionsGame({ initialCode = "" }: { initialCode?: st
     }
   }
 
+  // Persist + optimistic bump
+  const bumpMyScore = async (delta: number) => {
+    if (!me) return;
+    const current = participants.find((p) => p.id === me.id)?.score || 0;
+    const next = current + delta;
+
+    // optimistic UI
+    setParticipants((prev) => prev.map((p) => (p.id === me.id ? { ...p, score: next } : p)));
+    setMe((m) => (m ? { ...m, score: next } : m));
+
+    // persist
+    await supabase.from("session_participants").update({ score: next }).eq("id", me.id).catch(() => {});
+  };
+
   async function finishGame() {
     if (!session || !round) return;
     setLastRound(round); // keep for reveal
@@ -827,14 +851,35 @@ export default function WineOptionsGame({ initialCode = "" }: { initialCode?: st
     await refetchParticipants(session.id).catch(() => {});
     setRound(null);
     setSession(s => (s ? { ...s, status: "finished" } as GameSession : s));
+    setShowPlayAgainChoices(true);
   }
 
-  async function playAgain() {
+  async function playAgainSamePlayers() {
     if (!session) return;
+    setShowPlayAgainChoices(false);
     await setSessionStatus(session.id, WRITE_STATUS["waiting"]).catch(() => {});
     setSession((s) => (s ? ({ ...s, status: "open" } as GameSession) : s));
     setRound(null);
     setLastRound(null);
+  }
+
+  async function playAgainNewPlayers() {
+    if (!session || !me?.user_id) return;
+    setShowPlayAgainChoices(false);
+    // create a fresh session with the same host
+    const res = await fetch("/.netlify/functions/create-session", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ host_user_id: me.user_id, display_name: me.display_name || "Host" }),
+    });
+    if (!res.ok) return;
+    const { session: s } = await res.json();
+    setSession(s);
+    setCodeInput(s.invite_code);
+    setParticipants([]);
+    setRound(null);
+    setLastRound(null);
+    attachRealtime(s.id);
   }
 
   const uiStatus = round ? "in_progress" : (session ? READ_STATUS[session.status] : "waiting");
@@ -843,15 +888,7 @@ export default function WineOptionsGame({ initialCode = "" }: { initialCode?: st
   const isParticipantHost = (p: Participant, s: GameSession) =>
     (!!s.host_user_id && !!p.user_id && p.user_id === s.host_user_id) || !!p.is_host;
 
-  const bumpMyScore = (delta: number) => {
-    if (!me) return;
-    setParticipants((prev) =>
-      prev.map((p) => (p.id === me.id ? { ...p, score: (p.score || 0) + delta } : p))
-    );
-  };
-
   /* ----------- PAGE LAYOUT ----------- */
-
   return (
     <div className="max-w-3xl mx-auto p-6 space-y-6">
       <PageHeader />
@@ -885,13 +922,9 @@ export default function WineOptionsGame({ initialCode = "" }: { initialCode?: st
           </div>
 
           <div className="flex items-center gap-3">
-            <button
-              disabled={loading}
-              onClick={handleHost}
-              className="px-4 py-2 rounded-2xl bg-black text-white inline-flex items-center gap-2 disabled:opacity-60 hover:opacity-95"
-            >
+            <button disabled={loading} onClick={handleHost} className={BTN_SOLID}>
               {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Users className="h-4 w-4" />}
-              Host new game
+              <span className="ml-2">Host new game</span>
             </button>
             <div className="flex-1" />
             <input
@@ -900,11 +933,7 @@ export default function WineOptionsGame({ initialCode = "" }: { initialCode?: st
               value={codeInput}
               onChange={(e) => setCodeInput(e.target.value.toUpperCase())}
             />
-            <button
-              disabled={loading || codeInput.length < 4}
-              onClick={handleJoin}
-              className="px-4 py-2 rounded-2xl bg-black text-white disabled:opacity-60 hover:opacity-95"
-            >
+            <button disabled={loading || codeInput.length < 4} onClick={handleJoin} className={BTN_SOLID}>
               Join
             </button>
           </div>
@@ -928,7 +957,7 @@ export default function WineOptionsGame({ initialCode = "" }: { initialCode?: st
         )}
 
         <div className="mt-4 flex items-center justify-center gap-3">
-          <label className="inline-flex items-center gap-2 px-4 py-2 rounded-2xl bg-black text-white cursor-pointer hover:opacity-95">
+          <label className={`${BTN_SOLID} inline-flex items-center gap-2 cursor-pointer`}>
             <Camera className="h-4 w-4" />
             <span>{uploadBusy ? "Reading…" : "Take Photo"}</span>
             <input
@@ -944,7 +973,7 @@ export default function WineOptionsGame({ initialCode = "" }: { initialCode?: st
             />
           </label>
 
-          <label className="inline-flex items-center gap-2 px-4 py-2 rounded-2xl bg-black text-white cursor-pointer hover:opacity-95">
+          <label className={`${BTN_SOLID} inline-flex items-center gap-2 cursor-pointer`}>
             <Upload className="h-4 w-4" />
             <span>{uploadBusy ? "Reading…" : "Choose Photo"}</span>
             <input
@@ -1006,7 +1035,7 @@ export default function WineOptionsGame({ initialCode = "" }: { initialCode?: st
         </div>
       )}
 
-      {/* Results + Reveal */}
+      {/* Results + Reveal + Play again choices */}
       {uiStatus === "finished" && (
         <div className="p-4 rounded-2xl border bg-white shadow-sm space-y-4">
           <div className="text-xl font-semibold flex items-center gap-2">
@@ -1038,23 +1067,26 @@ export default function WineOptionsGame({ initialCode = "" }: { initialCode?: st
             </div>
           ) : null}
 
+          {/* Play again prompt */}
           <div className="flex items-center justify-between">
-            {!isHost ? (
-              <div className="text-sm text-gray-600">Waiting for the host to play again…</div>
-            ) : (
-              <button
-                onClick={playAgain}
-                className="inline-flex items-center gap-2 px-3 py-2 rounded-2xl bg-black text-white hover:opacity-95"
-              >
-                Play again
+            {!showPlayAgainChoices ? (
+              <button onClick={() => setShowPlayAgainChoices(true)} className={BTN_SOLID}>
+                Play again?
               </button>
+            ) : (
+              <div className="flex gap-2">
+                <button onClick={playAgainSamePlayers} className={BTN_SOLID}>Same players</button>
+                <button onClick={playAgainNewPlayers} className={BTN_GHOST}>Start with new players</button>
+              </div>
             )}
 
             <button
               onClick={() => window.location.assign("/wine-options/multiplayer")}
-              className="inline-flex items-center gap-2 px-3 py-2 rounded-2xl border"
+              className={BTN_GHOST}
             >
-              <LogOut className="h-4 w-4" /> Leave
+              <span className="inline-flex items-center gap-2">
+                <LogOut className="h-4 w-4" /> Leave
+              </span>
             </button>
           </div>
         </div>
