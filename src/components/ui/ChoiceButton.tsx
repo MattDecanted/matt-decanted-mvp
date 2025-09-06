@@ -17,17 +17,13 @@ type Props = React.ButtonHTMLAttributes<HTMLButtonElement> & {
 };
 
 const stateClasses: Record<ChoiceState, string> = {
-  // Dark pill baseline
-  idle:
-    "bg-gray-900 text-white border-gray-900 hover:bg-gray-800",
+  // Lighter dark pill baseline
+  idle: "bg-gray-800 text-white border-gray-800 hover:bg-gray-700",
   // Brand pick
-  selected:
-    "bg-brand-orange text-white border-brand-orange hover:opacity-95 shadow",
+  selected: "bg-brand-orange text-white border-brand-orange hover:opacity-95 shadow",
   // Answer review styles (if ever reused in results)
-  correct:
-    "bg-emerald-600 text-white border-emerald-600",
-  incorrect:
-    "bg-rose-600 text-white border-rose-600",
+  correct: "bg-emerald-600 text-white border-emerald-600",
+  incorrect: "bg-rose-600 text-white border-rose-600",
 };
 
 /** Accessible multiple-choice button used by GuessWhatPage */
@@ -65,7 +61,6 @@ const ChoiceButton = React.forwardRef<HTMLButtonElement, Props>(
             className={cn(
               "inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full",
               "text-[11px] font-bold",
-              // subtle contrast ring for dark pills
               "bg-white/10 ring-1 ring-white/15"
             )}
           >
