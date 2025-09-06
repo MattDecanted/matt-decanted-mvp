@@ -290,7 +290,7 @@ class AppErrorBoundary extends React.Component<
   }
 }
 
-/* ---------- Wrapper to support /join/:code deep link ---------- */
+/* ---------- Wrapper to support /join/:code deep link (OPEN, no auth) ---------- */
 function WineOptionsJoinRoute() {
   const { code } = useParams();
   return <WineOptionsGame initialCode={(code || "").toUpperCase()} />;
@@ -536,10 +536,13 @@ function App() {
                         }
                       />
 
-                      {/* Wine Options (gated) */}
+                      {/* Wine Options */}
                       {/* Redirect /wine-options -> multiplayer */}
                       <Route path="/wine-options" element={<Navigate to="/wine-options/multiplayer" replace />} />
+                      {/* Redirect legacy /wine-game -> multiplayer */}
+                      <Route path="/wine-game" element={<Navigate to="/wine-options/multiplayer" replace />} />
 
+                      {/* Solo remains gated (optional) */}
                       <Route
                         path="/wine-options/solo"
                         element={
@@ -550,27 +553,12 @@ function App() {
                           </RequireAuth>
                         }
                       />
-                      <Route
-                        path="/wine-options/multiplayer"
-                        element={
-                          <RequireAuth>
-                            <RequireOnboarded>
-                              <WineOptionsGame />
-                            </RequireOnboarded>
-                          </RequireAuth>
-                        }
-                      />
-                      {/* Deep link: /join/ABCD autofills invite code */}
-                      <Route
-                        path="/join/:code"
-                        element={
-                          <RequireAuth>
-                            <RequireOnboarded>
-                              <WineOptionsJoinRoute />
-                            </RequireOnboarded>
-                          </RequireAuth>
-                        }
-                      />
+                      {/* Multiplayer is OPEN (guests allowed; page will prompt to sign in to save points) */}
+                      <Route path="/wine-options/multiplayer" element={<WineOptionsGame />} />
+
+                      {/* Deep links to join a specific room — OPEN */}
+                      <Route path="/join/:code" element={<WineOptionsJoinRoute />} />
+                      <Route path="/wine-options/join/:code" element={<WineOptionsJoinRoute />} />
 
                       {/* Dashboard / Account */}
                       <Route
