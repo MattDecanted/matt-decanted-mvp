@@ -45,9 +45,6 @@ import Dashboard from "@/pages/Dashboard";
 import BadgesPage from "@/pages/BadgesPage";
 import Terms from "@/pages/Terms";
 
-import AdminHub from "@/pages/admin/AdminHub";
-
-
 import AccountBadges from "@/pages/AccountBadges";
 
 import BlogIndex from "@/pages/blog/BlogIndex";
@@ -67,7 +64,7 @@ import Onboarding from "@/pages/Onboarding";
 import ModulesIndex from "@/pages/ModulesIndex";
 import ModuleDetail from "@/pages/ModuleDetail";
 
-// Admin
+// Admin (more)
 import ContentGateManager from "@/pages/admin/ContentGateManager";
 import UsersManager from "@/pages/admin/UsersManager";
 import AdminGuessWhat from "@/pages/admin/AdminGuessWhat";
@@ -466,17 +463,17 @@ function App() {
                         }
                       />
 
-                      {/* Admin (other) */}
+                      {/* Admin Hub */}
                       <Route
-  path="/admin"
-  element={
-    <RequireAdmin>
-      <AdminHub />
-    </RequireAdmin>
-  }
-/>
-                      
-                      <Route path="/admin" element={<Navigate to="/admin/users" replace />} />
+                        path="/admin"
+                        element={
+                          <RequireAdmin>
+                            <AdminHub />
+                          </RequireAdmin>
+                        }
+                      />
+
+                      {/* Other admin tools */}
                       <Route
                         path="/admin/shorts"
                         element={
