@@ -3,7 +3,7 @@ import React, { useEffect, useRef, useState } from "react";
 import type { RealtimeChannel } from "@supabase/supabase-js";
 import {
   Users, Share2, Copy, Loader2, Trophy, ChevronRight, CheckCircle2,
-  LogOut, Camera, Upload, AlertTriangle
+  LogOut, Camera, Upload, AlertTriangle, Info
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import {
@@ -83,7 +83,7 @@ const REGION_POOLS: Record<string, string[]> = {
   India: ["Nashik","Nandi Hills","Akluj","Baramati"],
 };
 
-/* ---------- (3) grape dictionary + detectors ---------- */
+/* ---------- grape dictionary + detectors ---------- */
 const WHITE_POOL = [
   "Chardonnay","Sauvignon Blanc","Riesling","Pinot Gris","Pinot Grigio","Gewürztraminer","Chenin Blanc","Viognier",
   "Semillon","Muscat Blanc à Petits Grains","Trebbiano","Verdelho","Albariño","Garganega","Marsanne","Roussanne",
@@ -99,7 +99,7 @@ const RED_POOL = [
   "Carménère","Pinotage","Saperavi","Kadarka","Plavac Mali","Xinomavro","Agiorgitiko","Negroamaro","Lambrusco","Schiava"
 ];
 const GRAPE_SYNONYMS: Record<string, string[]> = {
-  // (…same as before…)
+  // (… keep the same synonyms as your current file …)
   "Chardonnay": ["blanc de bourgogne","chablis"],
   "Sauvignon Blanc": ["fumé blanc","blanc fumé","sauv blanc"],
   "Riesling": ["johannisberg riesling","weisser riesling","weißer riesling","white riesling"],
@@ -143,7 +143,6 @@ const GRAPE_SYNONYMS: Record<string, string[]> = {
   "Furmint": [],
   "Hárslevelű": ["harslevelu"],
   "Savagnin": ["nature (jura savagnin)","heida","paien"],
-  // Reds
   "Cabernet Sauvignon": ["cab sauv","cabernet-sauvignon"],
   "Merlot": ["merlot noir"],
   "Pinot Noir": ["spätburgunder","blauburgunder","pinot nero","spatburgunder"],
@@ -202,7 +201,7 @@ function findGrapesInText(text: string): string[] {
   return Array.from(new Set(hits));
 }
 
-/* ---------- (2) Burgundy helpers ---------- */
+/* ---------- Burgundy helpers ---------- */
 const BOURGOGNE_MARKERS = [
   "bourgogne","burgundy","cote d'or","côte d'or",
   "cote de beaune","côte de beaune","cote de nuits","côte de nuits",
@@ -218,7 +217,7 @@ const VILLAGES_Nuits = [
   "vougeot","morey-saint-denis","nuits-saint-georges","fixin","marsannay"
 ];
 
-/* ---------- wine_reference DB lookup ---------- */
+/* ---------- DB lookup ---------- */
 type GeoPick = {
   countryCorrect?: string;
   countryOptions: string[];
@@ -281,22 +280,14 @@ async function fetchGeoFromWineReference(ocrText: string): Promise<GeoPick | nul
   };
 }
 
-/* ---------- Variety/blend rules ---------- */
-function detectVarietyOrBlend(
-  textRaw: string,
-  ocrHint?: string | null,
-  typical?: string[]
-): { label: string; distractors: string[] } {
+/* ---------- Variety/blend ---------- */
+function detectVarietyOrBlend(textRaw: string, ocrHint?: string | null, typical?: string[]) {
   const t = textRaw;
-
-  // Champagne
   if (/\bchampagne\b/i.test(t)) {
     if (/\bblanc\s+de\s+blancs?\b/i.test(t)) return { label: "Chardonnay", distractors: ["Sauvignon Blanc","Riesling","Blend"] };
     if (/\bblanc\s+de\s+noirs?\b/i.test(t))  return { label: "Pinot Noir", distractors: ["Gamay","Merlot","Blend"] };
     return { label: "Blend", distractors: ["Pinot Noir","Chardonnay","Pinot Meunier"] };
   }
-
-  // Burgundy villages
   const whiteBurg = hasAny(t, VILLAGES_Beaune) || /\b(chablis|corton-charlemagne)\b/i.test(t);
   const redBurg   = hasAny(t, VILLAGES_Nuits)  || /\b(gevrey|vosne|volnay|pommard|nuits)\b/i.test(t);
 
@@ -329,10 +320,9 @@ function detectVarietyOrBlend(
   return { label: "Blend", distractors: ["Cabernet Sauvignon","Pinot Noir","Chardonnay"] };
 }
 
-/* ---------- Country & Region fallback ---------- */
+/* ---------- Country/Region fallback ---------- */
 function detectCountryRegionFallback(textRaw: string) {
   const t = textRaw;
-
   const countryRules: Array<[string, RegExp]> = [
     ["France", /(france|bordeaux|bourgogne|burgundy|loire|alsace|rhone|rhône|beaujolais|champagne|sancerre|chablis|c[ôo]te|chateau|appellation)/i],
     ["Italy", /(italy|italia|toscana|chianti|barolo|barbaresco|piemonte|piedmont|veneto|sicilia|etna|prosecco|valpolicella|soave)/i],
@@ -353,7 +343,6 @@ function detectCountryRegionFallback(textRaw: string) {
   let country: string | undefined;
   for (const [name, rx] of countryRules) if (rx.test(t)) { country = name; break; }
 
-  // Burgundy force
   let regionFromBurgundy: string | undefined;
   let subregionFromBurgundy: string | null = null;
 
@@ -467,7 +456,11 @@ async function buildRoundPayloadFromOCR(file: File): Promise<{ questions: StepQu
   return { questions };
 }
 
-/* ---------- small UI bits ---------- */
+/* ---------- UI bits ---------- */
+function SectionTitle({ title }: { title: string }) {
+  return <div className="text-lg font-semibold text-gray-900">{title}</div>;
+}
+
 function InviteBar({ inviteCode }: { inviteCode: string }) {
   const [copied, setCopied] = useState(false);
   const base = typeof window !== "undefined" ? window.location.origin : "";
@@ -501,7 +494,7 @@ function ProcessingCard() {
   );
 }
 
-/** Intro (keeps the Len Evans paragraph) + heading/tagline */
+/** Top intro + tagline + Len Evans text */
 function GameIntro() {
   return (
     <div className="rounded-2xl border bg-white shadow-sm p-6 sm:p-8">
@@ -540,6 +533,36 @@ function GameIntro() {
           </ul>
         </div>
       </div>
+    </div>
+  );
+}
+
+/** Blue “Play with friends” information strip (visible before a session exists) */
+function PlayWithFriendsStrip() {
+  return (
+    <div className="rounded-2xl border border-blue-200 bg-blue-50 p-4 flex items-start gap-3">
+      <Info className="h-4 w-4 text-blue-600 mt-0.5" />
+      <div>
+        <div className="font-medium text-blue-900">Play with friends</div>
+        <div className="text-sm text-blue-900/80">
+          Sign in to host or join a session with a friend’s code. You’ll still see the upload area below,
+          but only the host can start a round.
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** Yellow “How to play it truly blind” callout */
+function BlindTips() {
+  return (
+    <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4">
+      <div className="font-medium text-amber-900 mb-1">How to play it truly blind</div>
+      <ul className="list-disc pl-5 text-sm text-amber-900/90 space-y-1">
+        <li>Ask a friend who <em>isn’t playing</em> to take or upload the label (or cover the label).</li>
+        <li>No black glass? A simple blindfold works — it keeps colour a secret.</li>
+        <li>Best with friends: smell, taste, debate your answers before you lock them in.</li>
+      </ul>
     </div>
   );
 }
@@ -808,189 +831,40 @@ export default function WineOptionsGame({ initialCode = "" }: { initialCode?: st
   const isParticipantHost = (p: Participant, s: GameSession) =>
     (!!s.host_user_id && !!p.user_id && p.user_id === s.host_user_id) || !!p.is_host;
 
-  if (!session) {
-    return (
-      <div className="max-w-3xl mx-auto p-6 space-y-6">
-        <GameIntro />
-
-        {err && <div className="text-sm rounded-2xl border border-red-200 bg-red-50 text-red-700 p-2">{toPlain(err)}</div>}
-
-        <div className="flex items-start gap-2 text-xs text-gray-600">
-          <AlertTriangle className="h-4 w-4 mt-0.5" />
-          <p>Magic-link sign-in may not persist in private/incognito windows (cookies/localStorage blocked). Use a normal window or email+password/OAuth for hosting.</p>
-        </div>
-
-        <div className="space-y-2">
-          <label className="block text-sm font-medium">Display name</label>
-          <input
-            className="w-full border rounded-2xl p-2"
-            value={displayName}
-            onChange={(e) => setDisplayName(e.target.value)}
-            placeholder="Your name"
-          />
-        </div>
-        <div className="flex items-center gap-3">
-          <button
-            disabled={loading}
-            onClick={handleHost}
-            className="px-4 py-2 rounded-2xl bg-black text-white inline-flex items-center gap-2 disabled:opacity-60 hover:opacity-95"
-          >
-            {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Users className="h-4 w-4" />}
-            Host new game
-          </button>
-          <div className="flex-1" />
-          <input
-            placeholder="Invite code"
-            className="border rounded-2xl p-2 w-40"
-            value={codeInput}
-            onChange={(e) => setCodeInput(e.target.value.toUpperCase())}
-          />
-          <button
-            disabled={loading || codeInput.length < 4}
-            onClick={handleJoin}
-            className="px-4 py-2 rounded-2xl bg-black text-white disabled:opacity-60 hover:opacity-95"
-          >
-            Join
-          </button>
-        </div>
-
-        <div className="text-xs text-gray-500">Upload controls appear after you host or join a session.</div>
-      </div>
-    );
-  }
+  /* ----------- PAGE LAYOUT ----------- */
 
   return (
     <div className="max-w-3xl mx-auto p-6 space-y-6">
       <GameIntro />
 
-      <div className="flex items-center justify-between">
-        <div className="text-sm">Status: <span className="font-medium">{uiStatus}</span></div>
-        <div className="text-sm text-gray-500">Players: {participants.length}</div>
-      </div>
+      {!session && <PlayWithFriendsStrip />}
 
-      <InviteBar inviteCode={session.invite_code} />
+      {/* Host/Join controls */}
+      {!round && (
+        <div className="space-y-2">
+          {err && <div className="text-sm rounded-2xl border border-red-200 bg-red-50 text-red-700 p-2">{toPlain(err)}</div>}
 
-      <div className="p-4 rounded-2xl border bg-white shadow-sm">
-        <div className="font-medium mb-2">Players</div>
-        <div className="flex flex-wrap gap-2">
-          {participants.map((p) => {
-            const host = isParticipantHost(p, session);
-            return (
-              <div key={p.id} className={`px-3 py-1 rounded-full border ${host ? "bg-gray-100" : ""}`}>
-                {p.display_name} {host && <span className="text-xs">(host)</span>} — {p.score} pts
-              </div>
-            );
-          })}
-        </div>
-      </div>
-
-      {uploadBusy && !round && <ProcessingCard />}
-
-      {/* Host-only upload */}
-      {!round && uiStatus === "waiting" && isHost && (
-        <div className="space-y-4 p-4 rounded-2xl border bg-white shadow-sm">
-          <div className="flex items-center gap-2 text-sm font-medium">
-            <Camera className="h-4 w-4" />
-            <span>You are the host — upload or take a photo to start the round</span>
+          <div className="flex items-start gap-2 text-xs text-gray-600">
+            <AlertTriangle className="h-4 w-4 mt-0.5" />
+            <p>Magic-link sign-in may not persist in private/incognito windows. Use a normal window or email+password/OAuth for hosting.</p>
           </div>
 
-          {uploadErr && (
-            <div className="text-sm rounded-2xl border border-red-200 bg-red-50 text-red-700 p-2">
-              {toPlain(uploadErr)}
-            </div>
-          )}
-
-          <div className="rounded-2xl border-2 border-dashed p-6 text-center">
-            <Camera className="h-8 w-8 mx-auto text-gray-500" />
-            <div className="mt-2 font-semibold">Add Wine Label Photo</div>
-            <div className="text-sm text-gray-600">Upload a clear photo of the wine label for AI analysis</div>
-            <div className="mt-4 flex items-center justify-center gap-3">
-              {/* Take Photo */}
-              <label className="inline-flex items-center gap-2 px-4 py-2 rounded-2xl bg-black text-white cursor-pointer hover:opacity-95">
-                <Camera className="h-4 w-4" />
-                <span>{uploadBusy ? "Reading…" : "Take Photo"}</span>
-                <input
-                  type="file"
-                  accept="image/*"
-                  capture="environment"
-                  className="hidden"
-                  disabled={uploadBusy}
-                  onChange={(e) => {
-                    const file = e.target.files?.[0];
-                    if (file) startGameFromUpload(file);
-                  }}
-                />
-              </label>
-              {/* Choose Photo */}
-              <label className="inline-flex items-center gap-2 px-4 py-2 rounded-2xl bg-black text-white cursor-pointer hover:opacity-95">
-                <Upload className="h-4 w-4" />
-                <span>{uploadBusy ? "Reading…" : "Choose Photo"}</span>
-                <input
-                  type="file"
-                  accept="image/*"
-                  className="hidden"
-                  disabled={uploadBusy}
-                  onChange={(e) => {
-                    const file = e.target.files?.[0];
-                    if (file) startGameFromUpload(file);
-                  }}
-                />
-              </label>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Guests waiting message */}
-      {!round && uiStatus === "waiting" && !isHost && (
-        <div className="p-4 rounded-2xl border bg-white shadow-sm text-sm text-gray-700">
-          Waiting for the host to start the round…
-        </div>
-      )}
-
-      {round && uiStatus !== "finished" && (
-        <div className="p-4 rounded-2xl border bg-white shadow-sm">
-          {me && <QuestionStepper round={round} me={me} onFinished={finishGame} />}
-        </div>
-      )}
-
-      {/* Results */}
-      {uiStatus === "finished" && (
-        <div className="p-4 rounded-2xl border bg-white shadow-sm space-y-3">
-          <div className="text-xl font-semibold flex items-center gap-2">
-            <Trophy className="h-5 w-5" /> Results
+          <div className="space-y-2">
+            <label className="block text-sm font-medium">Display name</label>
+            <input
+              className="w-full border rounded-2xl p-2"
+              value={displayName}
+              onChange={(e) => setDisplayName(e.target.value)}
+              placeholder="Your name"
+            />
           </div>
 
-          <ul className="space-y-1">
-            {[...participants].sort((a, b) => b.score - a.score).map((p, i) => (
-              <li key={p.id} className="flex justify-between">
-                <span>{i + 1}. {p.display_name}</span>
-                <span className="font-medium">{p.score} pts</span>
-              </li>
-            ))}
-          </ul>
-
-          <div className="flex items-center justify-between">
-            {!isHost ? (
-              <div className="text-sm text-gray-600">Waiting for the host to play again…</div>
-            ) : (
-              <button
-                onClick={playAgain}
-                className="inline-flex items-center gap-2 px-3 py-2 rounded-2xl bg-black text-white hover:opacity-95"
-              >
-                Play again
-              </button>
-            )}
-
+          <div className="flex items-center gap-3">
             <button
-              onClick={() => window.location.assign("/wine-options/multiplayer")}
-              className="inline-flex items-center gap-2 px-3 py-2 rounded-2xl border"
+              disabled={loading}
+              onClick={handleHost}
+              className="px-4 py-2 rounded-2xl bg-black text-white inline-flex items-center gap-2 disabled:opacity-60 hover:opacity-95"
             >
-              <LogOut className="h-4 w-4" /> Leave
-            </button>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
+              {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Users className="h-4 w-4" />}
+              Host new game
+            </but
