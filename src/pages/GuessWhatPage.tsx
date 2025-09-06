@@ -14,6 +14,9 @@ import {
   Trophy,
   Globe,
   HelpCircle,
+  Eye,
+  Target,
+  Users,
 } from "lucide-react";
 
 import { useAuth } from "@/context/AuthContext";
@@ -21,19 +24,16 @@ import { usePoints } from "@/context/PointsContext";
 import { useAnalytics } from "@/context/AnalyticsContext";
 import { useLocale } from "@/context/LocaleContext";
 
-import ChoiceButton from "@/components/ui/ChoiceButton";
-import BrandButton from "@/components/ui/BrandButton";
 import PointsGainBubble from "@/components/PointsGainBubble";
 import LevelUpBanner from "@/components/LevelUpBanner";
 import VideoPlayer from "@/components/VideoPlayer";
-import HowItWorks from "@/components/HowItWorks"; // ← 4-box explainer
 import { toast } from "sonner";
 
 import { supabase } from "@/lib/supabase";
 import { useQuizKeyboard } from "@/hooks/useQuizKeyboard";
 import { awardPoints } from "@/lib/points";
 
-/** ---------- Types aligned to DB ---------- */
+/* ---------- DB types ---------- */
 type BankRow = {
   id: string;
   slug: string;
@@ -56,27 +56,21 @@ type AttemptInsert = {
   is_correct: boolean;
 };
 
-/** ---------- Helpers ---------- */
+/* ---------- Helpers ---------- */
 function bottlePlaceholder() {
   const w = 1200, h = 675;
   const svg = `
   <svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">
-    <defs>
-      <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
-        <stop offset="0%" stop-color="#ff8a00"/>
-        <stop offset="100%" stop-color="#ff5e00"/>
-      </linearGradient>
-    </defs>
+    <defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#ffb26b"/><stop offset="100%" stop-color="#ff8c3b"/>
+    </linearGradient></defs>
     <rect width="${w}" height="${h}" fill="url(#g)"/>
-    <g fill="rgba(255,255,255,0.12)">
-      <circle cx="${w * 0.2}" cy="${h * 0.8}" r="160"/>
-      <circle cx="${w * 0.9}" cy="${h * 0.2}" r="120"/>
-    </g>
-    <g transform="translate(${w / 2}, ${h / 2})">
+    <g fill="rgba(255,255,255,0.12)"><circle cx="${w*0.23}" cy="${h*0.78}" r="160"/>
+      <circle cx="${w*0.88}" cy="${h*0.22}" r="120"/></g>
+    <g transform="translate(${w/2}, ${h/2})">
       <rect x="-55" y="-90" width="110" height="180" rx="10" fill="white" fill-opacity="0.85"/>
       <rect x="-10" y="-170" width="20" height="60" rx="5" fill="white" fill-opacity="0.85"/>
-    </g>
-  </svg>`;
+    </g></svg>`;
   return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
 }
 
@@ -89,6 +83,43 @@ const shuffle = <T,>(arr: T[]) => {
   return a;
 };
 
+/* ---------- Local, Bolt-style option row ---------- */
+function OptionRow({
+  letter,
+  label,
+  selected,
+  onClick,
+  index,
+}: {
+  letter: string;
+  label: React.ReactNode;
+  selected: boolean;
+  onClick: () => void;
+  index: number;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      data-opt-index={index}
+      data-opt-selected={selected ? "true" : undefined}
+      className={[
+        "w-full text-left rounded-md border px-4 py-3 transition-all",
+        "bg-white hover:bg-gray-50",
+        selected
+          ? "border-blue-500 ring-2 ring-blue-500/40"
+          : "border-gray-200",
+        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40",
+      ].join(" ")}
+      aria-pressed={selected}
+    >
+      <span className="mr-2 font-semibold text-gray-600">{letter}.</span>
+      <span className="text-gray-900">{label}</span>
+    </button>
+  );
+}
+
+/* ==================================================================== */
 export default function GuessWhatPage() {
   const navigate = useNavigate();
   const { user } = useAuth() as any;
@@ -109,7 +140,7 @@ export default function GuessWhatPage() {
 
   const optionsWrapRef = useRef<HTMLDivElement>(null);
 
-  /** Load questions (prefer user locale, fallback to en) */
+  /* Load questions (prefer locale then en) */
   useEffect(() => {
     (async () => {
       setLoading(true);
@@ -143,17 +174,20 @@ export default function GuessWhatPage() {
     })();
   }, [resolvedLocale]);
 
-  /** Autofocus */
+  /* Autofocus */
   useEffect(() => {
     if (!optionsWrapRef.current || finished) return;
     const selectedIdx = answers[current];
     const sel = optionsWrapRef.current.querySelector<HTMLButtonElement>(
-      selectedIdx !== undefined ? `button[data-opt-selected="true"]` : `button[data-opt-index="0"]`
+      selectedIdx !== undefined
+        ? `button[data-opt-selected="true"]`
+        : `button[data-opt-index="0"]`
     );
     sel?.focus();
   }, [current, finished, answers]);
 
-  const optionsCount = rows[current]?.options?.length ?? 0;
+  const currentRow = rows[current];
+  const optionsCount = currentRow?.options?.length ?? 0;
 
   useQuizKeyboard({
     enabled: !finished && optionsCount > 0,
@@ -162,8 +196,6 @@ export default function GuessWhatPage() {
     onNext: () => handleNext(),
     allowNext: answers[current] !== undefined,
   });
-
-  const currentRow = rows[current];
 
   const correctCount = useMemo(
     () =>
@@ -188,7 +220,6 @@ export default function GuessWhatPage() {
     [rows, answers]
   );
 
-  // First available reveal video in this round (optional)
   const revealUrl = useMemo(
     () => rows.find((r) => r.reveal_video_url)?.reveal_video_url || null,
     [rows]
@@ -204,7 +235,6 @@ export default function GuessWhatPage() {
 
   async function persistAttemptsAndPoints() {
     if (!user) return;
-
     try {
       const attempts: AttemptInsert[] = rows.map((r, i) => ({
         user_id: user.id,
@@ -212,7 +242,6 @@ export default function GuessWhatPage() {
         selected_index: answers[i] as number,
         is_correct: (answers[i] as number) === (r.correct_index ?? -1),
       }));
-
       if (attempts.length) {
         const { error: aErr } = await supabase.from("guess_what_attempts").insert(attempts);
         if (aErr) throw aErr;
@@ -233,7 +262,6 @@ export default function GuessWhatPage() {
               answers[i] === (r.correct_index ?? -1) ? Number(r.points_award ?? 0) : 0,
           })),
         });
-
         setJustGained((n) => n + pointsEarned);
         if (typeof refreshPoints === "function") await refreshPoints();
         toast.success(`Nice! +${pointsEarned} points from Guess What`);
@@ -258,6 +286,7 @@ export default function GuessWhatPage() {
     }
   }
 
+  /* ---------- Loading / empty ---------- */
   if (loading) {
     return (
       <div className="max-w-3xl mx-auto">
@@ -286,23 +315,20 @@ export default function GuessWhatPage() {
         </div>
 
         <Card>
-          <CardHeader>
-            <CardTitle className="text-2xl">Guess What</CardTitle>
-          </CardHeader>
+          <CardHeader><CardTitle className="text-2xl">Guess What</CardTitle></CardHeader>
           <CardContent className="p-8 text-center">
             <HelpCircle className="w-12 h-12 text-muted-foreground mx-auto mb-3" />
-            <p className="text-muted-foreground">
-              No questions found for your language yet. Try switching languages or check back soon.
-            </p>
+            <p className="text-muted-foreground">No questions found for your language yet. Try switching languages or check back soon.</p>
           </CardContent>
         </Card>
       </div>
     );
   }
 
+  /* ---------- Page ---------- */
   return (
     <div className="max-w-3xl mx-auto space-y-6">
-      {/* Header */}
+      {/* Top bar */}
       <div className="flex items-center justify-between">
         <Button variant="ghost" onClick={() => navigate("/play")} className="flex items-center space-x-2">
           <ArrowLeft className="h-4 w-4" />
@@ -320,27 +346,52 @@ export default function GuessWhatPage() {
         </div>
       </div>
 
-      {/* Hero */}
-      <div className="rounded-2xl overflow-hidden border shadow-card bg-white">
-        <div className="bg-gradient-to-br from-brand-300 to-brand-100 p-6 md:p-8">
-          <h1 className="text-2xl md:text-3xl font-bold text-brand-900">Guess What</h1>
-          <p className="mt-2 text-brand-900/80">
+      {/* Title */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-2xl">Guess What</CardTitle>
+          <p className="text-sm text-muted-foreground mt-1">
             Weekly blind tasting challenges where you guess alongside Matt. Make your picks and rack up points.
           </p>
-          <div className="mt-3 text-xs text-brand-900/70">
-            {rows.length} questions • {totalPotentialPoints} total points
-          </div>
-        </div>
-      </div>
+        </CardHeader>
+      </Card>
 
-      {/* 4-box explainer (kept visible above the game) */}
-      <HowItWorks className="mt-2" />
+      {/* How it works (Bolt-style 4 tiles) */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">How It Works</CardTitle>
+        </CardHeader>
+        <CardContent className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <HowItWorksTile
+            icon={<Eye className="w-4 h-4" />}
+            title="Watch Matt"
+            text="See Matt’s blind tasting notes and descriptors."
+          />
+          <HowItWorksTile
+            icon={<Target className="w-4 h-4" />}
+            title="Make Guesses"
+            text="Answer questions about grape, style, and region."
+          />
+          <HowItWorksTile
+            icon={<Users className="w-4 h-4" />}
+            title="See Matt’s Guess"
+            text="Compare your answers with Matt’s predictions."
+          />
+          <HowItWorksTile
+            icon={<Play className="w-4 h-4" />}
+            title="Big Reveal"
+            text="Discover the actual wine and who got it right!"
+          />
+        </CardContent>
+      </Card>
 
       {/* Game */}
       {!finished ? (
         <Card>
           <CardHeader>
-            <CardTitle className="text-lg">Question {current + 1} of {rows.length}</CardTitle>
+            <CardTitle className="text-base">
+              Question {current + 1} of {rows.length}
+            </CardTitle>
           </CardHeader>
           <CardContent className="space-y-5">
             {/* Progress */}
@@ -363,32 +414,34 @@ export default function GuessWhatPage() {
             {/* Prompt */}
             <h3 className="text-[15px] font-semibold text-gray-900">{currentRow?.prompt}</h3>
 
-            {/* Options */}
+            {/* Options (Bolt style) */}
             <div className="space-y-2" ref={optionsWrapRef}>
               {(currentRow?.options || ["True", "False"]).map((opt, idx) => {
                 const selected = answers[current] === idx;
                 return (
-                  <ChoiceButton
+                  <OptionRow
                     key={idx}
+                    letter={String.fromCharCode(65 + idx)}
                     label={opt}
-                    index={idx}
-                    state={selected ? "selected" : "idle"}
+                    selected={!!selected}
                     onClick={() => handleSelect(idx)}
-                    dataIndex={idx}
-                    dataSelected={selected}
-                    autoFocus={selected ? true : idx === 0}
+                    index={idx}
                   />
                 );
               })}
             </div>
 
             {/* Nav */}
-            <div className="mt-3 flex justify-end">
-              <BrandButton
-                onClick={handleNext}
-                disabled={answers[current] === undefined}
-                className="inline-flex items-center"
+            <div className="mt-4 flex items-center justify-between">
+              <Button
+                variant="outline"
+                onClick={() => setCurrent((c) => Math.max(0, c - 1))}
+                disabled={current === 0}
               >
+                <ArrowLeft className="w-4 h-4 mr-2" />
+                Previous
+              </Button>
+              <Button onClick={handleNext} disabled={answers[current] === undefined}>
                 {current === rows.length - 1 ? (
                   <>
                     Finish
@@ -396,11 +449,11 @@ export default function GuessWhatPage() {
                   </>
                 ) : (
                   <>
-                    Next
+                    Next Question
                     <ArrowRight className="w-4 h-4 ml-2" />
                   </>
                 )}
-              </BrandButton>
+              </Button>
             </div>
           </CardContent>
         </Card>
@@ -408,16 +461,19 @@ export default function GuessWhatPage() {
         <>
           {/* Reveal video (optional) */}
           {revealUrl && (
-            <div className="rounded-2xl overflow-hidden shadow bg-white">
-              <div className="p-4 sm:p-6">
-                <h2 className="text-lg font-semibold mb-3">Reveal Video</h2>
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base">Reveal Video</CardTitle>
+              </CardHeader>
+              <CardContent>
                 <div className="aspect-video rounded-xl overflow-hidden">
                   <VideoPlayer url={revealUrl} controls light />
                 </div>
-              </div>
-            </div>
+              </CardContent>
+            </Card>
           )}
 
+          {/* Results */}
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
@@ -451,11 +507,7 @@ export default function GuessWhatPage() {
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                         <div className={`p-3 rounded-lg ${ok ? "bg-green-50 border border-green-200" : "bg-red-50 border border-red-200"}`}>
                           <div className="flex items-center mb-1">
-                            {ok ? (
-                              <CheckCircle className="w-4 h-4 text-green-600 mr-2" />
-                            ) : (
-                              <XCircle className="w-4 h-4 text-red-600 mr-2" />
-                            )}
+                            {ok ? <CheckCircle className="w-4 h-4 text-green-600 mr-2" /> : <XCircle className="w-4 h-4 text-red-600 mr-2" />}
                             <span className="font-medium text-sm">Your Answer</span>
                           </div>
                           <div className={ok ? "text-green-800" : "text-red-800"}>
@@ -478,12 +530,11 @@ export default function GuessWhatPage() {
 
               {/* Actions */}
               <div className="flex flex-col sm:flex-row gap-3 justify-center">
-                <BrandButton onClick={() => navigate("/play")} className="inline-flex items-center justify-center">
+                <Button variant="outline" onClick={() => navigate("/play")} className="inline-flex items-center justify-center">
                   <ArrowLeft className="w-4 h-4 mr-2" />
                   Back to Challenges
-                </BrandButton>
+                </Button>
                 <Button
-                  variant="outline"
                   onClick={() => {
                     const reshuffled = shuffle(rows);
                     setRows(reshuffled);
@@ -503,10 +554,8 @@ export default function GuessWhatPage() {
         </>
       )}
 
-      {/* Floating +points chip */}
       {justGained > 0 && <PointsGainBubble amount={justGained} onDone={() => setJustGained(0)} />}
 
-      {/* Optional level-up banner */}
       <LevelUpBanner
         open={levelOpen}
         onClose={() => setLevelOpen(false)}
@@ -514,6 +563,27 @@ export default function GuessWhatPage() {
         ctaText="Explore More"
         ctaHref="/play"
       />
+    </div>
+  );
+}
+
+/* ---------- small tile ---------- */
+function HowItWorksTile({
+  icon,
+  title,
+  text,
+}: {
+  icon: React.ReactNode;
+  title: string;
+  text: string;
+}) {
+  return (
+    <div className="flex items-start gap-3 rounded-lg border bg-white p-3">
+      <div className="mt-0.5 rounded-md bg-blue-50 text-blue-700 p-2">{icon}</div>
+      <div>
+        <div className="font-medium">{title}</div>
+        <div className="text-sm text-gray-600">{text}</div>
+      </div>
     </div>
   );
 }
