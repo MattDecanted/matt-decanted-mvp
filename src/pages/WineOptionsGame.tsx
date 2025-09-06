@@ -867,4 +867,158 @@ export default function WineOptionsGame({ initialCode = "" }: { initialCode?: st
             >
               {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Users className="h-4 w-4" />}
               Host new game
-            </but
+            </button>
+            <div className="flex-1" />
+            <input
+              placeholder="Invite code"
+              className="border rounded-2xl p-2 w-40"
+              value={codeInput}
+              onChange={(e) => setCodeInput(e.target.value.toUpperCase())}
+            />
+            <button
+              disabled={loading || codeInput.length < 4}
+              onClick={handleJoin}
+              className="px-4 py-2 rounded-2xl bg-black text-white disabled:opacity-60 hover:opacity-95"
+            >
+              Join
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Upload section header */}
+      <SectionTitle title="Upload Wine Label Photo" />
+
+      <BlindTips />
+
+      {/* Upload zone (enabled only for host+waiting) */}
+      <div className={`rounded-2xl border-2 border-dashed p-6 text-center ${(!session || !isHost || uiStatus !== "waiting") ? "opacity-60 pointer-events-none" : ""}`}>
+        <Camera className="h-8 w-8 mx-auto text-gray-500" />
+        <div className="mt-2 font-semibold">Add Wine Label Photo</div>
+        <div className="text-sm text-gray-600">Upload a clear photo of the wine label for AI analysis</div>
+
+        {uploadErr && (
+          <div className="mt-3 text-sm rounded-2xl border border-red-200 bg-red-50 text-red-700 p-2">
+            {toPlain(uploadErr)}
+          </div>
+        )}
+
+        <div className="mt-4 flex items-center justify-center gap-3">
+          <label className="inline-flex items-center gap-2 px-4 py-2 rounded-2xl bg-black text-white cursor-pointer hover:opacity-95">
+            <Camera className="h-4 w-4" />
+            <span>{uploadBusy ? "Reading…" : "Take Photo"}</span>
+            <input
+              type="file"
+              accept="image/*"
+              capture="environment"
+              className="hidden"
+              disabled={uploadBusy || !session || !isHost || uiStatus !== "waiting"}
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (file) startGameFromUpload(file);
+              }}
+            />
+          </label>
+
+          <label className="inline-flex items-center gap-2 px-4 py-2 rounded-2xl bg-black text-white cursor-pointer hover:opacity-95">
+            <Upload className="h-4 w-4" />
+            <span>{uploadBusy ? "Reading…" : "Choose Photo"}</span>
+            <input
+              type="file"
+              accept="image/*"
+              className="hidden"
+              disabled={uploadBusy || !session || !isHost || uiStatus !== "waiting"}
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (file) startGameFromUpload(file);
+              }}
+            />
+          </label>
+        </div>
+
+        {!session && (
+          <div className="mt-3 text-xs text-gray-500">
+            Upload controls unlock after you host or join a session.
+          </div>
+        )}
+        {session && !isHost && (
+          <div className="mt-3 text-xs text-gray-500">
+            Only the host can upload the label.
+          </div>
+        )}
+      </div>
+
+      {/* Session details / participants */}
+      {session && (
+        <>
+          <div className="flex items-center justify-between">
+            <div className="text-sm">Status: <span className="font-medium">{uiStatus}</span></div>
+            <div className="text-sm text-gray-500">Players: {participants.length}</div>
+          </div>
+
+          <InviteBar inviteCode={session.invite_code} />
+
+          {uploadBusy && !round && <ProcessingCard />}
+
+          <div className="p-4 rounded-2xl border bg-white shadow-sm">
+            <div className="font-medium mb-2">Players</div>
+            <div className="flex flex-wrap gap-2">
+              {participants.map((p) => {
+                const host = isParticipantHost(p, session);
+                return (
+                  <div key={p.id} className={`px-3 py-1 rounded-full border ${host ? "bg-gray-100" : ""}`}>
+                    {p.display_name} {host && <span className="text-xs">(host)</span>} — {p.score} pts
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </>
+      )}
+
+      {round && uiStatus !== "finished" && (
+        <div className="p-4 rounded-2xl border bg-white shadow-sm">
+          {me && <QuestionStepper round={round} me={me} onFinished={finishGame} />}
+        </div>
+      )}
+
+      {/* Results */}
+      {uiStatus === "finished" && (
+        <div className="p-4 rounded-2xl border bg-white shadow-sm space-y-3">
+          <div className="text-xl font-semibold flex items-center gap-2">
+            <Trophy className="h-5 w-5" /> Results
+          </div>
+
+          <ul className="space-y-1">
+            {[...participants].sort((a, b) => b.score - a.score).map((p, i) => (
+              <li key={p.id} className="flex justify-between">
+                <span>{i + 1}. {p.display_name}</span>
+                <span className="font-medium">{p.score} pts</span>
+              </li>
+            ))}
+          </ul>
+
+          <div className="flex items-center justify-between">
+            {!isHost ? (
+              <div className="text-sm text-gray-600">Waiting for the host to play again…</div>
+            ) : (
+              <button
+                onClick={playAgain}
+                className="inline-flex items-center gap-2 px-3 py-2 rounded-2xl bg-black text-white hover:opacity-95"
+              >
+                Play again
+              </button>
+            )}
+
+            <button
+              onClick={() => window.location.assign("/wine-options/multiplayer")}
+              className="inline-flex items-center gap-2 px-3 py-2 rounded-2xl border"
+            >
+              <LogOut className="h-4 w-4" /> Leave
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
