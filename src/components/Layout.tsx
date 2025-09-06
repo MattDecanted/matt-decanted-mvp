@@ -33,6 +33,12 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   const navigate = useNavigate();
   const loc = useLocation();
 
+  // ---- Admin detection (ctx role, metadata role, or boolean flag) ----
+  const isAdmin =
+    (profile as any)?.role === "admin" ||
+    (profile as any)?.is_admin === true ||
+    ((user?.user_metadata as any)?.role === "admin");
+
   // Be flexible: accept totalPoints | points | balance
   const displayPoints = Number(
     (pointsCtx as any)?.totalPoints ??
@@ -46,7 +52,8 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     if (user?.id && (pointsCtx as any)?.refreshPoints) {
       (pointsCtx as any).refreshPoints();
     }
-  }, [user?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id]);
 
   const [open, setOpen] = React.useState(false);
 
@@ -82,14 +89,14 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     if (!locale) {
       try {
         const saved = localStorage.getItem("md_locale");
-        setLocale(saved && LANGS.some(l => l.code === saved) ? saved : "en");
+        setLocale(saved && LANGS.some((l) => l.code === saved) ? saved : "en");
       } catch {
         setLocale("en");
       }
     }
   }, [locale, setLocale]);
 
-  // 3) Always keep ?lang in the URL on every route (so Home/About/etc keep it)
+  // 3) Always keep ?lang in the URL on every route
   React.useEffect(() => {
     if (!locale) return;
     const params = new URLSearchParams(loc.search);
@@ -111,6 +118,26 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     navigate(url.pathname + "?" + url.searchParams.toString(), { replace: true });
   }
 
+  // ---- SEO: prevent crawling of /admin routes ----
+  React.useEffect(() => {
+    const shouldNoIndex = loc.pathname.startsWith("/admin");
+    const setMeta = (name: string, content: string) => {
+      let tag = document.querySelector(
+        `meta[name="${name}"][data-dynamic="1"]`
+      ) as HTMLMetaElement | null;
+      if (!tag) {
+        tag = document.createElement("meta");
+        tag.setAttribute("name", name);
+        tag.setAttribute("data-dynamic", "1");
+        document.head.appendChild(tag);
+      }
+      tag.setAttribute("content", content);
+    };
+    const content = shouldNoIndex ? "noindex,nofollow" : "index,follow";
+    setMeta("robots", content);
+    setMeta("googlebot", content);
+  }, [loc.pathname]);
+
   if (hideChrome) {
     return (
       <div className="min-h-screen flex flex-col">
@@ -131,7 +158,6 @@ export default function Layout({ children }: { children: React.ReactNode }) {
       {/* Header */}
       <header
         className="bg-white"
-        // ⛔️ hard-kill any global border/shadow from site-header CSS
         style={{ borderBottom: "none", boxShadow: "none" }}
       >
         <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
@@ -143,7 +169,6 @@ export default function Layout({ children }: { children: React.ReactNode }) {
                 alt="Matt Decanted"
                 className="h-8 w-auto block"
                 onError={(e) => {
-                  // graceful fallback if CDN hiccups
                   (e.currentTarget as HTMLImageElement).style.display = "none";
                 }}
               />
@@ -159,7 +184,6 @@ export default function Layout({ children }: { children: React.ReactNode }) {
             <nav
               className={cx(
                 "hidden md:flex items-center gap-5",
-                // remove any global underline if present: target children <a>
                 "[&_a]:no-underline [&_a]:border-b-0"
               )}
               style={{ borderBottom: "none" }}
@@ -182,6 +206,18 @@ export default function Layout({ children }: { children: React.ReactNode }) {
               <NavLink to="/dashboard" className={linkClass}>
                 Dashboard
               </NavLink>
+
+              {/* 🔒 Admin tab (only visible to admins) */}
+              {isAdmin && (
+                <NavLink
+                  to="/admin/guess-what"
+                  className={linkClass}
+                  // helps SEO even further
+                  rel="nofollow"
+                >
+                  Admin
+                </NavLink>
+              )}
             </nav>
 
             {/* Right cluster */}
@@ -290,6 +326,18 @@ export default function Layout({ children }: { children: React.ReactNode }) {
                 Dashboard
               </NavLink>
 
+              {/* 🔒 Admin (mobile) */}
+              {isAdmin && (
+                <NavLink
+                  to="/admin/guess-what"
+                  className={linkClass}
+                  rel="nofollow"
+                  onClick={() => setOpen(false)}
+                >
+                  Admin
+                </NavLink>
+              )}
+
               <div className="my-2 h-px bg-gray-200" />
 
               {/* Language (mobile) */}
@@ -359,7 +407,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
           </div>
         )}
 
-        {/* 🍊 Orange underline BELOW the header nav (darker + soft vertical edges) */}
+        {/* 🍊 Orange underline */}
         <div
           className="w-full"
           style={{
