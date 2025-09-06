@@ -20,6 +20,11 @@ import SignIn from "@/pages/SignIn";
 import ResetPassword from "@/pages/ResetPassword";
 import Activate from "@/pages/Activate";
 
+// Admin
+import AdminHub from "@/pages/admin/AdminHub";
+import VocabChallengeManager from "@/pages/admin/VocabChallengeManager";
+import SwirdleAdmin from "@/pages/admin/SwirdleAdmin";
+
 import GuessWhatPage from "@/pages/GuessWhatPage";
 import ShortsPage from "@/pages/ShortsPage";
 import ShortDetailPage from "@/pages/ShortDetailPage";
@@ -29,11 +34,9 @@ import PricingPage from "@/pages/PricingPage";
 import DailyQuizPage from "@/pages/DailyQuiz";
 import VinoVocabPage from "@/pages/VinoVocabPage";
 import BrandedDemo from "@/pages/BrandedDemo";
-import VocabChallengeManager from "@/pages/admin/VocabChallengeManager";
 import QuizManager from "@/pages/admin/QuizManager";
 import TrialQuizManager from "@/pages/admin/TrialQuizManager";
 import Swirdle from "@/pages/Swirdle";
-import SwirdleAdmin from "@/pages/admin/SwirdleAdmin";
 import WineOptionsGame from "@/pages/WineOptionsGame";
 import SoloWineOptions from "@/pages/SoloWineOptions";
 import GamePage from "@/pages/GamePage";
