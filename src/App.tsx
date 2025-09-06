@@ -42,6 +42,9 @@ import Dashboard from "@/pages/Dashboard";
 import BadgesPage from "@/pages/BadgesPage";
 import Terms from "@/pages/Terms";
 
+import AdminHub from "@/pages/admin/AdminHub";
+
+
 import AccountBadges from "@/pages/AccountBadges";
 
 import BlogIndex from "@/pages/blog/BlogIndex";
@@ -461,6 +464,15 @@ function App() {
                       />
 
                       {/* Admin (other) */}
+                      <Route
+  path="/admin"
+  element={
+    <RequireAdmin>
+      <AdminHub />
+    </RequireAdmin>
+  }
+/>
+                      
                       <Route path="/admin" element={<Navigate to="/admin/users" replace />} />
                       <Route
                         path="/admin/shorts"
