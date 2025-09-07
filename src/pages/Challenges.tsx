@@ -2,7 +2,7 @@
 import React from "react";
 import { Link } from "react-router-dom";
 import { Brain, Target, Wine, Trophy, Video, BookOpen } from "lucide-react";
-import { useLanguage } from "@/contexts/LanguageContext"; // uses your t() helper
+import { useLanguage } from "@/context/LanguageContext"; // uses your t() helper
 
 export default function Challenges() {
   const { t } = useLanguage();
