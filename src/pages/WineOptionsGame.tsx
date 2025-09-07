@@ -10,6 +10,8 @@ import {
   listenToSession, unsubscribe, setSessionStatus, endRound,
   submitAnswer, awardPoints, type GameSession, type Participant, type GameRound,
 } from "@/lib/gameSession";
+import { useAuth } from "@/context/AuthContext";
+import { useLocation } from "react-router-dom";
 
 /* ---------- tiny utils ---------- */
 const toPlain = (s?: string | null) => (s ? s.replace(/<[^>]+>/g, "") : "");
@@ -27,7 +29,7 @@ const parseVarList = (v: unknown): string[] =>
   : typeof v === "string" ? v.split(/[,;/]| and /i).map(x => x.trim()).filter(Boolean)
   : [];
 
-/* ---------- (1) tolerant string matching ---------- */
+/* ---------- tolerant string matching ---------- */
 const flexNorm = (s: string) =>
   norm(s).replace(/[-’'`]/g, " ").replace(/\s+/g, " ").trim();
 const hasPhrase = (hay: string, needle: string) =>
@@ -107,7 +109,7 @@ const RED_POOL = [
   "Carménère","Pinotage","Saperavi","Kadarka","Plavac Mali","Xinomavro","Agiorgitiko","Negroamaro","Lambrusco","Schiava"
 ];
 const GRAPE_SYNONYMS: Record<string, string[]> = {
-  // … (unchanged; keep full list)
+  // (full list intact)
   "Chardonnay": ["blanc de bourgogne","chablis"],
   "Sauvignon Blanc": ["fumé blanc","blanc fumé","sauv blanc"],
   "Riesling": ["johannisberg riesling","weisser riesling","weißer riesling","white riesling"],
@@ -151,6 +153,7 @@ const GRAPE_SYNONYMS: Record<string, string[]> = {
   "Furmint": [],
   "Hárslevelű": ["harslevelu"],
   "Savagnin": ["nature (jura savagnin)","heida","paien"],
+
   "Cabernet Sauvignon": ["cab sauv","cabernet-sauvignon"],
   "Merlot": ["merlot noir"],
   "Pinot Noir": ["spätburgunder","blauburgunder","pinot nero","spatburgunder"],
@@ -442,7 +445,7 @@ async function buildRoundPayloadFromOCR(file: File): Promise<{ questions: StepQu
   const hemiCorrect = isOld ? 0 : 1;
 
   const countryCorrect = fromDB?.countryCorrect ?? fall.countryCorrect!;
-  the regionCorrect  = fromDB?.regionCorrect  ?? fall.regionCorrect!;
+  const regionCorrect  = fromDB?.regionCorrect  ?? fall.regionCorrect!;
   const countryOptions = fromDB?.countryOptions?.length ? fromDB.countryOptions : fall.countryOptions;
   const regionOptions  = fromDB?.regionOptions?.length  ? fromDB.regionOptions  : fall.regionOptions;
   const subregionOptions = fromDB?.subregionOptions ?? fall.subregionOptions;
@@ -597,7 +600,7 @@ function QuestionStepper({
       await submitAnswer(round.id, me.id, selected, isCorrect).catch(() => {});
       if (isCorrect) {
         await bumpMyScore(10);      // persist + local bump
-        await awardPoints(me.id, 10).catch(() => {}); // global account points if you use them
+        await awardPoints(me.id, 10).catch(() => {}); // global account points
       }
     } finally {
       if (index < questions.length - 1) { setIndex(i => i + 1); setSelected(null); }
@@ -647,6 +650,9 @@ function QuestionStepper({
 
 /* ---------- page ---------- */
 export default function WineOptionsGame({ initialCode = "" }: { initialCode?: string }) {
+  const { user } = (useAuth() as any) ?? {};
+  const location = useLocation();
+
   const [displayName, setDisplayName] = useState("Player");
   const [codeInput, setCodeInput] = useState(initialCode);
   const [session, setSession] = useState<GameSession | null>(null);
@@ -888,9 +894,31 @@ export default function WineOptionsGame({ initialCode = "" }: { initialCode?: st
   const isParticipantHost = (p: Participant, s: GameSession) =>
     (!!s.host_user_id && !!p.user_id && p.user_id === s.host_user_id) || !!p.is_host;
 
+  // Build a "return to here" next param that prefers the live join link for this room
+  const joinPath = session?.invite_code
+    ? `/join/${session.invite_code}`
+    : (location.pathname + location.search);
+
   /* ----------- PAGE LAYOUT ----------- */
   return (
     <div className="max-w-3xl mx-auto p-6 space-y-6">
+      {/* Play-as-guest banner (always shown to guests) */}
+      {!user && (
+        <div className="rounded-2xl border border-amber-200 bg-amber-50 p-3 sm:p-4 flex items-start sm:items-center gap-3">
+          <Trophy className="h-4 w-4 text-amber-600 mt-0.5" />
+          <div className="text-sm text-amber-900">
+            You’re playing as a guest. <strong>Sign in</strong> to save your points to your account.
+          </div>
+          <div className="flex-1" />
+          <a
+            href={`/signin?next=${encodeURIComponent(joinPath)}`}
+            className="inline-flex items-center gap-2 px-3 py-2 rounded-2xl bg-violet-600 hover:bg-violet-700 text-white"
+          >
+            Save my points
+          </a>
+        </div>
+      )}
+
       <PageHeader />
       <HowAndTips />
 
