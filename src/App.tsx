@@ -77,6 +77,9 @@ import UsersManager from "@/pages/admin/UsersManager";
 import AdminGuessWhat from "@/pages/admin/AdminGuessWhat";
 import ShortsManager from "@/pages/admin/ShortsManager";
 
+// ✅ NEW: Challenges landing (Bolt-style)
+import Challenges from "@/pages/Challenges";
+
 const FN_SUBMIT = "/.netlify/functions/trial-quiz-attempt";
 const PENDING_KEY = "md_trial_pending";
 
@@ -344,6 +347,9 @@ function App() {
                       <Route path="/reset-password" element={<ResetPassword />} />
                       <Route path="/terms" element={<Terms />} />
 
+                      {/* NEW: Challenges landing (public) */}
+                      <Route path="/challenges" element={<Challenges />} />
+
                       {/* Debug */}
                       <Route path="/debug/auth" element={<DebugAuth />} />
 
@@ -393,7 +399,8 @@ function App() {
                       />
                       <Route
                         path="/game/:slug"
-                        element={
+                        element=
+                        {
                           <RequireAuth>
                             <RequireOnboarded>
                               <GamePage />
