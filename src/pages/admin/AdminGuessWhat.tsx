@@ -18,8 +18,8 @@ type Round = {
   hero_image_url: string | null;      // placeholder shown before selecting
   descriptors: string | null;         // Matt’s tasting descriptors (free text)
   video_url: string | null;           // main tasting video (Matt tasting)
-  reveal_video_url: string | null;    // ✅ reveal video
-  locked_vintage: string | null;
+  reveal_video_url: string | null;    // reveal video (optional)
+  locked_vintage: string | null;      // Round Defaults (UI)
   locked_variety: string | null;
   locked_region: string | null;
   locked_style: string | null;
@@ -28,7 +28,7 @@ type Round = {
   reveal_variety: string | null;
   reveal_region: string | null;
   reveal_notes: string | null;
-  reveal_image_url: string | null;    // optional image if you don’t use a reveal video
+  reveal_image_url: string | null;    // optional image if no reveal video
   active: boolean;
   created_at: string;
   updated_at: string;
@@ -59,6 +59,12 @@ const LANGS = [
   { code: "ja", name: "日本語",  flag: "🇯🇵" },
 ];
 
+/* ======= tiny UI tokens ======= */
+const BTN_PRIMARY =
+  "inline-flex items-center justify-center bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg font-medium disabled:opacity-60";
+const BTN_ALT_OUTLINE =
+  "inline-flex items-center justify-center bg-white text-black border border-black hover:bg-gray-50 px-3 py-2 rounded-lg";
+
 /* ================ Page ================ */
 export default function AdminGuessWhat() {
   const { profile, user } = useAuth() as any;
@@ -73,15 +79,13 @@ export default function AdminGuessWhat() {
     profile?.is_admin === true ||
     user?.user_metadata?.role === "admin";
 
-  // 🚫 SEO: ensure this page is not indexed/crawled
+  // 🚫 No indexing
   useEffect(() => {
     const meta = document.createElement("meta");
     meta.name = "robots";
     meta.content = "noindex,nofollow";
     document.head.appendChild(meta);
-    return () => {
-      document.head.removeChild(meta);
-    };
+    return () => document.head.removeChild(meta);
   }, []);
 
   if (!isAdmin) {
@@ -89,7 +93,7 @@ export default function AdminGuessWhat() {
       <div className="min-h-screen grid place-items-center bg-gray-50 p-8">
         <div className="text-center">
           <AlertCircle className="w-16 h-16 text-red-500 mx-auto mb-4" />
-          <h1 className="text-2xl font-bold">Access Denied</h1>
+        <h1 className="text-2xl font-bold">Access Denied</h1>
           <p className="text-gray-600">This page is restricted to administrators only.</p>
         </div>
       </div>
@@ -179,7 +183,7 @@ export default function AdminGuessWhat() {
               ))}
             </select>
             <button
-              className="inline-flex items-center bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg font-medium"
+              className={BTN_PRIMARY}
               onClick={() =>
                 setEditing({
                   id: "" as any,
@@ -274,22 +278,22 @@ export default function AdminGuessWhat() {
                       <div className="flex items-center gap-2">
                         <IconBtn title={r.active ? "Hide" : "Publish"} onClick={() => toggleRoundActive(r)}>
                           {r.active ? (
-                            <EyeOff className="w-4 h-4 text-amber-600" />
+                            <EyeOff className="w-4 h-4" />
                           ) : (
-                            <Eye className="w-4 h-4 text-green-600" />
+                            <Eye className="w-4 h-4" />
                           )}
                         </IconBtn>
                         <IconBtn title="Copy Round ID" onClick={() => navigator.clipboard.writeText(r.id)}>
-                          <DuplicateIcon className="w-4 h-4 text-gray-600" />
+                          <DuplicateIcon className="w-4 h-4" />
                         </IconBtn>
                         <IconBtn title="Preview this round" onClick={() => window.open(`/games/guess-what?round=${r.id}`, "_blank")}>
-                          <ExternalLink className="w-4 h-4 text-blue-600" />
+                          <ExternalLink className="w-4 h-4" />
                         </IconBtn>
                         <IconBtn title="Edit" onClick={() => setEditing(r)}>
-                          <Edit className="w-4 h-4 text-blue-600" />
+                          <Edit className="w-4 h-4" />
                         </IconBtn>
                         <IconBtn title="Delete" onClick={() => removeRound(r.id)}>
-                          <Trash2 className="w-4 h-4 text-red-600" />
+                          <Trash2 className="w-4 h-4" />
                         </IconBtn>
                       </div>
                     </div>
@@ -306,7 +310,6 @@ export default function AdminGuessWhat() {
             onClose={() => setEditing(null)}
             onSaved={async () => {
               setEditing(null);
-              // refresh list
               const { data } = await supabase
                 .from("guess_what_rounds")
                 .select("*")
@@ -321,7 +324,7 @@ export default function AdminGuessWhat() {
   );
 }
 
-/* ============== Round Editor with nested Questions ============== */
+/* ============== Round Editor with inline Question Editor ============== */
 function RoundEditor({
   round,
   onClose,
@@ -336,24 +339,7 @@ function RoundEditor({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
-  const [questions, setQuestions] = useState<BankRow[] | null>(null); // null = not yet loaded
-
-  useEffect(() => {
-    if (!round.id) return setQuestions([]); // new round; no questions yet
-    (async () => {
-      const { data, error } = await supabase
-        .from("guess_what_bank")
-        .select("*")
-        .eq("round_id", round.id)
-        .order("created_at", { ascending: true });
-      if (error) {
-        console.error(error);
-        setQuestions([]);
-        return;
-      }
-      setQuestions((data || []) as BankRow[]);
-    })();
-  }, [round.id]);
+  useEffect(() => setForm(round), [round]);
 
   async function saveRound(e: React.FormEvent) {
     e.preventDefault();
@@ -389,7 +375,6 @@ function RoundEditor({
           .select()
           .single();
         if (error) throw error;
-        // Put created id back into state so questions UI works immediately
         setForm(data as Round);
         onSaved();
       } else {
@@ -428,12 +413,10 @@ function RoundEditor({
   }
 
   return (
-    <Modal title={creating ? "Create Round" : "Edit Round"} onClose={onClose} wide>
+    <Modal title={creating ? "Create Round" : "Edit Round"} onClose={onClose} wide z={50}>
       <form onSubmit={saveRound} className="space-y-5">
         {error && (
-          <div className="p-3 rounded bg-red-50 text-red-700 border border-red-200 text-sm">
-            {error}
-          </div>
+          <div className="p-3 rounded bg-red-50 text-red-700 border border-red-200 text-sm">{error}</div>
         )}
 
         {!creating && (
@@ -442,15 +425,22 @@ function RoundEditor({
             <code className="px-1 py-0.5 bg-gray-100 rounded select-all">{form.id}</code>
             <button
               type="button"
-              className="ml-2 inline-flex items-center gap-1 px-2 py-1 border rounded"
+              className={`${BTN_ALT_OUTLINE} ml-2`}
               onClick={() => navigator.clipboard.writeText(form.id)}
             >
-              <DuplicateIcon className="w-3 h-3" /> Copy
+              <DuplicateIcon className="w-3 h-3 mr-1" /> Copy
+            </button>
+            <button
+              type="button"
+              className={`${BTN_ALT_OUTLINE} ml-2`}
+              onClick={() => window.open(`/games/guess-what?round=${form.id}`, "_blank")}
+            >
+              <ExternalLink className="w-3 h-3 mr-1" /> Preview
             </button>
           </div>
         )}
 
-        <div className="grid grid-cols-1 md/grid-cols-3 md:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <Field label="Language">
             <select
               className="w-full px-3 py-2 border rounded-md"
@@ -543,35 +533,42 @@ function RoundEditor({
           />
         </Field>
 
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-          <Field label="Locked Vintage">
-            <input
-              className="w-full px-3 py-2 border rounded-md"
-              value={form.locked_vintage ?? ""}
-              onChange={(e) => setForm({ ...form, locked_vintage: e.target.value })}
-            />
-          </Field>
-          <Field label="Locked Variety">
-            <input
-              className="w-full px-3 py-2 border rounded-md"
-              value={form.locked_variety ?? ""}
-              onChange={(e) => setForm({ ...form, locked_variety: e.target.value })}
-            />
-          </Field>
-          <Field label="Locked Region">
-            <input
-              className="w-full px-3 py-2 border rounded-md"
-              value={form.locked_region ?? ""}
-              onChange={(e) => setForm({ ...form, locked_region: e.target.value })}
-            />
-          </Field>
-          <Field label="Locked Style/Level">
-            <input
-              className="w-full px-3 py-2 border rounded-md"
-              value={form.locked_style ?? ""}
-              onChange={(e) => setForm({ ...form, locked_style: e.target.value })}
-            />
-          </Field>
+        {/* Round Defaults (formerly "Locked") */}
+        <div className="rounded-lg border p-4">
+          <div className="font-medium mb-2">Round Defaults (optional)</div>
+          <p className="text-xs text-gray-600 mb-3">
+            Canonical answers you’ll reveal for this round. Players still answer via questions; these are for the reveal or as defaults.
+          </p>
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+            <Field label="Default Vintage">
+              <input
+                className="w-full px-3 py-2 border rounded-md"
+                value={form.locked_vintage ?? ""}
+                onChange={(e) => setForm({ ...form, locked_vintage: e.target.value })}
+              />
+            </Field>
+            <Field label="Default Variety / Blend">
+              <input
+                className="w-full px-3 py-2 border rounded-md"
+                value={form.locked_variety ?? ""}
+                onChange={(e) => setForm({ ...form, locked_variety: e.target.value })}
+              />
+            </Field>
+            <Field label="Default Region / Appellation">
+              <input
+                className="w-full px-3 py-2 border rounded-md"
+                value={form.locked_region ?? ""}
+                onChange={(e) => setForm({ ...form, locked_region: e.target.value })}
+              />
+            </Field>
+            <Field label="Default Style / Level">
+              <input
+                className="w-full px-3 py-2 border rounded-md"
+                value={form.locked_style ?? ""}
+                onChange={(e) => setForm({ ...form, locked_style: e.target.value })}
+              />
+            </Field>
+          </div>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -637,15 +634,11 @@ function RoundEditor({
         </div>
 
         <div className="flex gap-3">
-          <button
-            type="submit"
-            disabled={saving}
-            className="flex-1 inline-flex items-center justify-center bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg font-medium disabled:opacity-60"
-          >
+          <button type="submit" disabled={saving} className={`${BTN_PRIMARY} flex-1`}>
             <Save className="w-4 h-4 mr-2" />
             {saving ? "Saving…" : creating ? "Create Round" : "Save Changes"}
           </button>
-          <button type="button" onClick={onClose} className="flex-1 border px-4 py-2 rounded-lg">
+          <button type="button" onClick={onClose} className={`${BTN_ALT_OUTLINE} flex-1`}>
             Cancel
           </button>
         </div>
@@ -657,6 +650,7 @@ function RoundEditor({
   );
 }
 
+/* ============== Questions list + inline editor ============== */
 function RoundQuestions({ roundId, locale }: { roundId: string; locale: string }) {
   const [rows, setRows] = useState<BankRow[] | null>(null);
   const [editing, setEditing] = useState<BankRow | null>(null);
@@ -697,33 +691,27 @@ function RoundQuestions({ roundId, locale }: { roundId: string; locale: string }
       active: false,
     };
     const { error } = await supabase.from("guess_what_bank").insert([payload]);
-    if (error) {
-      console.error(error);
-    }
+    if (error) console.error(error);
     await load();
   }
 
   async function removeRow(id: string) {
     if (!confirm("Delete this question?")) return;
     const { error } = await supabase.from("guess_what_bank").delete().eq("id", id);
-    if (error) {
-      console.error(error);
-    }
+    if (error) console.error(error);
     await load();
   }
 
-  const pointsTotal = React.useMemo(
+  const pointsTotal = useMemo(
     () => (rows || []).filter(r => r.active).reduce((s, r) => s + Number(r.points_award || 0), 0),
     [rows]
   );
 
-  if (rows === null) {
-    return <div className="mt-8 p-6 bg-white rounded-xl shadow">Loading questions…</div>;
-  }
+  if (rows === null) return <div className="mt-8 p-6 bg-white rounded-xl shadow">Loading questions…</div>;
 
   return (
-    <div className="mt-8 p-6 bg-white rounded-xl shadow">
-      <div className="flex items-center justify-between mb-4">
+    <div className="mt-8 p-6 bg-white rounded-xl shadow space-y-4">
+      <div className="flex items-center justify-between">
         <div className="flex items-baseline gap-4">
           <h3 className="text-lg font-semibold">Questions in this round</h3>
           <div className="text-sm text-gray-600">
@@ -731,7 +719,7 @@ function RoundQuestions({ roundId, locale }: { roundId: string; locale: string }
           </div>
         </div>
         <button
-          className="inline-flex items-center bg-blue-600 hover:bg-blue-700 text-white px-3 py-2 rounded-lg"
+          className={BTN_PRIMARY}
           onClick={() =>
             setEditing({
               id: "" as any,
@@ -754,6 +742,7 @@ function RoundQuestions({ roundId, locale }: { roundId: string; locale: string }
         </button>
       </div>
 
+      {/* List */}
       {rows.length === 0 ? (
         <div className="text-sm text-gray-600">No questions yet.</div>
       ) : (
@@ -779,26 +768,20 @@ function RoundQuestions({ roundId, locale }: { roundId: string; locale: string }
                       )
                     )}
                   </div>
-                  <div className="mt-1 text-xs text-amber-700">
-                    +{Number(r.points_award ?? 0)} pts
-                  </div>
+                  <div className="mt-1 text-xs text-amber-700">+{Number(r.points_award ?? 0)} pts</div>
                 </div>
                 <div className="flex items-center gap-2">
                   <IconBtn title={r.active ? "Hide" : "Publish"} onClick={() => toggleActive(r)}>
-                    {r.active ? (
-                      <EyeOff className="w-4 h-4 text-amber-600" />
-                    ) : (
-                      <Eye className="w-4 h-4 text-green-600" />
-                    )}
+                    {r.active ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                   </IconBtn>
                   <IconBtn title="Duplicate" onClick={() => duplicate(r)}>
-                    <DuplicateIcon className="w-4 h-4 text-purple-600" />
+                    <DuplicateIcon className="w-4 h-4" />
                   </IconBtn>
                   <IconBtn title="Edit" onClick={() => setEditing(r)}>
-                    <Edit className="w-4 h-4 text-blue-600" />
+                    <Edit className="w-4 h-4" />
                   </IconBtn>
                   <IconBtn title="Delete" onClick={() => removeRow(r.id)}>
-                    <Trash2 className="w-4 h-4 text-red-600" />
+                    <Trash2 className="w-4 h-4" />
                   </IconBtn>
                 </div>
               </div>
@@ -807,10 +790,12 @@ function RoundQuestions({ roundId, locale }: { roundId: string; locale: string }
         </ul>
       )}
 
+      {/* Inline editor */}
       {editing && (
-        <QuestionForm
+        <QuestionFormInline
+          key={editing.id || "new"}
           record={editing}
-          onClose={() => setEditing(null)}
+          onCancel={() => setEditing(null)}
           onSaved={async () => {
             setEditing(null);
             await load();
@@ -829,14 +814,14 @@ function uniqueSlug(rows: BankRow[], base: string) {
   return `${base}-${i}`;
 }
 
-/* ============== Question Form ============== */
-function QuestionForm({
+/* ============== Inline Question Form (no modal) ============== */
+function QuestionFormInline({
   record,
-  onClose,
+  onCancel,
   onSaved,
 }: {
   record: BankRow;
-  onClose(): void;
+  onCancel(): void;
   onSaved(): void;
 }) {
   const creating = !record.id;
@@ -865,14 +850,12 @@ function QuestionForm({
       ),
     }));
   }
-
   function moveOption(from: number, to: number) {
     const opts = [...(form.options || [])];
     if (to < 0 || to >= opts.length) return;
     const [moved] = opts.splice(from, 1);
     opts.splice(to, 0, moved);
 
-    // adjust correct index if needed
     let ci = Number(form.correct_index ?? 0);
     if (ci === from) ci = to;
     else if (ci > from && ci <= to) ci = ci - 1;
@@ -888,9 +871,7 @@ function QuestionForm({
 
     try {
       const cleanOptions = (form.options || []).map((o) => o.trim()).filter(Boolean);
-      if (cleanOptions.length < 2) {
-        throw new Error("Please provide at least two options.");
-      }
+      if (cleanOptions.length < 2) throw new Error("Please provide at least two options.");
       if (
         typeof form.correct_index !== "number" ||
         form.correct_index < 0 ||
@@ -904,7 +885,7 @@ function QuestionForm({
         slug: form.slug || `gw-${Date.now()}`,
         locale: form.locale,
         prompt: form.prompt,
-        options: cleanOptions.slice(0, 6), // keep things tidy (2–6)
+        options: cleanOptions.slice(0, 6), // 2–6 options
         correct_index: Number(form.correct_index ?? 0),
         image_url: form.image_url || null,
         points_award: Number(form.points_award ?? 0),
@@ -927,14 +908,21 @@ function QuestionForm({
   }
 
   return (
-    <Modal title={creating ? "Add Question" : "Edit Question"} onClose={onClose}>
-      <form onSubmit={save} className="space-y-4">
-        {error && (
-          <div className="p-3 rounded bg-red-50 text-red-700 border border-red-200 text-sm">
-            {error}
-          </div>
-        )}
+    <div className="border rounded-xl p-4">
+      <div className="flex items-center justify-between mb-2">
+        <div className="font-semibold">{creating ? "Add Question" : "Edit Question"}</div>
+        <button onClick={onCancel} className="p-1 rounded hover:bg-gray-100" aria-label="Close">
+          <X className="w-5 h-5" />
+        </button>
+      </div>
 
+      {error && (
+        <div className="mb-3 p-3 rounded bg-red-50 text-red-700 border border-red-200 text-sm">
+          {error}
+        </div>
+      )}
+
+      <form onSubmit={save} className="space-y-4">
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <Field label="Slug">
             <input
@@ -988,10 +976,10 @@ function QuestionForm({
         <div className="flex items-center justify-between">
           <label className="text-sm font-medium">Options</label>
           <div className="flex items-center gap-2">
-            <button type="button" onClick={addOption} className="px-3 py-1 border rounded text-sm">
+            <button type="button" onClick={addOption} className={BTN_ALT_OUTLINE}>
               + Add
             </button>
-            <button type="button" onClick={removeOption} className="px-3 py-1 border rounded text-sm">
+            <button type="button" onClick={removeOption} className={BTN_ALT_OUTLINE}>
               − Remove
             </button>
           </div>
@@ -1003,7 +991,7 @@ function QuestionForm({
               <div className="flex items-center gap-1">
                 <button
                   type="button"
-                  className="p-1 border rounded disabled:opacity-40"
+                  className={`${BTN_ALT_OUTLINE} p-1`}
                   onClick={() => moveOption(i, i - 1)}
                   disabled={i === 0}
                   title="Move up"
@@ -1012,7 +1000,7 @@ function QuestionForm({
                 </button>
                 <button
                   type="button"
-                  className="p-1 border rounded disabled:opacity-40"
+                  className={`${BTN_ALT_OUTLINE} p-1`}
                   onClick={() => moveOption(i, i + 1)}
                   disabled={i === (form.options?.length || 1) - 1}
                   title="Move down"
@@ -1040,20 +1028,16 @@ function QuestionForm({
         </div>
 
         <div className="flex gap-3">
-          <button
-            type="submit"
-            disabled={saving}
-            className="flex-1 inline-flex items-center justify-center bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg font-medium disabled:opacity-60"
-          >
+          <button type="submit" disabled={saving} className={`${BTN_PRIMARY} flex-1`}>
             <Save className="w-4 h-4 mr-2" />
             {saving ? "Saving…" : creating ? "Create Question" : "Save Question"}
           </button>
-          <button type="button" onClick={onClose} className="flex-1 border px-4 py-2 rounded-lg">
+          <button type="button" onClick={onCancel} className={`${BTN_ALT_OUTLINE} flex-1`}>
             Cancel
           </button>
         </div>
       </form>
-    </Modal>
+    </div>
   );
 }
 
@@ -1072,32 +1056,54 @@ function Kpi({ icon, label, value }: { icon: React.ReactNode; label: string; val
   );
 }
 
-function IconBtn({ title, onClick, children }: React.PropsWithChildren<{ title: string; onClick(): void }>) {
+/** Outline icon button — white bg, black border. */
+function IconBtn({
+  title,
+  onClick,
+  children,
+}: React.PropsWithChildren<{ title: string; onClick(): void }>) {
   return (
-    <button type="button" title={title} onClick={onClick} className="p-2 rounded-lg hover:bg-gray-50">
+    <button
+      type="button"
+      title={title}
+      onClick={onClick}
+      className={`${BTN_ALT_OUTLINE} p-2`}
+    >
       {children}
     </button>
   );
 }
 
+/** Modal with NO overlay click-to-close (prevents accidental dismissal). */
 function Modal({
   title,
   children,
   onClose,
   wide,
+  z = 50,
 }: {
   title: string;
   children: React.ReactNode;
   onClose(): void;
   wide?: boolean;
+  z?: number;
 }) {
   return (
-    <div className="fixed inset-0 z-50">
-      <div className="absolute inset-0 bg-black/40" onClick={onClose} />
-      <div className={`relative bg-white rounded-xl shadow-xl p-6 mx-auto my-8 ${wide ? "max-w-5xl" : "max-w-2xl"} w-[92%]`}>
+    <div className="fixed inset-0" style={{ zIndex: z }}>
+      {/* overlay (no click handler) */}
+      <div className="absolute inset-0 bg-black/40" />
+      <div
+        className={`relative bg-white rounded-xl shadow-xl p-6 mx-auto my-8 ${wide ? "max-w-5xl" : "max-w-2xl"} w-[92%]`}
+        onClick={(e) => e.stopPropagation()}
+        onMouseDown={(e) => e.stopPropagation()}
+      >
         <div className="flex items-start justify-between mb-4">
           <h3 className="text-lg font-semibold">{title}</h3>
-          <button aria-label="Close" onClick={onClose} className="p-1 rounded hover:bg-gray-100">
+          <button
+            aria-label="Close"
+            onClick={onClose}
+            className={`${BTN_ALT_OUTLINE} px-2 py-1`}
+          >
             <X className="w-5 h-5" />
           </button>
         </div>
