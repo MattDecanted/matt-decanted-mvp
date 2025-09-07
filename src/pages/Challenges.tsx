@@ -2,25 +2,37 @@
 import React from "react";
 import { Link } from "react-router-dom";
 import { Brain, Target, Wine, Trophy, Video, BookOpen } from "lucide-react";
+import { useLanguage } from "@/contexts/LanguageContext"; // uses your t() helper
 
 export default function Challenges() {
+  const { t } = useLanguage();
+
   return (
     <div className="min-h-screen py-12 bg-gray-50">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
 
         {/* Header */}
         <div className="text-center mb-12">
-          <h1 className="text-4xl font-bold text-gray-900 mb-4">Wine Games & Special Content</h1>
+          <h1 className="text-4xl font-bold text-gray-900 mb-4">
+            {t("challenges.title", "Wine Games & Special Content")}
+          </h1>
           <p className="text-xl text-gray-600 max-w-3xl mx-auto">
-            Interactive wine games and exclusive educational content to enhance your knowledge and palate.
+            {t(
+              "challenges.subtitle",
+              "Interactive wine games and exclusive educational content to enhance your knowledge and palate."
+            )}
           </p>
         </div>
 
         {/* Games */}
         <section className="bg-white rounded-lg shadow-lg p-8 mb-12">
           <div className="text-center mb-8">
-            <h2 className="text-2xl font-bold text-gray-900 mb-2">Wine Games</h2>
-            <p className="text-gray-600">Test your wine knowledge with interactive challenges</p>
+            <h2 className="text-2xl font-bold text-gray-900 mb-2">
+              {t("challenges.games.heading", "Wine Games")}
+            </h2>
+            <p className="text-gray-600">
+              {t("challenges.games.subheading", "Test your wine knowledge with interactive challenges")}
+            </p>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
@@ -30,10 +42,10 @@ export default function Challenges() {
               to="/swirdle"
               icon={<Brain className="w-8 h-8 text-purple-600" />}
               iconWrap="bg-purple-100"
-              title="Swirdle"
-              desc="Daily wine word puzzle — guess the term in 6 tries"
+              title={t("challenges.tiles.swirdle.title", "Swirdle")}
+              desc={t("challenges.tiles.swirdle.desc", "Daily wine word puzzle — guess the term in 6 tries")}
               ctaBg="bg-purple-600"
-              ctaText="Play Daily Challenge"
+              ctaText={t("challenges.tiles.swirdle.cta", "Play Daily Challenge")}
             />
 
             {/* Vino Vocab */}
@@ -41,10 +53,10 @@ export default function Challenges() {
               to="/vocab"
               icon={<Trophy className="w-8 h-8 text-rose-600" />}
               iconWrap="bg-rose-100"
-              title="Vino Vocab"
-              desc="Timed vocabulary rounds to sharpen your wine terminology"
+              title={t("challenges.tiles.vocab.title", "Vino Vocab")}
+              desc={t("challenges.tiles.vocab.desc", "Timed vocabulary rounds to sharpen your wine terminology")}
               ctaBg="bg-rose-600"
-              ctaText="Start Practising"
+              ctaText={t("challenges.tiles.vocab.cta", "Start Practising")}
             />
 
             {/* Daily Wine Quiz */}
@@ -52,10 +64,10 @@ export default function Challenges() {
               to="/daily-quiz"
               icon={<Target className="w-8 h-8 text-blue-600" />}
               iconWrap="bg-blue-100"
-              title="Daily Wine Quiz"
-              desc="Five fresh questions every day. Come back for streaks!"
+              title={t("challenges.tiles.dailyQuiz.title", "Daily Wine Quiz")}
+              desc={t("challenges.tiles.dailyQuiz.desc", "Five fresh questions every day. Come back for streaks!")}
               ctaBg="bg-blue-600"
-              ctaText="Take Today’s Quiz"
+              ctaText={t("challenges.tiles.dailyQuiz.cta", "Take Today’s Quiz")}
             />
 
             {/* Wine Options (multiplayer) */}
@@ -63,10 +75,10 @@ export default function Challenges() {
               to="/wine-options/multiplayer"
               icon={<Target className="w-8 h-8 text-teal-600" />}
               iconWrap="bg-teal-100"
-              title="Wine Options Game"
-              desc="Create or join a room and battle it out with friends"
+              title={t("challenges.tiles.options.title", "Wine Options Game")}
+              desc={t("challenges.tiles.options.desc", "Create or join a room and battle it out with friends")}
               ctaBg="bg-teal-600"
-              ctaText="Start Multiplayer"
+              ctaText={t("challenges.tiles.options.cta", "Start Multiplayer")}
             />
 
             {/* Guess What */}
@@ -74,10 +86,10 @@ export default function Challenges() {
               to="/games/guess-what"
               icon={<Wine className="w-8 h-8 text-amber-600" />}
               iconWrap="bg-amber-100"
-              title="Guess What"
-              desc="Weekly blind tasting with Matt — compare your picks"
+              title={t("challenges.tiles.guessWhat.title", "Guess What")}
+              desc={t("challenges.tiles.guessWhat.desc", "Weekly blind tasting with Matt — compare your picks")}
               ctaBg="bg-amber-600"
-              ctaText="Join Challenge"
+              ctaText={t("challenges.tiles.guessWhat.cta", "Join Challenge")}
             />
 
             {/* Swirdle Leaderboard */}
@@ -85,10 +97,10 @@ export default function Challenges() {
               to="/swirdle/leaderboard"
               icon={<Trophy className="w-8 h-8 text-indigo-600" />}
               iconWrap="bg-indigo-100"
-              title="Leaderboards"
-              desc="See how you rank and chase your next milestone"
+              title={t("challenges.tiles.leaderboards.title", "Leaderboards")}
+              desc={t("challenges.tiles.leaderboards.desc", "See how you rank and chase your next milestone")}
               ctaBg="bg-indigo-600"
-              ctaText="View Rankings"
+              ctaText={t("challenges.tiles.leaderboards.cta", "View Rankings")}
             />
           </div>
         </section>
@@ -99,16 +111,18 @@ export default function Challenges() {
           <div className="bg-white rounded-lg shadow-lg p-6">
             <div className="flex items-center mb-4">
               <Video className="w-8 h-8 text-purple-600 mr-3" />
-              <h2 className="text-2xl font-bold text-gray-900">Shorts</h2>
+              <h2 className="text-2xl font-bold text-gray-900">
+                {t("challenges.learn.shorts.heading", "Shorts")}
+              </h2>
             </div>
             <p className="text-gray-600 mb-6">
-              Bite-sized videos to learn something useful in under 2 minutes.
+              {t("challenges.learn.shorts.desc", "Bite-sized videos to learn something useful in under 2 minutes.")}
             </p>
             <Link
               to="/shorts"
               className="inline-flex items-center justify-center px-4 py-2 rounded-lg bg-purple-600 text-white font-medium hover:opacity-95 transition"
             >
-              Browse Shorts
+              {t("challenges.learn.shorts.cta", "Browse Shorts")}
             </Link>
           </div>
 
@@ -116,38 +130,42 @@ export default function Challenges() {
           <div className="bg-white rounded-lg shadow-lg p-6">
             <div className="flex items-center mb-4">
               <BookOpen className="w-8 h-8 text-blue-600 mr-3" />
-              <h2 className="text-2xl font-bold text-gray-900">Short Courses</h2>
+              <h2 className="text-2xl font-bold text-gray-900">
+                {t("challenges.learn.modules.heading", "Short Courses")}
+              </h2>
             </div>
             <p className="text-gray-600 mb-6">
-              Focused mini-courses covering specific topics in digestible sessions.
+              {t("challenges.learn.modules.desc", "Focused mini-courses covering specific topics in digestible sessions.")}
             </p>
             <Link
               to="/modules"
               className="inline-flex items-center justify-center px-4 py-2 rounded-lg bg-blue-600 text-white font-medium hover:opacity-95 transition"
             >
-              Explore Modules
+              {t("challenges.learn.modules.cta", "Explore Modules")}
             </Link>
           </div>
         </section>
 
         {/* All content CTA */}
         <div className="bg-white rounded-lg shadow-lg p-8 text-center">
-          <h2 className="text-2xl font-bold text-gray-900 mb-3">Everything in One Place</h2>
+          <h2 className="text-2xl font-bold text-gray-900 mb-3">
+            {t("challenges.footer.heading", "Everything in One Place")}
+          </h2>
           <p className="text-gray-600 mb-6">
-            Head to Shorts or Modules to dive deeper, or jump into a game above.
+            {t("challenges.footer.desc", "Head to Shorts or Modules to dive deeper, or jump into a game above.")}
           </p>
           <div className="flex flex-col sm:flex-row gap-3 justify-center">
             <Link
               to="/shorts"
               className="inline-flex items-center justify-center px-4 py-2 rounded-lg border bg-white text-gray-900 hover:bg-gray-50"
             >
-              View Shorts
+              {t("challenges.footer.ctaShorts", "View Shorts")}
             </Link>
             <Link
               to="/modules"
               className="inline-flex items-center justify-center px-4 py-2 rounded-lg bg-blue-600 text-white"
             >
-              View Modules
+              {t("challenges.footer.ctaModules", "View Modules")}
             </Link>
           </div>
         </div>
@@ -156,7 +174,7 @@ export default function Challenges() {
   );
 }
 
-/* --- Small tile component (white background, no black buttons) --- */
+/* Small tile component */
 function Tile({
   to,
   icon,
@@ -171,7 +189,7 @@ function Tile({
   iconWrap: string; // e.g. bg-purple-100
   title: string;
   desc: string;
-  ctaBg: string;    // e.g. bg-purple-600
+  ctaBg: string; // e.g. bg-purple-600
   ctaText: string;
 }) {
   return (
