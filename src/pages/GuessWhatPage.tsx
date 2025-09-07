@@ -1,6 +1,6 @@
 // src/pages/GuessWhatPage.tsx
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -13,10 +13,10 @@ import {
   XCircle,
   Trophy,
   Globe,
-  HelpCircle,
   Eye,
   Target,
   Users,
+  Calendar,
 } from "lucide-react";
 
 import { useAuth } from "@/context/AuthContext";
@@ -31,26 +31,41 @@ import { toast } from "sonner";
 
 import { supabase } from "@/lib/supabase";
 import { useQuizKeyboard } from "@/hooks/useQuizKeyboard";
-import { awardPoints } from "@/lib/points";
 
 /* ---------- DB types ---------- */
+type Round = {
+  id: string;
+  locale: string;
+  week_number: number | null;
+  title: string | null;
+  date: string | null;
+  hero_image_url: string | null;
+  descriptors: string | null;
+  video_url: string | null;           // Matt tasting video
+  reveal_video_url: string | null;    // reveal video (optional)
+  reveal_image_url: string | null;    // reveal image (optional)
+  active: boolean;
+};
+
 type BankRow = {
   id: string;
+  round_id: string | null;
   slug: string;
   locale: string;
   prompt: string;
   options: string[] | null;
   correct_index: number | null;
+  matt_index: number | null;          // Matt’s pick (index into options)
   image_url: string | null;
   points_award: number | null;
   active: boolean;
   created_at: string;
   updated_at: string;
-  reveal_video_url: string | null;
 };
 
 type AttemptInsert = {
   user_id: string;
+  round_id: string;
   bank_id: string;
   selected_index: number;
   is_correct: boolean;
@@ -122,6 +137,9 @@ function OptionRow({
 /* ==================================================================== */
 export default function GuessWhatPage() {
   const navigate = useNavigate();
+  const [search] = useSearchParams();
+  const roundIdFromUrl = search.get("round") || null;
+
   const { user } = useAuth() as any;
   const { resolvedLocale } = useLocale();
   const analytics = useAnalytics() as any;
@@ -129,6 +147,7 @@ export default function GuessWhatPage() {
   const refreshPoints: undefined | (() => Promise<void>) = pointsCtx?.refreshPoints;
 
   const [loading, setLoading] = useState(true);
+  const [round, setRound] = useState<Round | null>(null);
   const [rows, setRows] = useState<BankRow[]>([]);
   const [current, setCurrent] = useState(0);
   const [answers, setAnswers] = useState<(number | undefined)[]>([]);
@@ -138,41 +157,64 @@ export default function GuessWhatPage() {
   const [levelOpen, setLevelOpen] = useState(false);
   const [levelMsg, setLevelMsg] = useState("Nice work—content unlocked!");
 
+  const [appliedPoints, setAppliedPoints] = useState<boolean | null>(null);
+
   const optionsWrapRef = useRef<HTMLDivElement>(null);
 
-  /* Load questions (prefer locale then en) */
+  /* Load round + questions */
   useEffect(() => {
     (async () => {
       setLoading(true);
       try {
-        const locales = Array.from(new Set([resolvedLocale, "en"].filter(Boolean)));
-        const { data, error } = await supabase
+        let roundRes: { data: Round | null; error: any } | null = null;
+
+        if (roundIdFromUrl) {
+          roundRes = await supabase
+            .from("guess_what_rounds")
+            .select("*")
+            .eq("id", roundIdFromUrl)
+            .single();
+        } else {
+          roundRes = await supabase
+            .from("guess_what_rounds")
+            .select("*")
+            .eq("active", true)
+            .order("date", { ascending: false })
+            .order("created_at", { ascending: false })
+            .limit(1)
+            .single();
+        }
+        if (roundRes.error) throw roundRes.error;
+        const r = roundRes.data as Round | null;
+        if (!r) throw new Error("Round not found");
+
+        setRound(r);
+
+        const { data: qs, error: qErr } = await supabase
           .from("guess_what_bank")
           .select("*")
+          .eq("round_id", r.id)
           .eq("active", true)
-          .in("locale", locales)
-          .order("created_at", { ascending: false });
+          .order("created_at", { ascending: true });
 
-        if (error) throw error;
+        if (qErr) throw qErr;
 
-        const prioritized = (data || []).sort((a: BankRow, b: BankRow) => {
-          const as = a.locale === resolvedLocale ? 0 : 1;
-          const bs = b.locale === resolvedLocale ? 0 : 1;
-          return as - bs;
-        });
-
-        const pick = shuffle(prioritized).slice(0, Math.min(6, prioritized.length));
-        setRows(pick);
-        setAnswers(Array(pick.length).fill(undefined));
+        const usable = (qs || []) as BankRow[];
+        setRows(usable);
+        setAnswers(Array(usable.length).fill(undefined));
+        setCurrent(0);
+        setFinished(false);
+        setAppliedPoints(null);
       } catch (e) {
         console.error(e);
         toast.error("Failed to load Guess What");
+        setRound(null);
         setRows([]);
       } finally {
         setLoading(false);
       }
     })();
-  }, [resolvedLocale]);
+  }, [roundIdFromUrl]);
 
   /* Autofocus */
   useEffect(() => {
@@ -197,7 +239,7 @@ export default function GuessWhatPage() {
     allowNext: answers[current] !== undefined,
   });
 
-  const correctCount = useMemo(
+  const userCorrectCount = useMemo(
     () =>
       rows.reduce((n, r, i) => {
         const c = r.correct_index ?? -1;
@@ -206,12 +248,21 @@ export default function GuessWhatPage() {
     [rows, answers]
   );
 
+  const mattScore = useMemo(
+    () =>
+      rows.reduce((sum, r) => {
+        const ok = r.matt_index != null && r.matt_index === (r.correct_index ?? -1);
+        return sum + (ok ? Number(r.points_award ?? 0) : 0);
+      }, 0),
+    [rows]
+  );
+
   const totalPotentialPoints = useMemo(
     () => rows.reduce((sum, r) => sum + Number(r.points_award ?? 0), 0),
     [rows]
   );
 
-  const pointsEarned = useMemo(
+  const userBaseScore = useMemo(
     () =>
       rows.reduce((sum, r, i) => {
         const ok = answers[i] === (r.correct_index ?? -1);
@@ -220,10 +271,11 @@ export default function GuessWhatPage() {
     [rows, answers]
   );
 
-  const revealUrl = useMemo(
-    () => rows.find((r) => r.reveal_video_url)?.reveal_video_url || null,
-    [rows]
-  );
+  const beatMatt = userBaseScore > mattScore;
+  const bonus = beatMatt ? 100 : 0;
+  const userFinalScore = userBaseScore + bonus;
+
+  const revealUrl = round?.reveal_video_url || null;
 
   function handleSelect(index: number) {
     setAnswers((prev) => {
@@ -234,37 +286,56 @@ export default function GuessWhatPage() {
   }
 
   async function persistAttemptsAndPoints() {
-    if (!user) return;
+    if (!user || !round) return;
     try {
       const attempts: AttemptInsert[] = rows.map((r, i) => ({
         user_id: user.id,
+        round_id: round.id,
         bank_id: r.id,
-        selected_index: answers[i] as number,
+        selected_index: (answers[i] as number) ?? -1,
         is_correct: (answers[i] as number) === (r.correct_index ?? -1),
       }));
+
       if (attempts.length) {
         const { error: aErr } = await supabase.from("guess_what_attempts").insert(attempts);
-        if (aErr) throw aErr;
+        if (aErr) {
+          // Don’t block the flow—just log.
+          console.warn("attempt insert error", aErr);
+        }
       }
 
-      if (pointsEarned > 0) {
-        const roundRef = `${Date.now()}::${rows.map((r) => r.id).join(",")}`;
-        await awardPoints("guess_what", roundRef, {
-          total_questions: rows.length,
-          correct: correctCount,
-          locale: resolvedLocale,
-          bank_ids: rows.map((r) => r.id),
-          detail: rows.map((r, i) => ({
-            bank_id: r.id,
-            selected_index: answers[i],
-            correct_index: r.correct_index,
-            awarded:
-              answers[i] === (r.correct_index ?? -1) ? Number(r.points_award ?? 0) : 0,
-          })),
-        });
-        setJustGained((n) => n + pointsEarned);
-        if (typeof refreshPoints === "function") await refreshPoints();
-        toast.success(`Nice! +${pointsEarned} points from Guess What`);
+      if (userFinalScore > 0) {
+        // Points only first time per round
+        const { data, error } = await supabase.rpc("gw_award_points_once", {
+          user_id: user.id,
+          round_id: round.id,
+          points: userFinalScore,
+        } as any);
+        if (error) {
+          console.warn("gw_award_points_once error", error);
+          setAppliedPoints(null);
+        } else {
+          // Expecting the function to return boolean or a row with {applied:true/false}
+          const applied =
+            typeof data === "boolean"
+              ? data
+              : data?.applied ?? data?.success ?? null;
+          setAppliedPoints(applied);
+          if (applied) {
+            setJustGained((n) => n + userFinalScore);
+            if (typeof refreshPoints === "function") await refreshPoints();
+            toast.success(
+              beatMatt
+                ? `You beat Matt! +${userBaseScore} + ${bonus} bonus = ${userFinalScore} pts`
+                : `Nice! +${userFinalScore} points from Guess What`
+            );
+          } else {
+            toast.message("Practice complete", {
+              description:
+                "Scores are counted only the first time you play each round. This one didn’t add to your total.",
+            });
+          }
+        }
       }
     } catch (e) {
       console.error("persistAttemptsAndPoints", e);
@@ -279,9 +350,12 @@ export default function GuessWhatPage() {
       setFinished(true);
       await persistAttemptsAndPoints();
       analytics?.track?.("guess_what_complete", {
+        round_id: round?.id,
         total: rows.length,
-        correct: correctCount,
-        points_earned: pointsEarned,
+        correct: userCorrectCount,
+        user_score: userFinalScore,
+        matt_score: mattScore,
+        bonus_applied: beatMatt ? bonus : 0,
       });
     }
   }
@@ -300,7 +374,7 @@ export default function GuessWhatPage() {
     );
   }
 
-  if (!rows.length) {
+  if (!round || !rows.length) {
     return (
       <div className="max-w-3xl mx-auto space-y-6">
         <div className="flex items-center justify-between">
@@ -317,8 +391,7 @@ export default function GuessWhatPage() {
         <Card>
           <CardHeader><CardTitle className="text-2xl">Guess What</CardTitle></CardHeader>
           <CardContent className="p-8 text-center">
-            <HelpCircle className="w-12 h-12 text-muted-foreground mx-auto mb-3" />
-            <p className="text-muted-foreground">No questions found for your language yet. Try switching languages or check back soon.</p>
+            <p className="text-muted-foreground">No questions for this round yet. Please check back soon.</p>
           </CardContent>
         </Card>
       </div>
@@ -346,44 +419,95 @@ export default function GuessWhatPage() {
         </div>
       </div>
 
-      {/* Title */}
+      {/* Round header */}
       <Card>
         <CardHeader>
-          <CardTitle className="text-2xl">Guess What</CardTitle>
-          <p className="text-sm text-muted-foreground mt-1">
-            Weekly blind tasting challenges where you guess alongside Matt. Make your picks and rack up points.
-          </p>
+          <CardTitle className="text-2xl">
+            {round.title || "Guess What"}
+          </CardTitle>
+          <div className="flex items-center gap-3 text-sm text-muted-foreground">
+            {round.week_number != null && (
+              <span className="font-medium">Week {round.week_number}</span>
+            )}
+            {round.date && (
+              <span className="flex items-center gap-1">
+                <Calendar className="w-3.5 h-3.5" /> {round.date}
+              </span>
+            )}
+          </div>
         </CardHeader>
+        <CardContent className="space-y-4">
+          {/* hero */}
+          <div className="rounded-lg overflow-hidden border">
+            {round.hero_image_url ? (
+              <img
+                src={round.hero_image_url}
+                alt="Hero"
+                className="w-full h-56 object-cover"
+                loading="lazy"
+              />
+            ) : (
+              <img
+                src={bottlePlaceholder()}
+                alt="Placeholder"
+                className="w-full h-56 object-cover"
+                loading="lazy"
+              />
+            )}
+          </div>
+          {/* descriptors */}
+          {round.descriptors && (
+            <p className="text-sm text-gray-700">{round.descriptors}</p>
+          )}
+        </CardContent>
       </Card>
 
-      {/* How it works (Bolt-style 4 tiles) */}
+      {/* How it works — coloured icons (Bolt vibe) */}
       <Card>
         <CardHeader>
           <CardTitle className="text-base">How It Works</CardTitle>
         </CardHeader>
         <CardContent className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          <HowItWorksTile
-            icon={<Eye className="w-4 h-4" />}
+          <Step
+            icon={<Eye className="w-4 h-4 text-white" />}
             title="Watch Matt"
             text="See Matt’s blind tasting notes and descriptors."
+            bg="from-indigo-500 to-blue-500"
           />
-          <HowItWorksTile
-            icon={<Target className="w-4 h-4" />}
+          <Step
+            icon={<Target className="w-4 h-4 text-white" />}
             title="Make Guesses"
             text="Answer questions about grape, style, and region."
+            bg="from-green-500 to-emerald-500"
           />
-          <HowItWorksTile
-            icon={<Users className="w-4 h-4" />}
+          <Step
+            icon={<Users className="w-4 h-4 text-white" />}
             title="See Matt’s Guess"
             text="Compare your answers with Matt’s predictions."
+            bg="from-amber-500 to-orange-500"
           />
-          <HowItWorksTile
-            icon={<Play className="w-4 h-4" />}
+          <Step
+            icon={<Play className="w-4 h-4 text-white" />}
             title="Big Reveal"
             text="Discover the actual wine and who got it right!"
+            bg="from-fuchsia-500 to-pink-500"
           />
         </CardContent>
       </Card>
+
+      {/* Optional tasting video before questions */}
+      {round.video_url && !finished && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">Watch Matt</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="aspect-video rounded-xl overflow-hidden">
+              <VideoPlayer url={round.video_url} controls light />
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Game */}
       {!finished ? (
@@ -414,7 +538,7 @@ export default function GuessWhatPage() {
             {/* Prompt */}
             <h3 className="text-[15px] font-semibold text-gray-900">{currentRow?.prompt}</h3>
 
-            {/* Options (Bolt style) */}
+            {/* Options */}
             <div className="space-y-2" ref={optionsWrapRef}>
               {(currentRow?.options || ["True", "False"]).map((opt, idx) => {
                 const selected = answers[current] === idx;
@@ -460,15 +584,26 @@ export default function GuessWhatPage() {
       ) : (
         <>
           {/* Reveal video (optional) */}
-          {revealUrl && (
+          {(revealUrl || round.reveal_image_url) && (
             <Card>
               <CardHeader>
-                <CardTitle className="text-base">Reveal Video</CardTitle>
+                <CardTitle className="text-base">Big Reveal</CardTitle>
               </CardHeader>
               <CardContent>
-                <div className="aspect-video rounded-xl overflow-hidden">
-                  <VideoPlayer url={revealUrl} controls light />
-                </div>
+                {revealUrl ? (
+                  <div className="aspect-video rounded-xl overflow-hidden">
+                    <VideoPlayer url={revealUrl} controls light />
+                  </div>
+                ) : (
+                  <div className="rounded-xl overflow-hidden border">
+                    <img
+                      src={round.reveal_image_url || bottlePlaceholder()}
+                      alt="Reveal"
+                      className="w-full h-56 object-cover"
+                      loading="lazy"
+                    />
+                  </div>
+                )}
               </CardContent>
             </Card>
           )}
@@ -479,32 +614,51 @@ export default function GuessWhatPage() {
               <CardTitle className="flex items-center gap-2">
                 <Trophy className="h-6 w-6 text-primary" />
                 Results
-                <Badge variant="secondary" className="ml-1">{pointsEarned} pts</Badge>
+                <Badge variant="secondary" className="ml-1">
+                  You: {userFinalScore} pts
+                </Badge>
+                <Badge variant="outline" className="ml-1">
+                  Matt: {mattScore} pts
+                </Badge>
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-6">
               {/* Summary */}
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-3 gap-4">
                 <div className="text-center p-4 bg-green-50 border border-green-200 rounded-lg">
-                  <div className="text-2xl font-bold text-green-700">{correctCount}/{rows.length}</div>
-                  <div className="text-green-800 font-medium">Correct</div>
+                  <div className="text-2xl font-bold text-green-700">{userCorrectCount}/{rows.length}</div>
+                  <div className="text-green-800 font-medium">Your Correct</div>
+                </div>
+                <div className="text-center p-4 bg-blue-50 border border-blue-200 rounded-lg">
+                  <div className="text-2xl font-bold text-blue-700">{mattScore}</div>
+                  <div className="text-blue-800 font-medium">Matt’s Score</div>
                 </div>
                 <div className="text-center p-4 bg-amber-50 border border-amber-200 rounded-lg">
-                  <div className="text-2xl font-bold text-amber-700">{pointsEarned}</div>
-                  <div className="text-amber-800 font-medium">Points Earned</div>
+                  <div className="text-2xl font-bold text-amber-700">{userFinalScore}</div>
+                  <div className="text-amber-800 font-medium">
+                    Your Score{beatMatt ? " (+100 bonus)" : ""}
+                  </div>
                 </div>
               </div>
+
+              {/* Policy note */}
+              <p className="text-sm text-gray-600">
+                You can play this round as many times as you please to keep learning. <strong>Scores are taken only from the first time you play each round.</strong>
+                {appliedPoints === false && " (No points were added this time.)"}
+              </p>
 
               {/* Breakdown */}
               <div className="space-y-4">
                 {rows.map((r, i) => {
                   const userIdx = answers[i];
                   const correctIdx = r.correct_index ?? -1;
+                  const mattIdx = r.matt_index ?? -1;
                   const ok = userIdx === correctIdx;
+                  const mattOk = mattIdx === correctIdx;
                   return (
                     <div key={r.id} className="border border-gray-200 rounded-lg p-4">
                       <div className="font-medium text-gray-900 mb-3">{r.prompt}</div>
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                         <div className={`p-3 rounded-lg ${ok ? "bg-green-50 border border-green-200" : "bg-red-50 border border-red-200"}`}>
                           <div className="flex items-center mb-1">
                             {ok ? <CheckCircle className="w-4 h-4 text-green-600 mr-2" /> : <XCircle className="w-4 h-4 text-red-600 mr-2" />}
@@ -513,6 +667,14 @@ export default function GuessWhatPage() {
                           <div className={ok ? "text-green-800" : "text-red-800"}>
                             {r.options?.[userIdx as number] ?? "—"}
                           </div>
+                        </div>
+
+                        <div className={`p-3 rounded-lg ${mattOk ? "bg-blue-50 border border-blue-200" : "bg-gray-50 border border-gray-200"}`}>
+                          <div className="flex items-center mb-1">
+                            <Users className="w-4 h-4 text-blue-600 mr-2" />
+                            <span className="font-medium text-sm">Matt’s Answer</span>
+                          </div>
+                          <div className="text-gray-900">{r.options?.[mattIdx] ?? "—"}</div>
                         </div>
 
                         <div className="p-3 bg-gray-50 border border-gray-200 rounded-lg">
@@ -542,6 +704,7 @@ export default function GuessWhatPage() {
                     setCurrent(0);
                     setFinished(false);
                     setJustGained(0);
+                    setAppliedPoints(null);
                   }}
                   className="inline-flex items-center justify-center"
                 >
@@ -567,19 +730,23 @@ export default function GuessWhatPage() {
   );
 }
 
-/* ---------- small tile ---------- */
-function HowItWorksTile({
+/* ---------- coloured step tile ---------- */
+function Step({
   icon,
   title,
   text,
+  bg,
 }: {
   icon: React.ReactNode;
   title: string;
   text: string;
+  bg: string; // tailwind gradient stops, e.g. "from-indigo-500 to-blue-500"
 }) {
   return (
     <div className="flex items-start gap-3 rounded-lg border bg-white p-3">
-      <div className="mt-0.5 rounded-md bg-blue-50 text-blue-700 p-2">{icon}</div>
+      <div className={`mt-0.5 rounded-md p-2 text-white bg-gradient-to-br ${bg}`}>
+        {icon}
+      </div>
       <div>
         <div className="font-medium">{title}</div>
         <div className="text-sm text-gray-600">{text}</div>
