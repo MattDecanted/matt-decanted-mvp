@@ -4,7 +4,8 @@ import { supabase } from "@/lib/supabase";
 import { useAuth } from "@/context/AuthContext";
 import {
   Plus, Edit, Trash2, Eye, EyeOff, Save, X, Globe, HelpCircle, Image as ImageIcon,
-  CheckCircle, AlertCircle, Copy as DuplicateIcon, PlayCircle, Link as LinkIcon
+  CheckCircle, AlertCircle, Copy as DuplicateIcon, PlayCircle, Link as LinkIcon,
+  ExternalLink, ArrowUp, ArrowDown
 } from "lucide-react";
 
 /* ================= Types ================= */
@@ -17,7 +18,7 @@ type Round = {
   hero_image_url: string | null;      // placeholder shown before selecting
   descriptors: string | null;         // Matt’s tasting descriptors (free text)
   video_url: string | null;           // main tasting video (Matt tasting)
-  reveal_video_url: string | null;    // ✅ reveal video (your request)
+  reveal_video_url: string | null;    // ✅ reveal video
   locked_vintage: string | null;
   locked_variety: string | null;
   locked_region: string | null;
@@ -66,7 +67,7 @@ export default function AdminGuessWhat() {
   const [filterLocale, setFilterLocale] = useState("all");
   const [editing, setEditing] = useState<Round | null>(null);
 
-  // 🛡️ Admin gate: context, user metadata; UI fallback (router should already protect)
+  // 🛡️ Admin gate (router should already protect)
   const isAdmin =
     profile?.role === "admin" ||
     profile?.is_admin === true ||
@@ -189,7 +190,7 @@ export default function AdminGuessWhat() {
                   hero_image_url: "",
                   descriptors: "",
                   video_url: "",
-                  reveal_video_url: "", // ✅ default empty
+                  reveal_video_url: "",
                   locked_region: "",
                   locked_style: "",
                   locked_variety: "",
@@ -278,6 +279,12 @@ export default function AdminGuessWhat() {
                             <Eye className="w-4 h-4 text-green-600" />
                           )}
                         </IconBtn>
+                        <IconBtn title="Copy Round ID" onClick={() => navigator.clipboard.writeText(r.id)}>
+                          <DuplicateIcon className="w-4 h-4 text-gray-600" />
+                        </IconBtn>
+                        <IconBtn title="Preview this round" onClick={() => window.open(`/games/guess-what?round=${r.id}`, "_blank")}>
+                          <ExternalLink className="w-4 h-4 text-blue-600" />
+                        </IconBtn>
                         <IconBtn title="Edit" onClick={() => setEditing(r)}>
                           <Edit className="w-4 h-4 text-blue-600" />
                         </IconBtn>
@@ -365,7 +372,7 @@ function RoundEditor({
               hero_image_url: form.hero_image_url || null,
               descriptors: form.descriptors || null,
               video_url: form.video_url || null,
-              reveal_video_url: form.reveal_video_url || null, // ✅ new
+              reveal_video_url: form.reveal_video_url || null,
               locked_region: form.locked_region || null,
               locked_style: form.locked_style || null,
               locked_variety: form.locked_variety || null,
@@ -396,7 +403,7 @@ function RoundEditor({
             hero_image_url: form.hero_image_url || null,
             descriptors: form.descriptors || null,
             video_url: form.video_url || null,
-            reveal_video_url: form.reveal_video_url || null, // ✅ new
+            reveal_video_url: form.reveal_video_url || null,
             locked_region: form.locked_region || null,
             locked_style: form.locked_style || null,
             locked_variety: form.locked_variety || null,
@@ -429,7 +436,21 @@ function RoundEditor({
           </div>
         )}
 
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        {!creating && (
+          <div className="text-xs text-gray-500 -mb-2">
+            Round ID:{" "}
+            <code className="px-1 py-0.5 bg-gray-100 rounded select-all">{form.id}</code>
+            <button
+              type="button"
+              className="ml-2 inline-flex items-center gap-1 px-2 py-1 border rounded"
+              onClick={() => navigator.clipboard.writeText(form.id)}
+            >
+              <DuplicateIcon className="w-3 h-3" /> Copy
+            </button>
+          </div>
+        )}
+
+        <div className="grid grid-cols-1 md/grid-cols-3 md:grid-cols-3 gap-4">
           <Field label="Language">
             <select
               className="w-full px-3 py-2 border rounded-md"
@@ -691,6 +712,11 @@ function RoundQuestions({ roundId, locale }: { roundId: string; locale: string }
     await load();
   }
 
+  const pointsTotal = React.useMemo(
+    () => (rows || []).filter(r => r.active).reduce((s, r) => s + Number(r.points_award || 0), 0),
+    [rows]
+  );
+
   if (rows === null) {
     return <div className="mt-8 p-6 bg-white rounded-xl shadow">Loading questions…</div>;
   }
@@ -698,7 +724,12 @@ function RoundQuestions({ roundId, locale }: { roundId: string; locale: string }
   return (
     <div className="mt-8 p-6 bg-white rounded-xl shadow">
       <div className="flex items-center justify-between mb-4">
-        <h3 className="text-lg font-semibold">Questions in this round</h3>
+        <div className="flex items-baseline gap-4">
+          <h3 className="text-lg font-semibold">Questions in this round</h3>
+          <div className="text-sm text-gray-600">
+            Active points total: <strong className="text-gray-900">{pointsTotal}</strong>
+          </div>
+        </div>
         <button
           className="inline-flex items-center bg-blue-600 hover:bg-blue-700 text-white px-3 py-2 rounded-lg"
           onClick={() =>
@@ -835,6 +866,21 @@ function QuestionForm({
     }));
   }
 
+  function moveOption(from: number, to: number) {
+    const opts = [...(form.options || [])];
+    if (to < 0 || to >= opts.length) return;
+    const [moved] = opts.splice(from, 1);
+    opts.splice(to, 0, moved);
+
+    // adjust correct index if needed
+    let ci = Number(form.correct_index ?? 0);
+    if (ci === from) ci = to;
+    else if (ci > from && ci <= to) ci = ci - 1;
+    else if (ci < from && ci >= to) ci = ci + 1;
+
+    setForm({ ...form, options: opts, correct_index: ci });
+  }
+
   async function save(e: React.FormEvent) {
     e.preventDefault();
     setSaving(true);
@@ -954,6 +1000,26 @@ function QuestionForm({
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           {(form.options || []).map((opt, i) => (
             <div key={i} className="flex items-center gap-2">
+              <div className="flex items-center gap-1">
+                <button
+                  type="button"
+                  className="p-1 border rounded disabled:opacity-40"
+                  onClick={() => moveOption(i, i - 1)}
+                  disabled={i === 0}
+                  title="Move up"
+                >
+                  <ArrowUp className="w-4 h-4" />
+                </button>
+                <button
+                  type="button"
+                  className="p-1 border rounded disabled:opacity-40"
+                  onClick={() => moveOption(i, i + 1)}
+                  disabled={i === (form.options?.length || 1) - 1}
+                  title="Move down"
+                >
+                  <ArrowDown className="w-4 h-4" />
+                </button>
+              </div>
               <input
                 className="flex-1 px-3 py-2 border rounded-md"
                 placeholder={`Option ${i + 1}`}
