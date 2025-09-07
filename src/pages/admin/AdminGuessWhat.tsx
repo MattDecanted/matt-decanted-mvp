@@ -19,10 +19,12 @@ type Round = {
   descriptors: string | null;         // Matt’s tasting descriptors (free text)
   video_url: string | null;           // main tasting video (Matt tasting)
   reveal_video_url: string | null;    // reveal video (optional)
-  locked_vintage: string | null;      // Round Defaults (UI)
+  // Round Defaults (for reveal / convenience; players still answer via questions)
+  locked_vintage: string | null;
   locked_variety: string | null;
   locked_region: string | null;
   locked_style: string | null;
+  // Reveal block
   reveal_wine_name: string | null;
   reveal_vintage: string | null;
   reveal_variety: string | null;
@@ -42,6 +44,8 @@ type BankRow = {
   prompt: string;
   options: string[] | null;
   correct_index: number | null;
+  /** NEW: Matt’s pick for this question (index into options) */
+  matt_index: number | null;
   image_url: string | null;
   points_award: number | null;
   active: boolean;
@@ -93,7 +97,7 @@ export default function AdminGuessWhat() {
       <div className="min-h-screen grid place-items-center bg-gray-50 p-8">
         <div className="text-center">
           <AlertCircle className="w-16 h-16 text-red-500 mx-auto mb-4" />
-        <h1 className="text-2xl font-bold">Access Denied</h1>
+          <h1 className="text-2xl font-bold">Access Denied</h1>
           <p className="text-gray-600">This page is restricted to administrators only.</p>
         </div>
       </div>
@@ -183,6 +187,7 @@ export default function AdminGuessWhat() {
               ))}
             </select>
             <button
+              type="button"
               className={BTN_PRIMARY}
               onClick={() =>
                 setEditing({
@@ -277,11 +282,7 @@ export default function AdminGuessWhat() {
                       </div>
                       <div className="flex items-center gap-2">
                         <IconBtn title={r.active ? "Hide" : "Publish"} onClick={() => toggleRoundActive(r)}>
-                          {r.active ? (
-                            <EyeOff className="w-4 h-4" />
-                          ) : (
-                            <Eye className="w-4 h-4" />
-                          )}
+                          {r.active ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                         </IconBtn>
                         <IconBtn title="Copy Round ID" onClick={() => navigator.clipboard.writeText(r.id)}>
                           <DuplicateIcon className="w-4 h-4" />
@@ -686,6 +687,7 @@ function RoundQuestions({ roundId, locale }: { roundId: string; locale: string }
       prompt: row.prompt,
       options: row.options,
       correct_index: row.correct_index,
+      matt_index: row.matt_index ?? null,
       image_url: row.image_url,
       points_award: row.points_award,
       active: false,
@@ -719,6 +721,7 @@ function RoundQuestions({ roundId, locale }: { roundId: string; locale: string }
           </div>
         </div>
         <button
+          type="button"
           className={BTN_PRIMARY}
           onClick={() =>
             setEditing({
@@ -729,6 +732,7 @@ function RoundQuestions({ roundId, locale }: { roundId: string; locale: string }
               prompt: "",
               options: ["", "", ""],
               correct_index: 0,
+              matt_index: null,
               image_url: "",
               points_award: 50,
               active: true,
@@ -747,46 +751,56 @@ function RoundQuestions({ roundId, locale }: { roundId: string; locale: string }
         <div className="text-sm text-gray-600">No questions yet.</div>
       ) : (
         <ul className="divide-y">
-          {rows.map((r, idx) => (
-            <li key={r.id} className="py-4">
-              <div className="flex items-start justify-between">
-                <div className="pr-4">
-                  <div className="text-sm text-gray-500 mb-1">Q{idx + 1}</div>
-                  <div className="font-medium text-gray-900 mb-1">{r.prompt}</div>
-                  <div className="text-sm text-gray-600">
-                    {r.options?.map((o, i) =>
-                      i === r.correct_index ? (
-                        <strong key={i} className="text-green-700">
-                          {o}
-                          {i < (r.options?.length || 0) - 1 ? ", " : ""}
-                        </strong>
-                      ) : (
-                        <span key={i}>
-                          {o}
-                          {i < (r.options?.length || 0) - 1 ? ", " : ""}
-                        </span>
-                      )
-                    )}
+          {rows.map((r, idx) => {
+            const correct = r.options?.[Number(r.correct_index ?? -1)] ?? "—";
+            const matt = r.matt_index == null ? "—" : (r.options?.[Number(r.matt_index)] ?? "—");
+            return (
+              <li key={r.id} className="py-4">
+                <div className="flex items-start justify-between">
+                  <div className="pr-4">
+                    <div className="text-sm text-gray-500 mb-1">Q{idx + 1}</div>
+                    <div className="font-medium text-gray-900 mb-1">{r.prompt}</div>
+                    <div className="text-sm text-gray-600">
+                      {r.options?.map((o, i) =>
+                        i === r.correct_index ? (
+                          <strong key={i} className="text-green-700">
+                            {o}
+                            {i < (r.options?.length || 0) - 1 ? ", " : ""}
+                          </strong>
+                        ) : (
+                          <span key={i}>
+                            {o}
+                            {i < (r.options?.length || 0) - 1 ? ", " : ""}
+                          </span>
+                        )
+                      )}
+                    </div>
+                    <div className="mt-1 text-xs text-gray-700">
+                      Correct: <span className="font-medium">{correct}</span>
+                      {" · "}
+                      Matt: <span className="font-medium">{matt}</span>
+                      {" · "}
+                      <span className="text-amber-700">+{Number(r.points_award ?? 0)} pts</span>
+                    </div>
                   </div>
-                  <div className="mt-1 text-xs text-amber-700">+{Number(r.points_award ?? 0)} pts</div>
+                  <div className="flex items-center gap-2">
+                    <IconBtn title={r.active ? "Hide" : "Publish"} onClick={() => toggleActive(r)}>
+                      {r.active ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    </IconBtn>
+                    <IconBtn title="Duplicate" onClick={() => duplicate(r)}>
+                      <DuplicateIcon className="w-4 h-4" />
+                    </IconBtn>
+                    <IconBtn title="Edit" onClick={() => setEditing(r)}>
+                      <Edit className="w-4 h-4" />
+                    </IconBtn>
+                    <IconBtn title="Delete" onClick={() => removeRow(r.id)}>
+                      <Trash2 className="w-4 h-4" />
+                    </IconBtn>
+                  </div>
                 </div>
-                <div className="flex items-center gap-2">
-                  <IconBtn title={r.active ? "Hide" : "Publish"} onClick={() => toggleActive(r)}>
-                    {r.active ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                  </IconBtn>
-                  <IconBtn title="Duplicate" onClick={() => duplicate(r)}>
-                    <DuplicateIcon className="w-4 h-4" />
-                  </IconBtn>
-                  <IconBtn title="Edit" onClick={() => setEditing(r)}>
-                    <Edit className="w-4 h-4" />
-                  </IconBtn>
-                  <IconBtn title="Delete" onClick={() => removeRow(r.id)}>
-                    <Trash2 className="w-4 h-4" />
-                  </IconBtn>
-                </div>
-              </div>
-            </li>
-          ))}
+              </li>
+            );
+          })}
         </ul>
       )}
 
@@ -848,6 +862,10 @@ function QuestionFormInline({
         Number(f.correct_index ?? 0),
         Math.max(0, (f.options?.length || 1) - 2)
       ),
+      matt_index:
+        f.matt_index == null
+          ? null
+          : Math.min(Number(f.matt_index), Math.max(0, (f.options?.length || 1) - 2)),
     }));
   }
   function moveOption(from: number, to: number) {
@@ -861,7 +879,14 @@ function QuestionFormInline({
     else if (ci > from && ci <= to) ci = ci - 1;
     else if (ci < from && ci >= to) ci = ci + 1;
 
-    setForm({ ...form, options: opts, correct_index: ci });
+    let mi = form.matt_index == null ? null : Number(form.matt_index);
+    if (mi != null) {
+      if (mi === from) mi = to;
+      else if (mi > from && mi <= to) mi = mi - 1;
+      else if (mi < from && mi >= to) mi = mi + 1;
+    }
+
+    setForm({ ...form, options: opts, correct_index: ci, matt_index: mi });
   }
 
   async function save(e: React.FormEvent) {
@@ -887,6 +912,10 @@ function QuestionFormInline({
         prompt: form.prompt,
         options: cleanOptions.slice(0, 6), // 2–6 options
         correct_index: Number(form.correct_index ?? 0),
+        matt_index:
+          form.matt_index == null || Number.isNaN(Number(form.matt_index))
+            ? null
+            : Number(form.matt_index),
         image_url: form.image_url || null,
         points_award: Number(form.points_award ?? 0),
         active: Boolean(form.active),
@@ -911,7 +940,7 @@ function QuestionFormInline({
     <div className="border rounded-xl p-4">
       <div className="flex items-center justify-between mb-2">
         <div className="font-semibold">{creating ? "Add Question" : "Edit Question"}</div>
-        <button onClick={onCancel} className="p-1 rounded hover:bg-gray-100" aria-label="Close">
+        <button onClick={onCancel} className="p-1 rounded hover:bg-gray-100" aria-label="Close" type="button">
           <X className="w-5 h-5" />
         </button>
       </div>
@@ -1008,13 +1037,16 @@ function QuestionFormInline({
                   <ArrowDown className="w-4 h-4" />
                 </button>
               </div>
+
               <input
                 className="flex-1 px-3 py-2 border rounded-md"
                 placeholder={`Option ${i + 1}`}
                 value={opt}
                 onChange={(e) => updateOption(i, e.target.value)}
               />
-              <label className="text-sm flex items-center gap-1">
+
+              {/* Correct Answer */}
+              <label className="text-xs flex items-center gap-1">
                 <input
                   type="radio"
                   name="correct"
@@ -1022,6 +1054,17 @@ function QuestionFormInline({
                   onChange={() => setForm({ ...form, correct_index: i })}
                 />
                 Correct
+              </label>
+
+              {/* Matt's Answer */}
+              <label className="text-xs flex items-center gap-1">
+                <input
+                  type="radio"
+                  name="matt"
+                  checked={form.matt_index != null && Number(form.matt_index) === i}
+                  onChange={() => setForm({ ...form, matt_index: i })}
+                />
+                Matt
               </label>
             </div>
           ))}
@@ -1102,6 +1145,7 @@ function Modal({
           <button
             aria-label="Close"
             onClick={onClose}
+            type="button"
             className={`${BTN_ALT_OUTLINE} px-2 py-1`}
           >
             <X className="w-5 h-5" />
