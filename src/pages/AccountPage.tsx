@@ -6,16 +6,16 @@ import { usePoints } from "@/context/PointsContext";
 import { supabase } from "@/lib/supabase";
 
 const TIERS = [
-  { key: "novice", label: "Novice", min: 0 },
-  { key: "enthusiast", label: "Enthusiast", min: 100 },
-  { key: "scholar", label: "Scholar", min: 300 },
-  { key: "connoisseur", label: "Connoisseur", min: 700 },
-  { key: "maestro", label: "Maestro", min: 1200 },
+  { key: "novice",        label: "Novice",        min: 0 },
+  { key: "enthusiast",    label: "Enthusiast",    min: 100 },
+  { key: "scholar",       label: "Scholar",       min: 300 },
+  { key: "connoisseur",   label: "Connoisseur",   min: 700 },
+  { key: "maestro",       label: "Maestro",       min: 1200 },
 ];
 
 type FormState = {
   alias: string;
-  name: string; // maps to profiles.first_name (or display_name if present)
+  name: string; // -> profiles.first_name or display_name
   bio: string;
   country: string;
   state: string;
@@ -33,30 +33,49 @@ type SchemaInfo = {
 
 type BadgeRow = Record<string, any>;
 
-/* ------------------- Robust badges loader ------------------- */
-async function loadBadgesForUser(uid: string): Promise<BadgeRow[]> {
-  // Helper: run a query, and if a column is missing (42703), try fallback()
-  async function tryQ<T>(
-    q: Promise<{ data: T | null; error: any }>,
-    fallback: () => Promise<T | null>
-  ): Promise<T | null> {
-    const { data, error } = await q;
-    if (!error) return data;
-    const msg = String(error?.message || "");
-    const code = (error?.code || error?.details || "") as string;
+type BadgeDef = {
+  key: string;
+  title: string;
+  description?: string | null;
+  iconUrl?: string | null;
+  emoji?: string | null;
+};
 
-    if (code === "42703" || /column .* does not exist/i.test(msg)) {
-      return fallback();
-    }
-    if (code === "42501" || /permission denied/i.test(msg) || /RLS/i.test(msg)) {
-      console.warn("[badges] RLS likely blocking select on user_badges:", error);
-      return null;
-    }
-    console.warn("[badges] unexpected error:", error);
+/* ------------------- ROBUST HELPERS ------------------- */
+
+// Try a query; on missing-column (42703) fall back. On RLS warn + return null.
+async function tryQ<T>(
+  q: Promise<{ data: T | null; error: any }>,
+  fallback: () => Promise<T | null>
+): Promise<T | null> {
+  const { data, error } = await q;
+  if (!error) return data;
+  const msg = String(error?.message || "");
+  const code = (error?.code || error?.details || "") as string;
+
+  if (code === "42703" || /column .* does not exist/i.test(msg)) {
+    return fallback();
+  }
+  if (code === "42501" || /permission denied/i.test(msg) || /RLS/i.test(msg)) {
+    // eslint-disable-next-line no-console
+    console.warn("[badges/benefits] RLS likely blocking read:", error);
     return null;
   }
+  // eslint-disable-next-line no-console
+  console.warn("[badges/benefits] unexpected error:", error);
+  return null;
+}
 
-  // 1) Try user_id/profile_id filter + common order fields
+// Heuristic: choose a stable key from a badge row
+function pickBadgeKey(b: BadgeRow): string | null {
+  return (
+    (b.badge_key ?? b.key ?? b.slug ?? b.code ?? b.name ?? b.title ?? b.id ?? null) &&
+    String(b.badge_key ?? b.key ?? b.slug ?? b.code ?? b.name ?? b.title ?? b.id)
+  );
+}
+
+async function loadBadgesForUser(uid: string): Promise<BadgeRow[]> {
+  // 1) Try user_id/profile_id filter + typical ordering
   const orderFields = ["earned_at", "created_at", "awarded_at", "inserted_at", "updated_at"];
   for (const ofield of orderFields) {
     const data = await tryQ(
@@ -72,7 +91,7 @@ async function loadBadgesForUser(uid: string): Promise<BadgeRow[]> {
           .or(`user_id.eq.${uid},profile_id.eq.${uid}`)).data
     );
     if (Array.isArray(data) && data.length) return data;
-    if (data === null) break; // likely RLS; stop early
+    if (data === null) break; // RLS
   }
 
   // 2) Try likely owner columns individually
@@ -86,7 +105,7 @@ async function loadBadgesForUser(uid: string): Promise<BadgeRow[]> {
     if (data === null) break; // RLS
   }
 
-  // 3) Last resort: small batch then client-side filter
+  // 3) Last resort: small batch; client-side filter
   const data = await tryQ(
     supabase.from("user_badges").select("*").limit(250),
     async () => null
@@ -100,7 +119,117 @@ async function loadBadgesForUser(uid: string): Promise<BadgeRow[]> {
 
   return [];
 }
-/* ------------------------------------------------------------ */
+
+// Load a “badge catalog” from one of several possible tables/columns
+async function loadBadgeCatalog(): Promise<Record<string, BadgeDef>> {
+  const catalog: Record<string, BadgeDef> = {};
+
+  // Candidate catalog tables and their best-guess column mappings
+  const candidates = [
+    { table: "badges",            title: ["title", "name", "label"], key: ["key", "badge_key", "slug", "code", "id"], icon: ["icon_url", "image_url", "svg_url"], emoji: ["emoji"], desc: ["description", "summary"] },
+    { table: "badge_defs",        title: ["title", "name", "label"], key: ["key", "badge_key", "slug", "code", "id"], icon: ["icon_url", "image_url", "svg_url"], emoji: ["emoji"], desc: ["description", "summary"] },
+    { table: "badge_catalog",     title: ["title", "name", "label"], key: ["key", "badge_key", "slug", "code", "id"], icon: ["icon_url", "image_url", "svg_url"], emoji: ["emoji"], desc: ["description", "summary"] },
+    { table: "badges_definitions",title: ["title", "name", "label"], key: ["key", "badge_key", "slug", "code", "id"], icon: ["icon_url", "image_url", "svg_url"], emoji: ["emoji"], desc: ["description", "summary"] },
+  ];
+
+  for (const c of candidates) {
+    try {
+      // Load all and map
+      const rows = await tryQ(
+        supabase.from(c.table as any).select("*").limit(500),
+        async () => null
+      );
+      if (!Array.isArray(rows) || rows.length === 0) continue;
+
+      const resolve = (r: any, fields: string[]) => {
+        for (const f of fields) if (r && r[f] != null) return r[f];
+        return null;
+      };
+
+      for (const r of rows) {
+        const k = String(resolve(r, c.key) ?? "");
+        if (!k) continue;
+        const title = String(resolve(r, c.title) ?? k);
+        const iconUrl = resolve(r, c.icon);
+        const emoji = resolve(r, c.emoji);
+        const description = resolve(r, c.desc);
+        catalog[k] = {
+          key: k,
+          title,
+          description: description ? String(description) : null,
+          iconUrl: iconUrl ? String(iconUrl) : null,
+          emoji: emoji ? String(emoji) : null,
+        };
+      }
+      // First table found wins; break after success
+      break;
+    } catch {
+      // ignore and try next
+    }
+  }
+
+  return catalog;
+}
+
+// Try to load benefits for tiers. Fallback to copy if nothing exists.
+async function loadTierBenefits(): Promise<Record<string, string[]>> {
+  const out: Record<string, string[]> = {};
+
+  // Candidate tables that might store benefits
+  const candidates = [
+    { table: "tiers",              key: ["key", "slug", "code", "id", "name"], benefits: ["benefits", "perks"] },
+    { table: "membership_tiers",   key: ["key", "slug", "code", "id", "name"], benefits: ["benefits", "perks"] },
+    { table: "tier_benefits",      key: ["tier_key", "tier", "key", "slug", "code", "id"], benefits: ["benefits", "perks"] },
+  ];
+
+  for (const c of candidates) {
+    try {
+      const rows = await tryQ(
+        supabase.from(c.table as any).select("*").limit(200),
+        async () => null
+      );
+      if (!Array.isArray(rows) || rows.length === 0) continue;
+
+      for (const r of rows) {
+        const tierKey = String(
+          r["tier_key"] ?? r["key"] ?? r["slug"] ?? r["code"] ?? r["id"] ?? r["name"] ?? ""
+        ).toLowerCase();
+        if (!tierKey) continue;
+
+        // If benefits column is an array, use directly; if it's JSON/text, coerce
+        let benefits: string[] = [];
+        const bf = r["benefits"] ?? r["perks"];
+        if (Array.isArray(bf)) {
+          benefits = bf.map(String);
+        } else if (typeof bf === "string") {
+          try {
+            const maybe = JSON.parse(bf);
+            benefits = Array.isArray(maybe) ? maybe.map(String) : [bf];
+          } catch {
+            benefits = [bf];
+          }
+        }
+        if (benefits.length) out[tierKey] = benefits;
+      }
+      if (Object.keys(out).length) break; // stop at first populated table
+    } catch {
+      // ignore and try next
+    }
+  }
+
+  // Fallback copy if nothing found in DB
+  if (!Object.keys(out).length) {
+    out["novice"] = ["Daily access to games", "Earn starter badges", "Unlock Enthusiast at 100 pts"];
+    out["enthusiast"] = ["Extra quiz variants", "Priority in community events", "Unlock Scholar at 300 pts"];
+    out["scholar"] = ["Advanced challenges", "Feature on leaderboards spotlight", "Unlock Connoisseur at 700 pts"];
+    out["connoisseur"] = ["Early access to new content", "VIP community channels", "Unlock Maestro at 1200 pts"];
+    out["maestro"] = ["All benefits unlocked", "Exclusive tasting invites", "Beta access to new features"];
+  }
+
+  return out;
+}
+
+/* ------------------- PAGE ------------------- */
 
 export default function AccountPage() {
   const { user, loading, profile, refreshProfile } = useAuth();
@@ -117,8 +246,10 @@ export default function AccountPage() {
   });
 
   const [badges, setBadges] = useState<BadgeRow[]>([]);
+  const [badgeCatalog, setBadgeCatalog] = useState<Record<string, BadgeDef>>({});
   const [trialStartedAt, setTrialStartedAt] = useState<string | null>(null);
   const [membershipTier, setMembershipTier] = useState<string | null>(null);
+  const [tierBenefits, setTierBenefits] = useState<Record<string, string[]>>({});
 
   // Keep Account in sync with navbar: refresh points once on mount
   useEffect(() => {
@@ -126,12 +257,12 @@ export default function AccountPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Introspect schema + read badges + trial
+  // Introspect schema + read badges + trial + benefits
   useEffect(() => {
     (async () => {
       if (!user) return;
 
-      // schema + trial/tier from profiles
+      // schema + trial/tier
       try {
         const { data } = await supabase
           .from("profiles")
@@ -157,16 +288,14 @@ export default function AccountPage() {
 
         setTrialStartedAt((data as any)?.trial_started_at ?? null);
         setMembershipTier((data as any)?.membership_tier ?? null);
-      } catch {
-        /* ignore */
-      }
+      } catch {}
 
-      // badges — robust load from user_badges
+      // badges (user rows)
       try {
         const rows = await loadBadgesForUser(user.id);
         const merged: BadgeRow[] = Array.isArray(rows) ? rows.slice() : [];
 
-        // optional alternates (won't error if table/policy missing)
+        // optional alternates
         try {
           const { data } = await supabase
             .from("badges_earned")
@@ -180,7 +309,7 @@ export default function AccountPage() {
         const seen = new Set<string>();
         const unique: BadgeRow[] = [];
         for (const b of merged) {
-          const key = String(b.id ?? b.badge_id ?? b.badge_key ?? b.slug ?? JSON.stringify(b));
+          const key = String(pickBadgeKey(b) ?? JSON.stringify(b));
           if (!seen.has(key)) {
             seen.add(key);
             unique.push(b);
@@ -189,6 +318,22 @@ export default function AccountPage() {
         setBadges(unique);
       } catch {
         setBadges([]);
+      }
+
+      // badge catalog (names/logos/desc)
+      try {
+        const map = await loadBadgeCatalog();
+        setBadgeCatalog(map);
+      } catch {
+        setBadgeCatalog({});
+      }
+
+      // benefits (for tiers)
+      try {
+        const map = await loadTierBenefits();
+        setTierBenefits(map);
+      } catch {
+        setTierBenefits({});
       }
     })();
   }, [user]);
@@ -332,9 +477,12 @@ export default function AccountPage() {
     }
   }
 
-  // Utilities to display unknown badge row nicely
+  // Badge display helpers
   function badgeTitle(b: BadgeRow) {
+    const key = pickBadgeKey(b);
+    const def = key ? badgeCatalog[key] : undefined;
     return (
+      def?.title ??
       b.title ??
       b.name ??
       b.label ??
@@ -354,40 +502,91 @@ export default function AccountPage() {
       null;
     return s ? new Date(s).toLocaleDateString() : null;
   }
+  function badgeIcon(b: BadgeRow) {
+    const key = pickBadgeKey(b);
+    const def = key ? badgeCatalog[key] : undefined;
+    if (def?.iconUrl) {
+      return (
+        <img
+          src={def.iconUrl}
+          alt=""
+          className="h-10 w-10 rounded"
+          onError={(e) => ((e.currentTarget as HTMLImageElement).style.display = "none")}
+        />
+      );
+    }
+    if (def?.emoji) {
+      return <span className="text-2xl leading-none">{def.emoji}</span>;
+    }
+    return <span className="text-2xl leading-none">🏅</span>; // fallback
+  }
+  function badgeDesc(b: BadgeRow) {
+    const key = pickBadgeKey(b);
+    const def = key ? badgeCatalog[key] : undefined;
+    return def?.description || null;
+  }
+
+  const nextBenefits: string[] = useMemo(() => {
+    if (!nextTier) return [];
+    const k = nextTier.key.toLowerCase();
+    return tierBenefits[k] || [];
+  }, [tierBenefits, nextTier]);
 
   return (
     <div className="max-w-4xl mx-auto p-6 space-y-8">
       <h1 className="text-2xl font-bold">Your Profile</h1>
 
-      {/* Plan / Trial + Points (from PointsContext for consistency) */}
+      {/* Plan / Trial + Points + Next Level Benefits */}
       <section className="bg-white rounded-lg shadow border p-6">
         <div className="text-sm text-gray-600 mb-2">{trialLabel}</div>
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-          <div>
-            <div className="text-sm text-gray-600">Points</div>
-            <div className="text-3xl font-bold">
-              {pointsLoading ? "…" : Number(pointsValue || 0)}
+        <div className="flex flex-col gap-6">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+            <div>
+              <div className="text-sm text-gray-600">Points</div>
+              <div className="text-3xl font-bold">
+                {pointsLoading ? "…" : Number(pointsValue || 0)}
+              </div>
+            </div>
+            <div className="flex-1">
+              <div className="text-sm text-gray-600">
+                Tier: <span className="font-semibold">{currentTier.label}</span>
+                {nextTier ? (
+                  <> · Next: <span className="font-semibold">{nextTier.label}</span> at {nextTier.min}</>
+                ) : (
+                  " · Top tier"
+                )}
+              </div>
+              <div className="mt-2 h-3 w-full bg-gray-200 rounded">
+                <div
+                  className="h-3 bg-gray-900 rounded"
+                  style={{ width: `${progressPct}%` }}
+                  aria-valuenow={progressPct}
+                  aria-valuemin={0}
+                  aria-valuemax={100}
+                />
+              </div>
             </div>
           </div>
-          <div className="flex-1">
-            <div className="text-sm text-gray-600">
-              Tier: <span className="font-semibold">{currentTier.label}</span>
-              {nextTier ? (
-                <> · Next: <span className="font-semibold">{nextTier.label}</span> at {nextTier.min}</>
+
+          {/* Next level benefits */}
+          {nextTier && (
+            <div className="rounded-md border border-gray-200 bg-gray-50 p-4">
+              <div className="text-sm font-semibold mb-1">
+                What you unlock at <span className="text-gray-900">{nextTier.label}</span>
+              </div>
+              {nextBenefits.length ? (
+                <ul className="list-disc ml-5 text-sm text-gray-700 space-y-1">
+                  {nextBenefits.map((b, i) => (
+                    <li key={i}>{b}</li>
+                  ))}
+                </ul>
               ) : (
-                " · Top tier"
+                <p className="text-sm text-gray-600">
+                  Keep playing quizzes and games to unlock new perks at the next tier.
+                </p>
               )}
             </div>
-            <div className="mt-2 h-3 w-full bg-gray-200 rounded">
-              <div
-                className="h-3 bg-gray-900 rounded"
-                style={{ width: `${progressPct}%` }}
-                aria-valuenow={progressPct}
-                aria-valuemin={0}
-                aria-valuemax={100}
-              />
-            </div>
-          </div>
+          )}
         </div>
       </section>
 
@@ -401,11 +600,22 @@ export default function AccountPage() {
         ) : (
           <ul className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
             {badges.map((b, i) => (
-              <li key={b.id ?? b.badge_id ?? b.badge_key ?? i} className="border rounded p-3">
-                <div className="font-medium">{badgeTitle(b)}</div>
-                {badgeDate(b) && (
-                  <div className="text-xs text-gray-600">Earned {badgeDate(b)}</div>
-                )}
+              <li
+                key={pickBadgeKey(b) ?? b.id ?? b.badge_id ?? b.badge_key ?? i}
+                className="border rounded p-3 flex items-start gap-3"
+              >
+                <div className="shrink-0">{badgeIcon(b)}</div>
+                <div className="min-w-0">
+                  <div className="font-medium truncate">{badgeTitle(b)}</div>
+                  {badgeDate(b) && (
+                    <div className="text-xs text-gray-600">Earned {badgeDate(b)}</div>
+                  )}
+                  {badgeDesc(b) && (
+                    <div className="text-xs text-gray-700 mt-1 line-clamp-3">
+                      {badgeDesc(b)}
+                    </div>
+                  )}
+                </div>
               </li>
             ))}
           </ul>
