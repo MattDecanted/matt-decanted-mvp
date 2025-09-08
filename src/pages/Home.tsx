@@ -1,6 +1,6 @@
 // src/pages/Home.tsx
 import React from 'react';
-import { Link, useLocation, useNavigate } from 'react-router-dom';
+import { Link } from 'react-router-dom';
 import { useTranslation as useTrans } from 'react-i18next';
 import { useAuth } from '@/context/AuthContext';
 import {
@@ -24,7 +24,7 @@ import {
   Download,
 } from 'lucide-react';
 
-// ---------- Safe i18n fallback ----------
+// Safe i18n fallback so page works even if i18n isn't initialized yet.
 function useTranslation() {
   try {
     return useTrans();
@@ -36,55 +36,9 @@ function useTranslation() {
   }
 }
 
-/** ---------- Small helper: Auth-gated Link ----------
- * If user is not signed in, clicking routes to /signin?next=<to>
- * Use for member-only routes like /dashboard, /swirdle, /play, /wine-options/*
- */
-function useAuthLink() {
-  const { user } = useAuth();
-  const nav = useNavigate();
-  const loc = useLocation();
-
-  return React.useCallback(
-    (to: string): React.MouseEventHandler<HTMLElement> =>
-      (e) => {
-        // allow modified-clicks to behave like normal links
-        if ((e as any).metaKey || (e as any).ctrlKey || (e as any).shiftKey || (e as any).altKey) {
-          return;
-        }
-        e.preventDefault();
-        if (user) {
-          nav(to);
-        } else {
-          // preserve current locale query if present
-          const q = new URLSearchParams(loc.search);
-          const lang = q.get('lang');
-          const next = lang ? `${to}${to.includes('?') ? '&' : '?'}lang=${lang}` : to;
-          nav(`/signin?next=${encodeURIComponent(next)}`);
-        }
-      },
-    [user, nav, loc.search]
-  );
-}
-
-/** Is this route members-only and should be gated for guests? */
-const isGatedRoute = (route: string) => {
-  return [
-    '/dashboard',
-    '/swirdle',
-    '/play',
-    '/game/',
-    '/daily-quiz',
-    '/vocab',
-    '/modules',
-    '/wine-options',
-  ].some((p) => route === p || route.startsWith(p));
-};
-
-// ---------- Component ----------
 const Home: React.FC = () => {
   const { t } = useTranslation();
-  const authOnClick = useAuthLink();
+  const { user } = useAuth();
 
   const testimonials = [
     {
@@ -135,8 +89,7 @@ const Home: React.FC = () => {
         'Bite-sized wine education videos perfect for busy schedules'
       ),
       cta: t('home.features.shorts.cta', 'Watch Latest'),
-      route: '/shorts', // public
-      gated: false,
+      route: '/shorts', // was /courses
     },
     {
       icon: <Brain className="w-8 h-8 text-purple-600" />,
@@ -147,7 +100,6 @@ const Home: React.FC = () => {
       ),
       cta: t('home.features.swirdle.cta', 'Play Today'),
       route: '/swirdle',
-      gated: true,
       badge: t('home.features.swirdle.badge', 'Members Only'),
     },
     {
@@ -158,8 +110,7 @@ const Home: React.FC = () => {
         'Test your palate with weekly blind tasting sessions'
       ),
       cta: t('home.features.blindTasting.cta', 'Join Session'),
-      route: '/play',
-      gated: true,
+      route: '/play', // was /content
     },
     {
       icon: <Users className="w-8 h-8 text-green-600" />,
@@ -169,8 +120,7 @@ const Home: React.FC = () => {
         'Connect with fellow wine enthusiasts worldwide'
       ),
       cta: t('home.features.community.cta', 'Join Discussion'),
-      route: '/blog', // public
-      gated: false,
+      route: '/blog', // was /community
     },
   ];
 
@@ -184,7 +134,10 @@ const Home: React.FC = () => {
               {/* Badge */}
               <div className="inline-flex items-center px-4 py-2 bg-amber-100 text-amber-800 rounded-full text-sm font-medium mb-6">
                 <Trophy className="w-4 h-4 mr-2" />
-                {t('home.hero.badge', 'Wine Spectator Top 100 Winemaker')}
+                {t(
+                  'home.hero.badge',
+                  'Wine Spectator Top 100 Winemaker'
+                )}
               </div>
 
               <h1 className="text-4xl sm:text-5xl lg:text-6xl font-bold text-gray-900 mb-6 leading-tight">
@@ -201,36 +154,58 @@ const Home: React.FC = () => {
                 )}
               </p>
 
-              {/* ✅ Same buttons for guests & members (gated where needed) */}
               <div className="flex flex-col sm:flex-row gap-4 justify-center lg:justify-start mb-8">
-                {/* Dashboard (gated) */}
-                <a
-                  href="/dashboard"
-                  onClick={authOnClick('/dashboard')}
-                  className="bg-green-600 hover:bg-green-700 text-white font-semibold py-4 px-8 rounded-lg shadow-lg hover:shadow-xl transition-all transform hover:-translate-y-0.5 flex items-center justify-center"
-                >
-                  <ArrowRight className="w-5 h-5 mr-2" />
-                  {t('home.hero.cta.continueLearning', 'Continue Learning')}
-                </a>
+                {!user ? (
+                  <>
+                    <Link
+                      to="/activate" // was /signup
+                      className="bg-blue-600 hover:bg-blue-700 text-white font-semibold py-4 px-8 rounded-lg shadow-lg hover:shadow-xl transition-all transform hover:-translate-y-0.5 flex items-center justify-center"
+                    >
+                      <Play className="w-5 h-5 mr-2" />
+                      {t('home.hero.cta.startLearning', 'Start Free Learning')}
+                    </Link>
+                    <Link
+                      to="/play" // was /content
+                      className="bg-purple-600 hover:bg-purple-700 text-white font-semibold py-4 px-8 rounded-lg shadow-lg hover:shadow-xl transition-all transform hover:-translate-y-0.5 flex items-center justify-center"
+                    >
+                      <Target className="w-5 h-5 mr-2" />
+                      Wine Games & Content
+                    </Link>
+                    <Link
+                      to="/blog" // was /community
+                      className="bg-white border-2 border-blue-600 text-blue-600 hover:bg-blue-50 font-semibold py-4 px-8 rounded-lg shadow-lg hover:shadow-xl transition-all transform hover:-translate-y-0.5 flex items-center justify-center"
+                    >
+                      <Users className="w-5 h-5 mr-2" />
+                      {t('home.hero.cta.joinCommunity', 'Join Community')}
+                    </Link>
+                  </>
+                ) : (
+                  <>
+                    <Link
+                      to="/dashboard"
+                      className="bg-green-600 hover:bg-green-700 text-white font-semibold py-4 px-8 rounded-lg shadow-lg hover:shadow-xl transition-all transform hover:-translate-y-0.5 flex items-center justify-center"
+                    >
+                      <ArrowRight className="w-5 h-5 mr-2" />
+                      {t('home.hero.cta.continueLearning', 'Continue Learning')}
+                    </Link>
 
-                {/* Wine Games hub (gated) */}
-                <a
-                  href="/play"
-                  onClick={authOnClick('/play')}
-                  className="bg-purple-600 hover:bg-purple-700 text-white font-semibold py-4 px-8 rounded-lg shadow-lg hover:shadow-xl transition-all transform hover:-translate-y-0.5 flex items-center justify-center"
-                >
-                  <Target className="w-5 h-5 mr-2" />
-                  Wine Games & Content
-                </a>
+                    <Link
+                      to="/blog/wine-vocabulary-quiz"
+                      className="bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-4 px-8 rounded-lg shadow-lg hover:shadow-xl transition-all transform hover:-translate-y-0.5 flex items-center justify-center"
+                    >
+                      <Brain className="w-5 h-5 mr-2" />
+                      Test Your Wine Vocab
+                    </Link>
 
-                {/* Community (public) */}
-                <Link
-                  to="/blog"
-                  className="bg-white border-2 border-blue-600 text-blue-600 hover:bg-blue-50 font-semibold py-4 px-8 rounded-lg shadow-lg hover:shadow-xl transition-all transform hover:-translate-y-0.5 flex items-center justify-center"
-                >
-                  <Users className="w-5 h-5 mr-2" />
-                  {t('home.hero.cta.joinCommunity', 'Join Community')}
-                </Link>
+                    <Link
+                      to="/wine-options/multiplayer"
+                      className="bg-amber-600 hover:bg-amber-700 text-white font-semibold py-4 px-8 rounded-lg shadow-lg hover:shadow-xl transition-all transform hover:-translate-y-0.5 flex items-center justify-center"
+                    >
+                      <Target className="w-5 h-5 mr-2" />
+                      Try Wine Options
+                    </Link>
+                  </>
+                )}
               </div>
 
               {/* Stats */}
@@ -283,42 +258,37 @@ const Home: React.FC = () => {
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-8">
-            {features.map((feature, index) => {
-              const gated = feature.gated || isGatedRoute(feature.route);
-              const card = (
-                <>
-                  <div className="flex items-center justify-between mb-4">
-                    <div className="bg-gray-50 group-hover:bg-blue-50 rounded-lg p-3 transition-colors">
-                      {feature.icon}
-                    </div>
-                    {feature.badge && (
-                      <span className="px-2 py-1 bg-purple-100 text-purple-700 text-xs font-medium rounded-full">
-                        {feature.badge}
-                      </span>
-                    )}
+            {features.map((feature, index) => (
+              <div
+                key={index}
+                className="group relative bg-white border border-gray-200 rounded-xl p-6 hover:shadow-xl hover:border-blue-300 transition-all duration-300 transform hover:-translate-y-1"
+              >
+                <div className="flex items-center justify-between mb-4">
+                  <div className="bg-gray-50 group-hover:bg-blue-50 rounded-lg p-3 transition-colors">
+                    {feature.icon}
                   </div>
-                  <h3 className="text-lg font-semibold text-gray-900 mb-2">{feature.title}</h3>
-                  <p className="text-gray-600 mb-4 text-sm">{feature.description}</p>
-                  <span className="inline-flex items-center text-blue-600 hover:text-blue-800 font-medium text-sm group-hover:translate-x-1 transition-transform">
-                    {feature.cta}
-                    <ArrowRight className="w-4 h-4 ml-1" />
-                  </span>
-                </>
-              );
-
-              return (
-                <div
-                  key={index}
-                  className="group relative bg-white border border-gray-200 rounded-xl p-6 hover:shadow-xl hover:border-blue-300 transition-all duration-300 transform hover:-translate-y-1"
-                >
-                  {gated ? (
-                    <a href={feature.route} onClick={authOnClick(feature.route)}>{card}</a>
-                  ) : (
-                    <Link to={feature.route}>{card}</Link>
+                  {feature.badge && (
+                    <span className="px-2 py-1 bg-purple-100 text-purple-700 text-xs font-medium rounded-full">
+                      {feature.badge}
+                    </span>
                   )}
                 </div>
-              );
-            })}
+
+                <h3 className="text-lg font-semibold text-gray-900 mb-2">
+                  {feature.title}
+                </h3>
+
+                <p className="text-gray-600 mb-4 text-sm">{feature.description}</p>
+
+                <Link
+                  to={feature.route}
+                  className="inline-flex items-center text-blue-600 hover:text-blue-800 font-medium text-sm group-hover:translate-x-1 transition-transform"
+                >
+                  {feature.cta}
+                  <ArrowRight className="w-4 h-4 ml-1" />
+                </Link>
+              </div>
+            ))}
           </div>
         </div>
       </section>
@@ -332,7 +302,7 @@ const Home: React.FC = () => {
             </h2>
           </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
             <div className="text-center">
               <div className="w-20 h-20 bg-amber-100 rounded-full flex items-center justify-center mx-auto mb-6">
                 <Trophy className="w-10 h-10 text-amber-600" />
@@ -462,15 +432,23 @@ const Home: React.FC = () => {
                 </div>
               </div>
 
-              {/* ✅ Single button, gated for guests */}
-              <a
-                href="/swirdle"
-                onClick={authOnClick('/swirdle')}
-                className="inline-flex items-center bg-white text-purple-600 hover:bg-gray-100 font-semibold py-3 px-6 rounded-lg shadow-lg transition-all"
-              >
-                <Brain className="w-5 h-5 mr-2" />
-                {t("home.swirdle.cta.play", "Play Today's Swirdle")}
-              </a>
+              {user ? (
+                <Link
+                  to="/swirdle"
+                  className="inline-flex items-center bg-white text-purple-600 hover:bg-gray-100 font-semibold py-3 px-6 rounded-lg shadow-lg transition-all"
+                >
+                  <Brain className="w-5 h-5 mr-2" />
+                  {t("home.swirdle.cta.play", "Play Today's Swirdle")}
+                </Link>
+              ) : (
+                <Link
+                  to="/activate"
+                  className="inline-flex items-center bg-white text-purple-600 hover:bg-gray-100 font-semibold py-3 px-6 rounded-lg shadow-lg transition-all"
+                >
+                  <Crown className="w-5 h-5 mr-2" />
+                  {t('home.swirdle.cta.join', 'Join to Play Swirdle')}
+                </Link>
+              )}
             </div>
 
             {/* Swirdle Preview */}
@@ -534,7 +512,7 @@ const Home: React.FC = () => {
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
-            {/* Free Path (public) */}
+            {/* Free Path */}
             <div className="bg-white rounded-xl shadow-lg p-8 border-2 border-transparent hover:border-gray-300 transition-all">
               <div className="text-center mb-6">
                 <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
@@ -564,14 +542,14 @@ const Home: React.FC = () => {
               </ul>
 
               <Link
-                to="/blog/wine-tasting-guide"
+                to="/blog/wine-tasting-guide" // was /lead-magnet
                 className="w-full bg-gray-600 hover:bg-gray-700 text-white py-3 px-6 rounded-lg font-semibold transition-colors block text-center"
               >
                 {t('home.learning.free.cta', 'Get Free Guide')}
               </Link>
             </div>
 
-            {/* Basic Path (gated Swirdle) */}
+            {/* Basic Path */}
             <div className="bg-white rounded-xl shadow-lg p-8 border-2 border-blue-500 transform scale-105 relative">
               <div className="absolute -top-4 left-1/2 transform -translate-x-1/2">
                 <span className="bg-blue-500 text-white px-4 py-1 rounded-full text-sm font-medium">
@@ -597,4 +575,157 @@ const Home: React.FC = () => {
 
               <ul className="space-y-3 mb-8">
                 <li className="flex items-center text-sm text-gray-600">
-                  <CheckCirc
+                  <CheckCircle className="w-4 h-4 text-green-600 mr-2 flex-shrink-0" />
+                  {t('home.learning.basic.feature1', 'Weekly premium videos')}
+                </li>
+                <li className="flex items-center text-sm text-gray-600">
+                  <CheckCircle className="w-4 h-4 text-green-600 mr-2 flex-shrink-0" />
+                  {t('home.learning.basic.feature2', 'Swirdle daily game')}
+                </li>
+                <li className="flex items-center text-sm text-gray-600">
+                  <CheckCircle className="w-4 h-4 text-green-600 mr-2 flex-shrink-0" />
+                  {t('home.learning.basic.feature3', 'Downloadable guides')}
+                </li>
+              </ul>
+
+              <Link
+                to="/pricing"
+                className="w-full bg-blue-600 hover:bg-blue-700 text-white py-3 px-6 rounded-lg font-semibold transition-colors block text-center"
+              >
+                {t('home.learning.basic.cta', 'Start Free Trial')}
+              </Link>
+            </div>
+
+            {/* Premium Path */}
+            <div className="bg-white rounded-xl shadow-lg p-8 border-2 border-transparent hover:border-purple-300 transition-all">
+              <div className="text-center mb-6">
+                <div className="w-16 h-16 bg-purple-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                  <Crown className="w-8 h-8 text-purple-600" />
+                </div>
+                <h3 className="text-xl font-bold text-gray-900 mb-2">
+                  {t('home.learning.premium.title', 'All Access Cellar Door')}
+                </h3>
+                <p className="text-gray-600">
+                  {t('home.learning.premium.description', 'Complete wine education experience')}
+                </p>
+                <div className="mt-2">
+                  <span className="text-2xl font-bold text-purple-600">$59</span>
+                  <span className="text-gray-600"> one-time</span>
+                </div>
+              </div>
+
+              <ul className="space-y-3 mb-8">
+                <li className="flex items-center text-sm text-gray-600">
+                  <CheckCircle className="w-4 h-4 text-green-600 mr-2 flex-shrink-0" />
+                  {t('home.learning.premium.feature1', 'All courses & masterclasses')}
+                </li>
+                <li className="flex items-center text-sm text-gray-600">
+                  <CheckCircle className="w-4 h-4 text-green-600 mr-2 flex-shrink-0" />
+                  {t('home.learning.premium.feature2', 'Live Q&A with Matt')}
+                </li>
+                <li className="flex items-center text-sm text-gray-600">
+                  <CheckCircle className="w-4 h-4 text-green-600 mr-2 flex-shrink-0" />
+                  {t('home.learning.premium.feature3', 'Blind tasting sessions')}
+                </li>
+              </ul>
+
+              <Link
+                to="/pricing"
+                className="w-full bg-purple-600 hover:bg-purple-700 text-white py-3 px-6 rounded-lg font-semibold transition-colors block text-center"
+              >
+                {t('home.learning.premium.cta', 'Get Full Access')}
+              </Link>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* Final CTA Section */}
+      <section className="py-20 bg-gradient-to-br from-amber-600 to-orange-600">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 text-center">
+          <div className="max-w-3xl mx-auto">
+            <h2 className="text-3xl sm:text-4xl font-bold text-white mb-6">
+              {t('home.finalCta.title', 'Ready to Transform Your Wine Knowledge?')}
+            </h2>
+
+            <p className="text-xl text-amber-100 mb-8">
+              {t(
+                'home.finalCta.subtitle',
+                'Join thousands of wine lovers who have discovered the joy of authentic wine education'
+              )}
+            </p>
+
+            <div className="flex flex-col sm:flex-row gap-4 justify-center">
+              {!user ? (
+                <>
+                  <Link
+                    to="/activate" // was /signup
+                    className="bg-white text-amber-600 hover:bg-gray-100 font-semibold py-4 px-8 rounded-lg shadow-lg hover:shadow-xl transition-all transform hover:-translate-y-0.5 flex items-center justify-center"
+                  >
+                    <Star className="w-5 h-5 mr-2" />
+                    {t('home.finalCta.primary', 'Start Your Journey')}
+                  </Link>
+                  <Link
+                    to="/blog/wine-tasting-guide" // was /lead-magnet
+                    className="border-2 border-white text-white hover:bg-white hover:text-amber-600 font-semibold py-4 px-8 rounded-lg transition-all flex items-center justify-center"
+                  >
+                    <Download className="w-5 h-5 mr-2" />
+                    {t('home.finalCta.secondary', 'Get Free Wine Guide')}
+                  </Link>
+                </>
+              ) : (
+                <Link
+                  to="/dashboard"
+                  className="bg-white text-amber-600 hover:bg-gray-100 font-semibold py-4 px-8 rounded-lg shadow-lg hover:shadow-xl transition-all transform hover:-translate-y-0.5 flex items-center justify-center"
+                >
+                  <ArrowRight className="w-5 h-5 mr-2" />
+                  {t('home.finalCta.dashboard', 'Continue Your Journey')}
+                </Link>
+              )}
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* Sticky CTA for non-users */}
+      {!user && (
+        <div className="fixed bottom-0 left-0 right-0 bg-blue-600 text-white p-4 shadow-lg z-40 transform transition-transform">
+          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center">
+                <Wine className="w-6 h-6 mr-3" />
+                <div>
+                  <p className="font-semibold">
+                    {t('home.stickyCtaTitle', 'Start Learning Wine Today')}
+                  </p>
+                  <p className="text-blue-100 text-sm">
+                    {t(
+                      'home.stickyCtaSubtitle',
+                      'Join 2,500+ students learning authentic wine education'
+                    )}
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center space-x-3">
+                <Link
+                  to="/blog/wine-tasting-guide" // was /lead-magnet
+                  className="bg-white text-blue-600 hover:bg-gray-100 px-4 py-2 rounded-lg font-medium transition-colors text-sm"
+                >
+                  {t('home.stickyCtaFree', 'Free Guide')}
+                </Link>
+                <Link
+                  to="/activate" // was /signup
+                  className="bg-amber-600 hover:bg-amber-700 text-white px-4 py-2 rounded-lg font-medium transition-colors text-sm"
+                >
+                  {t('home.stickyCtaJoin', 'Join Free')}
+                </Link>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+    </main>
+  );
+};
+
+export default Home;
