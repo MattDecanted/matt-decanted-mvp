@@ -11,9 +11,7 @@ import {
 
 // ✅ Lazy where useful
 const SwirdleLeaderboardPage = lazy(() => import("@/pages/SwirdleLeaderboardPage"));
-const CommunityPostPage = lazy(() => import("@/pages/CommunityPostPage")); // ✅ correct target
-const CommunityPage = lazy(() => import("@/pages/CommunityPage"));
-
+const CommunityPostPage = lazy(() => import("@/pages/CommunityPostPage"));
 
 // UI / Providers
 import { Toaster } from "@/components/ui/sonner";
@@ -21,10 +19,10 @@ import { AuthProvider, useAuth } from "@/context/AuthContext";
 import { PointsProvider } from "@/context/PointsContext";
 import { AnalyticsProvider } from "@/context/AnalyticsContext";
 import { LocaleProvider } from "@/context/LocaleContext";
+
+// Pages (eager)
 import EventsPage from "@/pages/EventsPage";
 import CommunityPage from "@/pages/CommunityPage";
-
-// Layout & Pages
 import Layout from "@/components/Layout";
 import Home from "@/pages/Home";
 import About from "@/pages/About";
@@ -66,7 +64,6 @@ import WineTastingGuide from "@/pages/blog/WineTastingGuide";
 import WineVocabularyQuiz from "@/pages/blog/WineVocabularyQuiz";
 
 import DebugAuth from "@/pages/DebugAuth";
-import { supabase } from "@/lib/supabase";
 
 // Auth callback
 import AuthCallbackPage from "@/pages/AuthCallbackPage";
@@ -85,8 +82,8 @@ import ShortsManager from "@/pages/admin/ShortsManager";
 // ✅ NEW: Challenges landing (Bolt-style)
 import Challenges from "@/pages/Challenges";
 
-// ✅ NEW: auth boot helpers (consume magic-link before render)
-import { completeAuthFromUrl, isAuthUrl } from "@/lib/supabase";
+// ✅ Supabase + auth boot helpers
+import { supabase, completeAuthFromUrl, isAuthUrl } from "@/lib/supabase";
 
 // ✅ Trial helpers (7-day open access)
 import { isTrialOpen } from "@/lib/trial";
@@ -330,7 +327,7 @@ function WineOptionsJoinRoute() {
 }
 
 function App() {
-  // ✅ NEW: consume magic-link tokens before rendering the app
+  // ✅ NEW: consume magic-link tokens or hydrate session before rendering the app
   const [bootingAuth, setBootingAuth] = useState(true);
 
   useEffect(() => {
@@ -339,6 +336,9 @@ function App() {
       try {
         if (isAuthUrl()) {
           await completeAuthFromUrl(); // handles #access_token or ?code
+        } else {
+          // ensure session is hydrated on cold loads before first render
+          await supabase.auth.getSession();
         }
       } catch (e) {
         console.error("[auth boot]", e);
