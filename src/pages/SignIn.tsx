@@ -25,16 +25,41 @@ export default function SignIn() {
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const timerRef = useRef<number | null>(null);
 
-  // If already signed in, bounce to where they came from, else /account
+  const authParam = params.get("auth");
+  const ignoreCooldown = authParam === "missing" || authParam === "expired";
+
+  // If already signed in, bounce (poll a bit to catch late session init)
   useEffect(() => {
-    supabase.auth.getSession().then(({ data }) => {
+    let alive = true;
+    let tries = 0;
+
+    const redirectIfAuthed = async () => {
+      const { data } = await supabase.auth.getSession();
+      if (!alive) return;
       if (data.session) {
         const to =
           ((location.state as any)?.from?.pathname as string | undefined) ||
           "/account";
         window.location.replace(to);
+        return true;
       }
-    });
+      return false;
+    };
+
+    (async () => {
+      if (await redirectIfAuthed()) return;
+      // Poll up to ~5s (20 * 250ms)
+      const tick = async () => {
+        if (await redirectIfAuthed()) return;
+        if (!alive) return;
+        if (tries++ < 20) setTimeout(tick, 250);
+      };
+      setTimeout(tick, 250);
+    })();
+
+    return () => {
+      alive = false;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []); // run once on mount
 
@@ -63,7 +88,12 @@ export default function SignIn() {
     startTimer(secs);
   };
 
+  // Initialize cooldown, unless we're explicitly handling a bad/expired link
   useEffect(() => {
+    if (ignoreCooldown) {
+      setCooldown(0);
+      return;
+    }
     try {
       const last = Number(localStorage.getItem(KEY) || 0);
       const delta = Math.max(0, COOLDOWN_SEC - Math.floor((Date.now() - last) / 1000));
@@ -74,13 +104,12 @@ export default function SignIn() {
     return () => {
       if (timerRef.current) window.clearInterval(timerRef.current);
     };
-  }, []);
+  }, [ignoreCooldown]);
 
   const secondsFrom429 = (m?: string | null) => {
     if (!m) return null;
     const mm = /after\s+(\d+)\s*seconds?/i.exec(m);
     return mm ? Math.max(1, parseInt(mm[1], 10)) : null;
-    // Supabase sometimes returns a hint like “try again after 23 seconds”
   };
 
   const sendMagic = async () => {
@@ -92,7 +121,7 @@ export default function SignIn() {
       const { error } = await supabase.auth.signInWithOtp({
         email: email.trim(),
         options: {
-          emailRedirectTo: REDIRECT_TO, // ✅ lands on /auth/callback
+          emailRedirectTo: REDIRECT_TO, // lands on /auth/callback
         },
       });
 
@@ -154,7 +183,6 @@ export default function SignIn() {
   };
 
   // Helpful banner if we arrived via ?auth=missing|expired
-  const authParam = params.get("auth");
   const banner =
     authParam === "missing"
       ? "We couldn’t complete sign in from that link. Please request a new magic link."
@@ -167,7 +195,10 @@ export default function SignIn() {
       <h1 className="text-2xl font-semibold">Sign in</h1>
 
       {banner && (
-        <div className="rounded border border-amber-300 bg-amber-50 text-amber-800 px-3 py-2 text-sm" role="status">
+        <div
+          className="rounded border border-amber-300 bg-amber-50 text-amber-800 px-3 py-2 text-sm"
+          role="status"
+        >
           {banner}
         </div>
       )}
@@ -198,27 +229,4 @@ export default function SignIn() {
         onClick={sendRecovery}
         disabled={sending || cooldown > 0 || !isEmailValid(email)}
       >
-        {cooldown > 0 ? `Wait ${cooldown}s…` : "Send recovery email"}
-      </button>
-
-      {mode === "sent-magic" && (
-        <div className="rounded-md bg-green-50 p-3 text-sm" role="status" aria-live="polite">
-          Check <b>{email}</b> for your sign-in link. Open it on this device.
-        </div>
-      )}
-      {mode === "sent-recovery" && (
-        <div className="rounded-md bg-green-50 p-3 text-sm" role="status" aria-live="polite">
-          Recovery email sent to <b>{email}</b>. Use the link to set a new password.
-        </div>
-      )}
-      {errorMsg && (
-        <div className="rounded-md bg-red-50 p-3 text-sm" role="alert">
-          {errorMsg}
-        </div>
-      )}
-      <p className="text-xs text-gray-500">
-        Tip: links expire quickly. If it says expired, request another and use it straight away.
-      </p>
-    </div>
-  );
-}
+        {cooldown > 0 ? `Wait ${cooldown}s…` : "Send recov
