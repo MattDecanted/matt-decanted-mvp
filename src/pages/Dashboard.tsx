@@ -99,30 +99,6 @@ interface Masterclass {
   isRegistered: boolean;
 }
 
-// ---- achievements (light stand-in)
-const ACHIEVEMENT_BADGES = [
-  { id: "harvest_hand", name: "Harvest Hand", icon: "🌾" },
-  { id: "vocabulary_master", name: "Vocabulary Master", icon: "🔤" },
-  { id: "community_leader", name: "Community Leader", icon: "👑" },
-  { id: "berry_builder", name: "Berry Builder", icon: "🫐" },
-  { id: "swirdle_champion", name: "Swirdle Champion", icon: "🧠" },
-  { id: "bloom_boss", name: "Bloom Boss", icon: "🌸" },
-  { id: "tasting_expert", name: "Tasting Expert", icon: "🥇" },
-] as const;
-
-const getUserBadges = (
-  _courses: number,
-  modules: number,
-  _quizzes: number,
-  streak: number
-) => {
-  const arr: typeof ACHIEVEMENT_BADGES[number][] = [];
-  if (modules >= 1) arr.push(ACHIEVEMENT_BADGES[0]);
-  if (modules >= 5) arr.push(ACHIEVEMENT_BADGES[1]);
-  if (streak >= 7) arr.push(ACHIEVEMENT_BADGES[2]);
-  return arr;
-};
-
 // ---------------------------
 // Dashboard
 // ---------------------------
@@ -140,7 +116,11 @@ export default function Dashboard() {
   const [trialBusy, setTrialBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
-  // --- derived trial state (from either member_profiles or user_profiles)
+  // ✅ Real earned badges (joined to catalog for name+icon)
+  type EarnedBadge = { code: string; name?: string; icon?: string; awarded_at?: string | null };
+  const [earnedBadges, setEarnedBadges] = useState<EarnedBadge[]>([]);
+
+  // --- derived trial state (existing display logic preserved)
   const trialExpiresAt = (profile?.trial_expires_at ??
     profile?.trialEnds ??
     null) as string | null;
@@ -205,19 +185,6 @@ export default function Dashboard() {
         badges: ["bloom_boss", "tasting_expert"],
       },
     ];
-    const mockUserStats: UserStats = {
-      shortsWatched: 0,
-      modulesCompleted: 0,
-      badgesEarned: 0,
-      quizScore: 0,
-      streakDays: 0,
-      totalPoints: 0,
-      rank: 0,
-      swirdleStreak: 0,
-      swirdleGamesWon: 0,
-      blindTastingsCompleted: 0,
-      communityPosts: 0,
-    };
     const mockBlindTasting: BlindTastingVideo = {
       id: "1",
       title: "Burgundy vs. Pinot Noir Challenge",
@@ -233,7 +200,6 @@ export default function Dashboard() {
 
     try {
       // --- leaderboard
-      // Prefer user_points (total_points). Fallback to vocab_leaderboard_30d.
       const leaderboardData = await safeFetch(async () => {
         const lb: LeaderboardMember[] = [];
         // first try user_points
@@ -337,6 +303,70 @@ export default function Dashboard() {
         return { attempts, correct, totalQs, avg };
       }, { attempts: 0, correct: 0, totalQs: 0, avg: 0 });
 
+      // --- REAL earned badges (user_badges / badges_earned -> join to badges catalog)
+      const loadEarnedBadges = async (): Promise<EarnedBadge[]> => {
+        const uid = user!.id;
+        const acc: { code: string; awarded_at?: string | null }[] = [];
+
+        // user_badges
+        try {
+          const { data } = await supabase
+            .from("user_badges")
+            .select("badge_code,awarded_at")
+            .or(`user_id.eq.${uid},profile_id.eq.${uid}`);
+          if (Array.isArray(data)) {
+            for (const r of data) acc.push({ code: r.badge_code, awarded_at: (r as any).awarded_at ?? null });
+          }
+        } catch {}
+
+        // badges_earned
+        try {
+          const { data } = await supabase
+            .from("badges_earned")
+            .select("badge_code,awarded_at")
+            .or(`user_id.eq.${uid},profile_id.eq.${uid}`);
+          if (Array.isArray(data)) {
+            for (const r of data) acc.push({ code: r.badge_code, awarded_at: (r as any).awarded_at ?? null });
+          }
+        } catch {}
+
+        // unique codes
+        const codes = Array.from(new Set(acc.map((r) => r.code).filter(Boolean)));
+        if (codes.length === 0) return [];
+
+        // join to catalog
+        const catalogMap = new Map<string, { name?: string; icon?: string }>();
+        try {
+          const { data } = await supabase
+            .from("badges")
+            .select("code,name,icon")
+            .in("code", codes);
+          if (Array.isArray(data)) {
+            for (const r of data) {
+              catalogMap.set(r.code, { name: r.name, icon: r.icon });
+            }
+          }
+        } catch {}
+
+        // map out result
+        const out: EarnedBadge[] = [];
+        for (const item of acc) {
+          const meta = catalogMap.get(item.code) || {};
+          out.push({
+            code: item.code,
+            name: meta.name || item.code,
+            icon: meta.icon || "🏅",
+            awarded_at: item.awarded_at ?? null,
+          });
+        }
+        // de-dupe by code, keep first
+        const seen = new Set<string>();
+        return out.filter((b) => (seen.has(b.code) ? false : (seen.add(b.code), true)));
+      };
+
+      const realBadges = await safeFetch(loadEarnedBadges, []);
+      setEarnedBadges(realBadges);
+
       // --- points (via PointsProvider already live)
       const pointsTotal = Number(totalPoints ?? 0);
 
@@ -348,7 +378,7 @@ export default function Dashboard() {
       const compiled: UserStats = {
         shortsWatched: 0,
         modulesCompleted: 0,
-        badgesEarned: 0,
+        badgesEarned: realBadges.length, // ✅ real count
         quizScore: quiz.avg,
         streakDays: Number(swirdle?.current_streak ?? 0),
         totalPoints: pointsTotal,
@@ -404,21 +434,6 @@ export default function Dashboard() {
     }
   };
 
-  // badges derived from stats (same logic as your template)
-  const getAchievementBadges = () => {
-    if (!userStats) return [];
-    return getUserBadges(
-      Math.floor(userStats.modulesCompleted / 5),
-      userStats.modulesCompleted,
-      userStats.modulesCompleted * 2,
-      userStats.streakDays
-    );
-  };
-  const getNextBadge = () =>
-    ACHIEVEMENT_BADGES.find(
-      (b) => !getAchievementBadges().some((e) => e.id === b.id)
-    );
-
   const getDifficultyColor = (d: string) =>
     d === "advanced"
       ? "bg-red-100 text-red-800"
@@ -448,36 +463,8 @@ export default function Dashboard() {
     setErr(null);
     try {
       await supabase.rpc("vv_start_trial", { p_days: 7 });
-
-      // refresh the profile from either table
-      const { data: mp } = await supabase
-        .from("member_profiles")
-        .select("trial_expires_at,trial_started_at,subscription_tier,role,subscription_status")
-        .eq("user_id", user.id)
-        .maybeSingle();
-      if (mp) {
-        (profile as any).trial_expires_at = mp.trial_expires_at;
-        (profile as any).trial_started_at = mp.trial_started_at;
-        (profile as any).subscription_tier = mp.subscription_tier;
-        (profile as any).role = mp.role ?? (profile as any).role;
-        (profile as any).subscription_status =
-          mp.subscription_status ?? (profile as any).subscription_status;
-      } else {
-        const { data: up } = await supabase
-          .from("user_profiles")
-          .select("trial_expires_at,trial_started_at,subscription_tier,role,subscription_status")
-          .eq("user_id", user.id)
-          .maybeSingle();
-        if (up) {
-          (profile as any).trial_expires_at = (up as any).trial_expires_at;
-          (profile as any).trial_started_at = (up as any).trial_started_at;
-          (profile as any).subscription_tier = (up as any).subscription_tier;
-          (profile as any).role = (up as any).role ?? (profile as any).role;
-          (profile as any).subscription_status =
-            (up as any).subscription_status ??
-            (profile as any).subscription_status;
-        }
-      }
+      // (display values refresh next load; lightweight for now)
+      await loadDashboardData();
     } catch (e: any) {
       setErr(e?.message ?? String(e));
     } finally {
@@ -510,8 +497,14 @@ export default function Dashboard() {
     );
   }
 
-  const earnedBadges = getAchievementBadges();
-  const nextBadge = getNextBadge();
+  // ✅ Correct display name fallback
+  const displayName =
+    (profile as any)?.display_name ||
+    (profile as any)?.first_name ||
+    profile?.alias ||
+    user?.user_metadata?.name ||
+    user?.email?.split?.("@")[0] ||
+    "Wine Enthusiast";
 
   return (
     <div className="min-h-screen py-8 bg-gray-50">
@@ -521,11 +514,7 @@ export default function Dashboard() {
           <div className="flex items-center justify-between">
             <div>
               <h1 className="text-3xl font-bold">
-                Welcome back,{" "}
-                {profile?.full_name?.split?.(" ")[0] ||
-                  user?.email?.split?.("@")[0] ||
-                  "Wine Enthusiast"}
-                !
+                Welcome back, {displayName}!
               </h1>
               <p className="text-gray-600 mt-1">{t("dashboard.continueJourney")}</p>
               {!trialActive && (
@@ -676,20 +665,21 @@ export default function Dashboard() {
                 <p className="text-sm text-gray-600">No badges yet — start a lesson!</p>
               ) : (
                 <ul className="grid grid-cols-2 gap-3">
-                  {earnedBadges.map((b) => (
+                  {earnedBadges.slice(0, 6).map((b, i) => (
                     <li
-                      key={b.id}
+                      key={b.code + ":" + (b.awarded_at ?? i)}
                       className="rounded border p-2 flex items-center gap-2"
+                      title={b.name}
                     >
-                      <span className="text-xl">{b.icon}</span>
-                      <span className="text-sm font-medium">{b.name}</span>
+                      <span className="text-xl">{b.icon || "🏅"}</span>
+                      <span className="text-sm font-medium truncate">{b.name || b.code}</span>
                     </li>
                   ))}
                 </ul>
               )}
-              {nextBadge && (
+              {earnedBadges.length > 6 && (
                 <div className="mt-4 text-xs text-gray-600">
-                  Next up: <strong>{nextBadge.name}</strong>
+                  And {earnedBadges.length - 6} more… <Link to="/account" className="underline">view all</Link>
                 </div>
               )}
             </div>
@@ -764,7 +754,8 @@ export default function Dashboard() {
                 <Trophy className="w-4 h-4 mr-2" />
                 {t("dashboard.topMembers")}
               </h3>
-              <Link to="/account" className="text-sm underline">
+              {/* ✅ correct target for leaderboard */}
+              <Link to="/leaderboard" className="text-sm underline">
                 {t("dashboard.viewFullLeaderboard")}
               </Link>
             </div>
