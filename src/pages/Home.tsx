@@ -13,7 +13,6 @@ import {
   BookOpen,
   Video,
   Brain,
-  Calendar,
   CheckCircle,
   Quote,
   Crown,
@@ -332,7 +331,7 @@ const Home: React.FC = () => {
             </h2>
           </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
             <div className="text-center">
               <div className="w-20 h-20 bg-amber-100 rounded-full flex items-center justify-center mx-auto mb-6">
                 <Trophy className="w-10 h-10 text-amber-600" />
@@ -548,21 +547,20 @@ const Home: React.FC = () => {
                 </p>
               </div>
 
-<ul className="space-y-3 mb-8">
-  <li className="flex items-center text-sm text-gray-600">
-    <CheckCircle className="w-4 h-4 text-green-600 mr-2 flex-shrink-0" />
-    {t('home.learning.basic.feature1', 'Weekly premium videos')}
-  </li>
-  <li className="flex items-center text-sm text-gray-600">
-    <CheckCircle className="w-4 h-4 text-green-600 mr-2 flex-shrink-0" />
-    {t('home.learning.basic.feature2', 'Swirdle daily game')}
-  </li>
-  <li className="flex items-center text-sm text-gray-600">
-    <CheckCircle className="w-4 h-4 text-green-600 mr-2 flex-shrink-0" />
-    {t('home.learning.basic.feature3', 'Downloadable guides')}
-  </li>
-</ul>
-
+              <ul className="space-y-3 mb-8">
+                <li className="flex items-center text-sm text-gray-600">
+                  <CheckCircle className="w-4 h-4 text-green-600 mr-2 flex-shrink-0" />
+                  {t('home.learning.free.feature1', 'Free wine tasting guide')}
+                </li>
+                <li className="flex items-center text-sm text-gray-600">
+                  <CheckCircle className="w-4 h-4 text-green-600 mr-2 flex-shrink-0" />
+                  {t('home.learning.free.feature2', 'Community access')}
+                </li>
+                <li className="flex items-center text-sm text-gray-600">
+                  <CheckCircle className="w-4 h-4 text-green-600 mr-2 flex-shrink-0" />
+                  {t('home.learning.free.feature3', 'Monthly wine tips')}
+                </li>
+              </ul>
 
               <Link
                 to="/blog/wine-tasting-guide"
@@ -598,4 +596,96 @@ const Home: React.FC = () => {
 
               <ul className="space-y-3 mb-8">
                 <li className="flex items-center text-sm text-gray-600">
-                  <CheckCirc
+                  <CheckCircle className="w-4 h-4 text-green-600 mr-2 flex-shrink-0" />
+                  {t('home.learning.basic.feature1', 'Weekly premium videos')}
+                </li>
+                <li className="flex items-center text-sm text-gray-600">
+                  <CheckCircle className="w-4 h-4 text-green-600 mr-2 flex-shrink-0" />
+                  {t('home.learning.basic.feature2', 'Swirdle daily game')}
+                </li>
+                <li className="flex items-center text-sm text-gray-600">
+                  <CheckCircle className="w-4 h-4 text-green-600 mr-2 flex-shrink-0" />
+                  {t('home.learning.basic.feature3', 'Downloadable guides')}
+                </li>
+              </ul>
+
+              <Link
+                to="/pricing"
+                className="w-full bg-blue-600 hover:bg-blue-700 text-white py-3 px-6 rounded-lg font-semibold transition-colors block text-center"
+              >
+                {t('home.learning.basic.cta', 'Start Free Trial')}
+              </Link>
+            </div>
+
+            {/* Premium Path (public pricing link) */}
+            <div className="bg-white rounded-xl shadow-lg p-8 border-2 border-transparent hover:border-purple-300 transition-all">
+              <div className="text-center mb-6">
+                <div className="w-16 h-16 bg-purple-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                  <Crown className="w-8 h-8 text-purple-600" />
+                </div>
+                <h3 className="text-xl font-bold text-gray-900 mb-2">
+                  {t('home.learning.premium.title', 'All Access Cellar Door')}
+                </h3>
+                <p className="text-gray-600">
+                  {t('home.learning.premium.description', 'Complete wine education experience')}
+                </p>
+                <div className="mt-2">
+                  <span className="text-2xl font-bold text-purple-600">$59</span>
+                  <span className="text-gray-600"> one-time</span>
+                </div>
+              </div>
+
+              <Link
+                to="/pricing"
+                className="w-full bg-purple-600 hover:bg-purple-700 text-white py-3 px-6 rounded-lg font-semibold transition-colors block text-center"
+              >
+                {t('home.learning.premium.cta', 'Get Full Access')}
+              </Link>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* Final CTA Section */}
+      <section className="py-20 bg-gradient-to-br from-amber-600 to-orange-600">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 text-center">
+          <div className="max-w-3xl mx-auto">
+            <h2 className="text-3xl sm:text-4xl font-bold text-white mb-6">
+              {t('home.finalCta.title', 'Ready to Transform Your Wine Knowledge?')}
+            </h2>
+
+            <p className="text-xl text-amber-100 mb-8">
+              {t(
+                'home.finalCta.subtitle',
+                'Join thousands of wine lovers who have discovered the joy of authentic wine education'
+              )}
+            </p>
+
+            <div className="flex flex-col sm:flex-row gap-4 justify-center">
+              {/* Primary button (gated → /signin?next=/dashboard for guests) */}
+              <a
+                href="/dashboard"
+                onClick={authOnClick('/dashboard')}
+                className="bg-white text-amber-600 hover:bg-gray-100 font-semibold py-4 px-8 rounded-lg shadow-lg hover:shadow-xl transition-all transform hover:-translate-y-0.5 flex items-center justify-center"
+              >
+                <ArrowRight className="w-5 h-5 mr-2" />
+                {t('home.finalCta.dashboard', 'Continue Your Journey')}
+              </a>
+
+              {/* Public secondary CTA */}
+              <Link
+                to="/blog/wine-tasting-guide"
+                className="border-2 border-white text-white hover:bg-white hover:text-amber-600 font-semibold py-4 px-8 rounded-lg transition-all flex items-center justify-center"
+              >
+                <Download className="w-5 h-5 mr-2" />
+                {t('home.finalCta.secondary', 'Get Free Wine Guide')}
+              </Link>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+  );
+};
+
+export default Home;
