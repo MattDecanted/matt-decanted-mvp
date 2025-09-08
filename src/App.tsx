@@ -11,7 +11,7 @@ import {
 
 // ✅ Lazy where useful
 const SwirdleLeaderboardPage = lazy(() => import("@/pages/SwirdleLeaderboardPage"));
-const CommunityPostPage = lazy(() => import("@/pages/CommunityPage"));
+const CommunityPostPage = lazy(() => import("@/pages/CommunityPostPage")); // ✅ correct target
 
 // UI / Providers
 import { Toaster } from "@/components/ui/sonner";
@@ -86,12 +86,26 @@ import Challenges from "@/pages/Challenges";
 // ✅ NEW: auth boot helpers (consume magic-link before render)
 import { completeAuthFromUrl, isAuthUrl } from "@/lib/supabase";
 
+// ✅ Trial helpers (7-day open access)
+import { isTrialOpen } from "@/lib/trial";
+
 const FN_SUBMIT = "/.netlify/functions/trial-quiz-attempt";
 const PENDING_KEY = "md_trial_pending";
 
 /* ---------- Small page wrapper ---------- */
 function PageBoundary({ children }: { children: React.ReactNode }) {
   return <>{children}</>;
+}
+
+/* ---------- 7-day trial bypass helper ---------- */
+function useTrialBypass() {
+  const { pathname } = useLocation();
+  if (!isTrialOpen()) return false;
+  // Allow guests everywhere except admin/account/dashboard during the trial
+  if (pathname.startsWith("/admin")) return false;
+  if (pathname.startsWith("/account")) return false;
+  if (pathname.startsWith("/dashboard")) return false;
+  return true;
 }
 
 /* ---------- Auto resume pending trial-quiz posts on Account ---------- */
@@ -130,11 +144,14 @@ function AutoResumeOnAccount() {
 
 /* ---------- Route guards ---------- */
 
-/** Basic auth guard */
+/** Basic auth guard (respects trial bypass) */
 function RequireAuth({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuth();
   const location = useLocation();
+  const bypass = useTrialBypass();
+
   if (loading) return <div className="p-8">Loading...</div>;
+  if (bypass) return <>{children}</>; // ✅ open during trial
   if (!user) return <Navigate to="/signin" replace state={{ from: location }} />;
   return <>{children}</>;
 }
@@ -143,6 +160,7 @@ function RequireAuth({ children }: { children: React.ReactNode }) {
 function RequireOnboarded({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuth();
   const location = useLocation();
+  const bypass = useTrialBypass();
   const [ok, setOk] = useState<boolean | null>(null);
 
   useEffect(() => {
@@ -150,6 +168,10 @@ function RequireOnboarded({ children }: { children: React.ReactNode }) {
     (async () => {
       if (loading) {
         setOk(null);
+        return;
+      }
+      if (bypass) {
+        setOk(true); // ✅ skip onboarding during trial
         return;
       }
       if (!user) {
@@ -183,7 +205,7 @@ function RequireOnboarded({ children }: { children: React.ReactNode }) {
     return () => {
       active = false;
     };
-  }, [user, loading, location.pathname]);
+  }, [user, loading, location.pathname, bypass]);
 
   if (ok === null) {
     return (
