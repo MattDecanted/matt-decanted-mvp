@@ -14,17 +14,22 @@ export default defineConfig(async () => {
   }
 
   return {
-    plugins: [react(), tsconfigPathsPlugin].filter(Boolean),
+    plugins: [react(), tsconfigPathsPlugin].filter(Boolean) as any,
     resolve: {
       alias: {
         "@": fileURLToPath(new URL("./src", import.meta.url)),
       },
     },
     build: {
-      sourcemap: true, // helpful for the “Something went wrong” page in prod
+      sourcemap: true,   // helpful for prod error stacks
+      target: "esnext",
     },
     define: {
       __BUILD_TIME__: JSON.stringify(new Date().toISOString()),
+      // Some libs check process.env in browser — keep it harmless
+      "process.env": {},
     },
+    server: { host: true, port: 5173 },
+    preview: { host: true, port: 4173 },
   };
 });
