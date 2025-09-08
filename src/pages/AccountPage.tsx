@@ -31,7 +31,76 @@ type SchemaInfo = {
   hasTermsAcceptedAt: boolean;
 };
 
-type BadgeRow = Record<string, any>; // unknown columns; we'll pick sensible labels at runtime
+type BadgeRow = Record<string, any>;
+
+/* ------------------- Robust badges loader ------------------- */
+async function loadBadgesForUser(uid: string): Promise<BadgeRow[]> {
+  // Helper: run a query, and if a column is missing (42703), try fallback()
+  async function tryQ<T>(
+    q: Promise<{ data: T | null; error: any }>,
+    fallback: () => Promise<T | null>
+  ): Promise<T | null> {
+    const { data, error } = await q;
+    if (!error) return data;
+    const msg = String(error?.message || "");
+    const code = (error?.code || error?.details || "") as string;
+
+    if (code === "42703" || /column .* does not exist/i.test(msg)) {
+      return fallback();
+    }
+    if (code === "42501" || /permission denied/i.test(msg) || /RLS/i.test(msg)) {
+      console.warn("[badges] RLS likely blocking select on user_badges:", error);
+      return null;
+    }
+    console.warn("[badges] unexpected error:", error);
+    return null;
+  }
+
+  // 1) Try user_id/profile_id filter + common order fields
+  const orderFields = ["earned_at", "created_at", "awarded_at", "inserted_at", "updated_at"];
+  for (const ofield of orderFields) {
+    const data = await tryQ(
+      supabase
+        .from("user_badges")
+        .select("*")
+        .or(`user_id.eq.${uid},profile_id.eq.${uid}`)
+        .order(ofield as any, { ascending: false }),
+      async () =>
+        (await supabase
+          .from("user_badges")
+          .select("*")
+          .or(`user_id.eq.${uid},profile_id.eq.${uid}`)).data
+    );
+    if (Array.isArray(data) && data.length) return data;
+    if (data === null) break; // likely RLS; stop early
+  }
+
+  // 2) Try likely owner columns individually
+  const likelyCols = ["user_id", "profile_id", "uid", "owner_id", "account_id"];
+  for (const col of likelyCols) {
+    const data = await tryQ(
+      supabase.from("user_badges").select("*").eq(col as any, uid),
+      async () => null
+    );
+    if (Array.isArray(data) && data.length) return data;
+    if (data === null) break; // RLS
+  }
+
+  // 3) Last resort: small batch then client-side filter
+  const data = await tryQ(
+    supabase.from("user_badges").select("*").limit(250),
+    async () => null
+  );
+  if (Array.isArray(data) && data.length) {
+    const keep = data.filter((r: any) =>
+      [r.user_id, r.profile_id, r.uid, r.owner_id, r.account_id].includes(uid)
+    );
+    if (keep.length) return keep;
+  }
+
+  return [];
+}
+/* ------------------------------------------------------------ */
 
 export default function AccountPage() {
   const { user, loading, profile, refreshProfile } = useAuth();
@@ -62,7 +131,7 @@ export default function AccountPage() {
     (async () => {
       if (!user) return;
 
-      // schema
+      // schema + trial/tier from profiles
       try {
         const { data } = await supabase
           .from("profiles")
@@ -86,48 +155,41 @@ export default function AccountPage() {
           hasTermsAcceptedAt: keys.includes("terms_accepted_at"),
         });
 
-        // trial + plan in *your* schema: trial_started_at + membership_tier
         setTrialStartedAt((data as any)?.trial_started_at ?? null);
         setMembershipTier((data as any)?.membership_tier ?? null);
       } catch {
         /* ignore */
       }
 
-      // badges — load whatever columns exist
-      const merged: BadgeRow[] = [];
+      // badges — robust load from user_badges
       try {
-        const { data } = await supabase
-          .from("user_badges")
-          .select("*")
-          .or(`user_id.eq.${user.id},profile_id.eq.${user.id}`)
-          .order("created_at", { ascending: false });
-        if (Array.isArray(data)) merged.push(...data);
-      } catch {
-        /* ignore if table or policy missing */
-      }
+        const rows = await loadBadgesForUser(user.id);
+        const merged: BadgeRow[] = Array.isArray(rows) ? rows.slice() : [];
 
-      // optional alternates (no-ops if they don't exist)
-      try {
-        const { data } = await supabase
-          .from("badges_earned")
-          .select("*")
-          .or(`user_id.eq.${user.id},profile_id.eq.${user.id}`)
-          .order("earned_at", { ascending: false });
-        if (Array.isArray(data)) merged.push(...data);
-      } catch {}
+        // optional alternates (won't error if table/policy missing)
+        try {
+          const { data } = await supabase
+            .from("badges_earned")
+            .select("*")
+            .or(`user_id.eq.${user.id},profile_id.eq.${user.id}`)
+            .order("earned_at", { ascending: false });
+          if (Array.isArray(data)) merged.push(...data);
+        } catch {}
 
-      // unique
-      const seen = new Set<string>();
-      const unique: BadgeRow[] = [];
-      for (const b of merged) {
-        const key =
-          String(b.id ?? b.badge_id ?? b.badge_key ?? b.slug ?? JSON.stringify(b));
-        if (!seen.has(key)) {
-          seen.add(key);
-          unique.push(b);
+        // unique by a stable-ish key
+        const seen = new Set<string>();
+        const unique: BadgeRow[] = [];
+        for (const b of merged) {
+          const key = String(b.id ?? b.badge_id ?? b.badge_key ?? b.slug ?? JSON.stringify(b));
+          if (!seen.has(key)) {
+            seen.add(key);
+            unique.push(b);
+          }
         }
+        setBadges(unique);
+      } catch {
+        setBadges([]);
       }
-      setBadges(unique);
     })();
   }, [user]);
 
@@ -249,11 +311,7 @@ export default function AccountPage() {
       };
 
       if (schema.hasAlias) patch.alias = form.alias.trim();
-
-      if (schema.nameField) {
-        patch[schema.nameField] = form.name.trim();
-      }
-
+      if (schema.nameField) patch[schema.nameField] = form.name.trim();
       if (schema.hasBio) patch.bio = form.bio;
       if (schema.hasCountry) patch.country = form.country.trim();
       if (schema.hasState) patch.state = form.state.trim();
@@ -292,6 +350,7 @@ export default function AccountPage() {
       b.created_at ??
       b.awarded_at ??
       b.inserted_at ??
+      b.updated_at ??
       null;
     return s ? new Date(s).toLocaleDateString() : null;
   }
