@@ -8,7 +8,6 @@ export default function AuthCallbackPage() {
   const [msg, setMsg] = useState("Signing you in…");
 
   useEffect(() => {
-    // choose the best destination: stored "intended page" or /account
     const getDest = () => {
       let dest = `${window.location.origin}/account`;
       try {
@@ -17,25 +16,19 @@ export default function AuthCallbackPage() {
           dest = `${window.location.origin}${stored.startsWith("/") ? stored : `/${stored}`}`;
           localStorage.removeItem(POST_LOGIN_KEY);
         }
-      } catch {
-        /* ignore */
-      }
+      } catch {}
       return dest;
     };
 
     const go = () => {
       const dest = getDest();
-      // Try multiple navigation strategies so we don't get stuck
+      // Multiple navigation strategies so we don't get stuck in SPA history
       window.location.replace(dest);
-      setTimeout(() => {
-        window.location.href = dest;
-      }, 400);
-      setTimeout(() => {
-        window.location.assign(dest);
-      }, 1200);
+      setTimeout(() => { window.location.href = dest; }, 400);
+      setTimeout(() => { window.location.assign(dest); }, 1200);
     };
 
-    // Don't let onboarding hang: race the RPC against a short timeout
+    // Best-effort onboarding; never blocks redirect
     const bestEffortJoin = async () => {
       try {
         setMsg("Setting up your account…");
@@ -43,17 +36,32 @@ export default function AuthCallbackPage() {
           p_plan: "free",
           p_start_trial: true,
           p_locale: (navigator.language || "en").slice(0, 2),
-          // p_first_name: undefined,
-          // p_country: undefined,
-          // p_accept_tos: undefined,
-          // p_accept_notifications: undefined,
         });
         await Promise.race([p, new Promise((r) => setTimeout(r, 1200))]);
       } catch (e) {
-        // Never block redirect if RPC hiccups
         // eslint-disable-next-line no-console
         console.warn("[join_member] best-effort call failed:", e);
       }
+    };
+
+    const tryPkce = async (href: string) => {
+      // Some supabase-js versions accept full URL; others expect the raw code.
+      const url = new URL(href);
+      const code = url.searchParams.get("code");
+      if (!code) return false;
+
+      setMsg("Exchanging code…");
+      try {
+        const a = await supabase.auth.exchangeCodeForSession(url.href as any);
+        if (a?.error) throw a.error;
+      } catch (e1) {
+        const b = await supabase.auth.exchangeCodeForSession(code as any);
+        if (b?.error) throw b.error;
+      }
+
+      // Clean the querystring (keep any hash intact)
+      window.history.replaceState({}, document.title, url.pathname + url.hash);
+      return true;
     };
 
     (async () => {
@@ -63,24 +71,16 @@ export default function AuthCallbackPage() {
         // 1) Implicit/hash (magic link): #access_token=... / #refresh_token=...
         if (url.hash.includes("access_token") || url.hash.includes("refresh_token")) {
           setMsg("Storing session…");
-          await setSessionFromHash(); // also cleans the hash
+          await setSessionFromHash(); // cleans the hash internally
           await bestEffortJoin();
           setMsg("Redirecting…");
           go();
           return;
         }
 
-        // 2) PKCE: ?code=...
-        const code = url.searchParams.get("code");
-        if (code) {
-          setMsg("Exchanging code…");
-          // Works across supabase-js versions that accept a full URL
-          const { error } = await supabase.auth.exchangeCodeForSession(url.href);
-          if (error) throw error;
-
-          // Clean query so the app can’t mistake it for a fresh callback later
-          window.history.replaceState({}, document.title, url.pathname + url.hash);
-
+        // 2) PKCE (?code=...)
+        const didPkce = await tryPkce(url.href);
+        if (didPkce) {
           await bestEffortJoin();
           setMsg("Redirecting…");
           go();
