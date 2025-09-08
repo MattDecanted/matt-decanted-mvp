@@ -1,1167 +1,705 @@
-// src/pages/admin/AdminGuessWhat.tsx
-import React, { useEffect, useMemo, useState } from "react";
-import { supabase } from "@/lib/supabase";
-import { useAuth } from "@/context/AuthContext";
+// src/pages/Home.tsx
+import React from 'react';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
+import { useTranslation as useTrans } from 'react-i18next';
+import { useAuth } from '@/context/AuthContext';
 import {
-  Plus, Edit, Trash2, Eye, EyeOff, Save, X, Globe, HelpCircle, Image as ImageIcon,
-  CheckCircle, AlertCircle, Copy as DuplicateIcon, PlayCircle, Link as LinkIcon,
-  ExternalLink, ArrowUp, ArrowDown
-} from "lucide-react";
+  Play,
+  Users,
+  Trophy,
+  Star,
+  ArrowRight,
+  Wine,
+  BookOpen,
+  Video,
+  Brain,
+  CheckCircle,
+  Quote,
+  Crown,
+  Sparkles,
+  Target,
+  Globe,
+  Award,
+  Download,
+} from 'lucide-react';
 
-/* ================= Types ================= */
-type Round = {
-  id: string;
-  locale: string;
-  week_number: number | null;
-  title: string | null;
-  date: string | null; // ISO (YYYY-MM-DD)
-  hero_image_url: string | null;      // placeholder shown before selecting
-  descriptors: string | null;         // Matt’s tasting descriptors (free text)
-  video_url: string | null;           // main tasting video (Matt tasting)
-  reveal_video_url: string | null;    // reveal video (optional)
-  // Round Defaults (for reveal / convenience; players still answer via questions)
-  locked_vintage: string | null;
-  locked_variety: string | null;
-  locked_region: string | null;
-  locked_style: string | null;
-  // Reveal block
-  reveal_wine_name: string | null;
-  reveal_vintage: string | null;
-  reveal_variety: string | null;
-  reveal_region: string | null;
-  reveal_notes: string | null;
-  reveal_image_url: string | null;    // optional image if no reveal video
-  active: boolean;
-  created_at: string;
-  updated_at: string;
+// ---------- Safe i18n fallback ----------
+function useTranslation() {
+  try {
+    return useTrans();
+  } catch {
+    return {
+      t: (k: string, def?: any) =>
+        typeof def === 'string' ? def : def?.defaultValue ?? k,
+    } as { t: (k: string, def?: any) => string };
+  }
+}
+
+/** ---------- Small helper: Auth-gated Link ----------
+ * If user is not signed in, clicking routes to /signin?next=<to>
+ * Use for member-only routes like /dashboard, /swirdle, /play, /wine-options/*
+ */
+function useAuthLink() {
+  const { user } = useAuth();
+  const nav = useNavigate();
+  const loc = useLocation();
+
+  return React.useCallback(
+    (to: string): React.MouseEventHandler<HTMLElement> =>
+      (e) => {
+        if ((e as any).metaKey || (e as any).ctrlKey || (e as any).shiftKey || (e as any).altKey) {
+          return;
+        }
+        e.preventDefault();
+        if (user) {
+          nav(to);
+        } else {
+          const q = new URLSearchParams(loc.search);
+          const lang = q.get('lang');
+          const next = lang ? `${to}${to.includes('?') ? '&' : '?'}lang=${lang}` : to;
+          nav(`/signin?next=${encodeURIComponent(next)}`);
+        }
+      },
+    [user, nav, loc.search]
+  );
+}
+
+/** Is this route members-only and should be gated for guests? */
+const isGatedRoute = (route: string) => {
+  return [
+    '/dashboard',
+    '/swirdle',
+    '/play',
+    '/game/',
+    '/daily-quiz',
+    '/vocab',
+    '/modules',
+    '/wine-options',
+  ].some((p) => route === p || route.startsWith(p));
 };
 
-type BankRow = {
-  id: string;
-  round_id: string | null;
-  slug: string;
-  locale: string;
-  prompt: string;
-  options: string[] | null;
-  correct_index: number | null;
-  /** NEW: Matt’s pick for this question (index into options) */
-  matt_index: number | null;
-  image_url: string | null;
-  points_award: number | null;
-  active: boolean;
-  created_at: string;
-  updated_at: string;
-};
+// ---------- Component ----------
+const Home: React.FC = () => {
+  const { t } = useTranslation();
+  const authOnClick = useAuthLink();
 
-const LANGS = [
-  { code: "en", name: "English", flag: "🇺🇸" },
-  { code: "ko", name: "한국어",  flag: "🇰🇷" },
-  { code: "zh", name: "中文",   flag: "🇨🇳" },
-  { code: "es", name: "Español",flag: "🇪🇸" },
-  { code: "fr", name: "Français",flag: "🇫🇷" },
-  { code: "de", name: "Deutsch", flag: "🇩🇪" },
-  { code: "ja", name: "日本語",  flag: "🇯🇵" },
-];
-
-/* ======= tiny UI tokens ======= */
-const BTN_PRIMARY =
-  "inline-flex items-center justify-center bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg font-medium disabled:opacity-60";
-const BTN_ALT_OUTLINE =
-  "inline-flex items-center justify-center bg-white text-black border border-black hover:bg-gray-50 px-3 py-2 rounded-lg";
-
-/* ================ Page ================ */
-export default function AdminGuessWhat() {
-  const { profile, user } = useAuth() as any;
-  const [rounds, setRounds] = useState<Round[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [filterLocale, setFilterLocale] = useState("all");
-  const [editing, setEditing] = useState<Round | null>(null);
-
-  // 🛡️ Admin gate (router should already protect)
-  const isAdmin =
-    profile?.role === "admin" ||
-    profile?.is_admin === true ||
-    user?.user_metadata?.role === "admin";
-
-  // 🚫 No indexing
-  useEffect(() => {
-    const meta = document.createElement("meta");
-    meta.name = "robots";
-    meta.content = "noindex,nofollow";
-    document.head.appendChild(meta);
-    return () => document.head.removeChild(meta);
-  }, []);
-
-  if (!isAdmin) {
-    return (
-      <div className="min-h-screen grid place-items-center bg-gray-50 p-8">
-        <div className="text-center">
-          <AlertCircle className="w-16 h-16 text-red-500 mx-auto mb-4" />
-          <h1 className="text-2xl font-bold">Access Denied</h1>
-          <p className="text-gray-600">This page is restricted to administrators only.</p>
-        </div>
-      </div>
-    );
-  }
-
-  useEffect(() => {
-    (async () => {
-      setLoading(true);
-      try {
-        const { data, error } = await supabase
-          .from("guess_what_rounds")
-          .select("*")
-          .order("date", { ascending: false })
-          .order("created_at", { ascending: false });
-        if (error) throw error;
-        setRounds((data || []) as Round[]);
-      } catch (e) {
-        console.error(e);
-      } finally {
-        setLoading(false);
-      }
-    })();
-  }, []);
-
-  const filtered = useMemo(
-    () => (filterLocale === "all" ? rounds : rounds.filter((r) => r.locale === filterLocale)),
-    [rounds, filterLocale]
-  );
-
-  const kpi = useMemo(() => {
-    const total = rounds.length;
-    const active = rounds.filter((r) => r.active).length;
-    const locales = new Set(rounds.map((r) => r.locale)).size;
-    return { total, active, locales };
-  }, [rounds]);
-
-  async function toggleRoundActive(r: Round) {
-    const next = !r.active;
-    const { error } = await supabase.from("guess_what_rounds").update({ active: next }).eq("id", r.id);
-    if (error) {
-      console.error(error);
-      return;
-    }
-    setRounds((prev) => prev.map((x) => (x.id === r.id ? { ...x, active: next } : x)));
-  }
-
-  async function removeRound(id: string) {
-    if (!confirm("Delete this round and ALL of its questions?")) return;
-    // Delete questions first (covers missing DB cascade)
-    const { error: qErr } = await supabase.from("guess_what_bank").delete().eq("round_id", id);
-    if (qErr) {
-      console.error(qErr);
-      alert("Failed to delete questions for this round.");
-      return;
-    }
-    const { error: rErr } = await supabase.from("guess_what_rounds").delete().eq("id", id);
-    if (rErr) {
-      console.error(rErr);
-      alert("Failed to delete the round.");
-      return;
-    }
-    setRounds((prev) => prev.filter((r) => r.id !== id));
-  }
-
-  return (
-    <div className="min-h-screen bg-gray-50 py-10">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div className="flex items-start justify-between mb-8">
-          <div>
-            <h1 className="text-3xl font-bold text-gray-900 mb-1">Guess What — Rounds</h1>
-            <p className="text-gray-600">
-              Create a game with a placeholder image, tasting video, 3–5 unique questions, and a reveal video or image.
-            </p>
-          </div>
-          <div className="flex items-center gap-2">
-            <select
-              value={filterLocale}
-              onChange={(e) => setFilterLocale(e.target.value)}
-              className="px-3 py-2 border rounded-md bg-white"
-            >
-              <option value="all">All languages</option>
-              {LANGS.map((l) => (
-                <option key={l.code} value={l.code}>
-                  {l.flag} {l.name} ({l.code})
-                </option>
-              ))}
-            </select>
-            <button
-              type="button"
-              className={BTN_PRIMARY}
-              onClick={() =>
-                setEditing({
-                  id: "" as any,
-                  locale: "en",
-                  week_number: null,
-                  title: "Week Challenge",
-                  date: new Date().toISOString().slice(0, 10),
-                  hero_image_url: "",
-                  descriptors: "",
-                  video_url: "",
-                  reveal_video_url: "",
-                  locked_region: "",
-                  locked_style: "",
-                  locked_variety: "",
-                  locked_vintage: "",
-                  reveal_image_url: "",
-                  reveal_notes: "",
-                  reveal_region: "",
-                  reveal_variety: "",
-                  reveal_vintage: "",
-                  reveal_wine_name: "",
-                  active: false,
-                  created_at: "" as any,
-                  updated_at: "" as any,
-                })
-              }
-            >
-              <Plus className="w-5 h-5 mr-2" />
-              New Round
-            </button>
-          </div>
-        </div>
-
-        {/* KPIs */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
-          <Kpi label="Total Rounds" value={kpi.total} icon={<HelpCircle className="w-7 h-7 text-blue-600" />} />
-          <Kpi label="Active" value={kpi.active} icon={<CheckCircle className="w-7 h-7 text-green-600" />} />
-          <Kpi label="Languages" value={kpi.locales} icon={<Globe className="w-7 h-7 text-teal-600" />} />
-        </div>
-
-        {/* List */}
-        <div className="bg-white rounded-xl shadow overflow-hidden">
-          {loading ? (
-            <div className="p-6 text-sm text-gray-600">Loading…</div>
-          ) : filtered.length === 0 ? (
-            <div className="p-10 text-center text-gray-600">No rounds yet.</div>
-          ) : (
-            <ul className="divide-y">
-              {filtered.map((r) => {
-                const lang = LANGS.find((l) => l.code === r.locale);
-                return (
-                  <li key={r.id} className="p-6 hover:bg-gray-50">
-                    <div className="flex items-start justify-between">
-                      <div className="flex-1 pr-4">
-                        <div className="flex flex-wrap items-center gap-2 mb-2">
-                          <span className="px-2 py-0.5 text-xs rounded bg-gray-100">
-                            Week {r.week_number ?? "—"}
-                          </span>
-                          <span className="px-2 py-0.5 text-xs rounded bg-amber-50 text-amber-700">
-                            {r.date || "No date"}
-                          </span>
-                          <span className="px-2 py-0.5 text-xs rounded bg-teal-50 text-teal-700 inline-flex items-center">
-                            <span className="mr-1">{lang?.flag || "🏳️"}</span> {r.locale}
-                          </span>
-                          {r.video_url ? (
-                            <span className="px-2 py-0.5 text-xs rounded bg-purple-50 text-purple-700 inline-flex items-center">
-                              <PlayCircle className="w-3.5 h-3.5 mr-1" /> Video
-                            </span>
-                          ) : null}
-                          {r.reveal_video_url ? (
-                            <span className="px-2 py-0.5 text-xs rounded bg-blue-50 text-blue-700">
-                              Reveal Video
-                            </span>
-                          ) : r.reveal_image_url ? (
-                            <span className="px-2 py-0.5 text-xs rounded bg-blue-50 text-blue-700">
-                              Reveal Image
-                            </span>
-                          ) : null}
-                          <span
-                            className={`px-2 py-0.5 text-xs rounded ${
-                              r.active ? "bg-green-100 text-green-700" : "bg-gray-100 text-gray-700"
-                            }`}
-                          >
-                            {r.active ? "Published" : "Hidden"}
-                          </span>
-                        </div>
-                        <div className="font-semibold text-gray-900">{r.title || "Untitled Round"}</div>
-                        <div className="text-sm text-gray-600 line-clamp-2 mt-1">
-                          {r.descriptors || "— No descriptors —"}
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <IconBtn title={r.active ? "Hide" : "Publish"} onClick={() => toggleRoundActive(r)}>
-                          {r.active ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                        </IconBtn>
-                        <IconBtn title="Copy Round ID" onClick={() => navigator.clipboard.writeText(r.id)}>
-                          <DuplicateIcon className="w-4 h-4" />
-                        </IconBtn>
-                        <IconBtn title="Preview this round" onClick={() => window.open(`/games/guess-what?round=${r.id}`, "_blank")}>
-                          <ExternalLink className="w-4 h-4" />
-                        </IconBtn>
-                        <IconBtn title="Edit" onClick={() => setEditing(r)}>
-                          <Edit className="w-4 h-4" />
-                        </IconBtn>
-                        <IconBtn title="Delete" onClick={() => removeRound(r.id)}>
-                          <Trash2 className="w-4 h-4" />
-                        </IconBtn>
-                      </div>
-                    </div>
-                  </li>
-                );
-              })}
-            </ul>
-          )}
-        </div>
-
-        {editing && (
-          <RoundEditor
-            round={editing}
-            onClose={() => setEditing(null)}
-            onSaved={async () => {
-              setEditing(null);
-              const { data } = await supabase
-                .from("guess_what_rounds")
-                .select("*")
-                .order("date", { ascending: false })
-                .order("created_at", { ascending: false });
-              setRounds((data || []) as Round[]);
-            }}
-          />
-        )}
-      </div>
-    </div>
-  );
-}
-
-/* ============== Round Editor with inline Question Editor ============== */
-function RoundEditor({
-  round,
-  onClose,
-  onSaved,
-}: {
-  round: Round;
-  onClose(): void;
-  onSaved(): void;
-}) {
-  const creating = !round.id;
-  const [form, setForm] = useState<Round>(round);
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState("");
-
-  useEffect(() => setForm(round), [round]);
-
-  async function saveRound(e: React.FormEvent) {
-    e.preventDefault();
-    setSaving(true);
-    setError("");
-    try {
-      if (creating) {
-        const { data, error } = await supabase
-          .from("guess_what_rounds")
-          .insert([
-            {
-              locale: form.locale,
-              week_number: form.week_number,
-              title: form.title,
-              date: form.date,
-              hero_image_url: form.hero_image_url || null,
-              descriptors: form.descriptors || null,
-              video_url: form.video_url || null,
-              reveal_video_url: form.reveal_video_url || null,
-              locked_region: form.locked_region || null,
-              locked_style: form.locked_style || null,
-              locked_variety: form.locked_variety || null,
-              locked_vintage: form.locked_vintage || null,
-              reveal_image_url: form.reveal_image_url || null,
-              reveal_notes: form.reveal_notes || null,
-              reveal_region: form.reveal_region || null,
-              reveal_variety: form.reveal_variety || null,
-              reveal_vintage: form.reveal_vintage || null,
-              reveal_wine_name: form.reveal_wine_name || null,
-              active: form.active ?? false,
-            },
-          ])
-          .select()
-          .single();
-        if (error) throw error;
-        setForm(data as Round);
-        onSaved();
-      } else {
-        const { error } = await supabase
-          .from("guess_what_rounds")
-          .update({
-            locale: form.locale,
-            week_number: form.week_number,
-            title: form.title,
-            date: form.date,
-            hero_image_url: form.hero_image_url || null,
-            descriptors: form.descriptors || null,
-            video_url: form.video_url || null,
-            reveal_video_url: form.reveal_video_url || null,
-            locked_region: form.locked_region || null,
-            locked_style: form.locked_style || null,
-            locked_variety: form.locked_variety || null,
-            locked_vintage: form.locked_vintage || null,
-            reveal_image_url: form.reveal_image_url || null,
-            reveal_notes: form.reveal_notes || null,
-            reveal_region: form.reveal_region || null,
-            reveal_variety: form.reveal_variety || null,
-            reveal_vintage: form.reveal_vintage || null,
-            reveal_wine_name: form.reveal_wine_name || null,
-            active: form.active ?? false,
-          })
-          .eq("id", form.id);
-        if (error) throw error;
-        onSaved();
-      }
-    } catch (e: any) {
-      setError(e?.message || "Failed to save.");
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  return (
-    <Modal title={creating ? "Create Round" : "Edit Round"} onClose={onClose} wide z={50}>
-      <form onSubmit={saveRound} className="space-y-5">
-        {error && (
-          <div className="p-3 rounded bg-red-50 text-red-700 border border-red-200 text-sm">{error}</div>
-        )}
-
-        {!creating && (
-          <div className="text-xs text-gray-500 -mb-2">
-            Round ID:{" "}
-            <code className="px-1 py-0.5 bg-gray-100 rounded select-all">{form.id}</code>
-            <button
-              type="button"
-              className={`${BTN_ALT_OUTLINE} ml-2`}
-              onClick={() => navigator.clipboard.writeText(form.id)}
-            >
-              <DuplicateIcon className="w-3 h-3 mr-1" /> Copy
-            </button>
-            <button
-              type="button"
-              className={`${BTN_ALT_OUTLINE} ml-2`}
-              onClick={() => window.open(`/games/guess-what?round=${form.id}`, "_blank")}
-            >
-              <ExternalLink className="w-3 h-3 mr-1" /> Preview
-            </button>
-          </div>
-        )}
-
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <Field label="Language">
-            <select
-              className="w-full px-3 py-2 border rounded-md"
-              value={form.locale || "en"}
-              onChange={(e) => setForm({ ...form, locale: e.target.value })}
-            >
-              {LANGS.map((l) => (
-                <option key={l.code} value={l.code}>
-                  {l.flag} {l.name} ({l.code})
-                </option>
-              ))}
-            </select>
-          </Field>
-          <Field label="Week #">
-            <input
-              type="number"
-              className="w-full px-3 py-2 border rounded-md"
-              value={form.week_number ?? ""}
-              onChange={(e) =>
-                setForm({
-                  ...form,
-                  week_number: e.target.value ? Number(e.target.value) : null,
-                })
-              }
-              placeholder="e.g. 1"
-            />
-          </Field>
-          <Field label="Date">
-            <input
-              type="date"
-              className="w-full px-3 py-2 border rounded-md"
-              value={form.date ?? ""}
-              onChange={(e) => setForm({ ...form, date: e.target.value })}
-            />
-          </Field>
-        </div>
-
-        <Field label="Title">
-          <input
-            className="w-full px-3 py-2 border rounded-md"
-            value={form.title ?? ""}
-            onChange={(e) => setForm({ ...form, title: e.target.value })}
-            placeholder="Week 1 Challenge"
-          />
-        </Field>
-
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <Field label="Hero / Placeholder Image (shown before selecting)">
-            <div className="flex items-center gap-2">
-              <input
-                className="flex-1 px-3 py-2 border rounded-md"
-                value={form.hero_image_url ?? ""}
-                onChange={(e) => setForm({ ...form, hero_image_url: e.target.value })}
-                placeholder="https://… (1200×675)"
-              />
-              <ImageIcon className="w-5 h-5 text-gray-400" />
-            </div>
-            <p className="mt-1 text-xs text-gray-600">
-              Leave blank to use the in-app orange placeholder.
-              <button
-                type="button"
-                className="ml-2 underline text-blue-700"
-                onClick={() => setForm((f) => ({ ...f, hero_image_url: "" }))}
-              >
-                Use default
-              </button>
-            </p>
-          </Field>
-
-          <Field label="Main Tasting Video URL (YouTube/Vimeo/mp4)">
-            <div className="flex items-center gap-2">
-              <input
-                className="flex-1 px-3 py-2 border rounded-md"
-                value={form.video_url ?? ""}
-                onChange={(e) => setForm({ ...form, video_url: e.target.value })}
-                placeholder="https://youtu.be/… or https://…/video.mp4"
-              />
-              <LinkIcon className="w-5 h-5 text-gray-400" />
-            </div>
-          </Field>
-        </div>
-
-        <Field label="Matt’s Tasting Descriptors">
-          <textarea
-            rows={3}
-            className="w-full px-3 py-2 border rounded-md"
-            value={form.descriptors ?? ""}
-            onChange={(e) => setForm({ ...form, descriptors: e.target.value })}
-            placeholder="Deep ruby color… blackcurrant, cedar, vanilla…"
-          />
-        </Field>
-
-        {/* Round Defaults (formerly "Locked") */}
-        <div className="rounded-lg border p-4">
-          <div className="font-medium mb-2">Round Defaults (optional)</div>
-          <p className="text-xs text-gray-600 mb-3">
-            Canonical answers you’ll reveal for this round. Players still answer via questions; these are for the reveal or as defaults.
-          </p>
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-            <Field label="Default Vintage">
-              <input
-                className="w-full px-3 py-2 border rounded-md"
-                value={form.locked_vintage ?? ""}
-                onChange={(e) => setForm({ ...form, locked_vintage: e.target.value })}
-              />
-            </Field>
-            <Field label="Default Variety / Blend">
-              <input
-                className="w-full px-3 py-2 border rounded-md"
-                value={form.locked_variety ?? ""}
-                onChange={(e) => setForm({ ...form, locked_variety: e.target.value })}
-              />
-            </Field>
-            <Field label="Default Region / Appellation">
-              <input
-                className="w-full px-3 py-2 border rounded-md"
-                value={form.locked_region ?? ""}
-                onChange={(e) => setForm({ ...form, locked_region: e.target.value })}
-              />
-            </Field>
-            <Field label="Default Style / Level">
-              <input
-                className="w-full px-3 py-2 border rounded-md"
-                value={form.locked_style ?? ""}
-                onChange={(e) => setForm({ ...form, locked_style: e.target.value })}
-              />
-            </Field>
-          </div>
-        </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <Field label="Reveal Video URL (YouTube/Vimeo/mp4)">
-            <input
-              className="w-full px-3 py-2 border rounded-md"
-              value={form.reveal_video_url ?? ""}
-              onChange={(e) => setForm({ ...form, reveal_video_url: e.target.value })}
-              placeholder="https://youtu.be/… or https://…/reveal.mp4"
-            />
-          </Field>
-          <Field label="Reveal Image URL (optional)">
-            <input
-              className="w-full px-3 py-2 border rounded-md"
-              value={form.reveal_image_url ?? ""}
-              onChange={(e) => setForm({ ...form, reveal_image_url: e.target.value })}
-              placeholder="https://…/reveal.jpg (used if no video)"
-            />
-          </Field>
-        </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <Field label="Reveal: Wine / Producer">
-            <input
-              className="w-full px-3 py-2 border rounded-md"
-              value={form.reveal_wine_name ?? ""}
-              onChange={(e) => setForm({ ...form, reveal_wine_name: e.target.value })}
-            />
-          </Field>
-          <Field label="Reveal: Variety/Blend">
-            <input
-              className="w-full px-3 py-2 border rounded-md"
-              value={form.reveal_variety ?? ""}
-              onChange={(e) => setForm({ ...form, reveal_variety: e.target.value })}
-            />
-          </Field>
-          <Field label="Reveal: Vintage">
-            <input
-              className="w-full px-3 py-2 border rounded-md"
-              value={form.reveal_vintage ?? ""}
-              onChange={(e) => setForm({ ...form, reveal_vintage: e.target.value })}
-            />
-          </Field>
-        </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <Field label="Reveal: Region/Appellation">
-            <input
-              className="w-full px-3 py-2 border rounded-md"
-              value={form.reveal_region ?? ""}
-              onChange={(e) => setForm({ ...form, reveal_region: e.target.value })}
-            />
-          </Field>
-          <Field label="Reveal: Notes">
-            <textarea
-              rows={3}
-              className="w-full px-3 py-2 border rounded-md"
-              value={form.reveal_notes ?? ""}
-              onChange={(e) => setForm({ ...form, reveal_notes: e.target.value })}
-              placeholder="High — classic Bordeaux structure…"
-            />
-          </Field>
-        </div>
-
-        <div className="flex gap-3">
-          <button type="submit" disabled={saving} className={`${BTN_PRIMARY} flex-1`}>
-            <Save className="w-4 h-4 mr-2" />
-            {saving ? "Saving…" : creating ? "Create Round" : "Save Changes"}
-          </button>
-          <button type="button" onClick={onClose} className={`${BTN_ALT_OUTLINE} flex-1`}>
-            Cancel
-          </button>
-        </div>
-
-        {/* Questions for this round */}
-        {!creating && <RoundQuestions roundId={form.id} locale={form.locale || "en"} />}
-      </form>
-    </Modal>
-  );
-}
-
-/* ============== Questions list + inline editor ============== */
-function RoundQuestions({ roundId, locale }: { roundId: string; locale: string }) {
-  const [rows, setRows] = useState<BankRow[] | null>(null);
-  const [editing, setEditing] = useState<BankRow | null>(null);
-
-  async function load() {
-    const { data } = await supabase
-      .from("guess_what_bank")
-      .select("*")
-      .eq("round_id", roundId)
-      .order("created_at", { ascending: true });
-    setRows((data || []) as BankRow[]);
-  }
-
-  useEffect(() => {
-    load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [roundId]);
-
-  async function toggleActive(row: BankRow) {
-    const { error } = await supabase.from("guess_what_bank").update({ active: !row.active }).eq("id", row.id);
-    if (error) {
-      console.error(error);
-      return;
-    }
-    setRows((prev) => prev!.map((r) => (r.id === row.id ? { ...r, active: !r.active } : r)));
-  }
-
-  async function duplicate(row: BankRow) {
-    const payload = {
-      round_id: roundId,
-      slug: uniqueSlug(rows || [], `${row.slug}-copy`),
-      locale: row.locale,
-      prompt: row.prompt,
-      options: row.options,
-      correct_index: row.correct_index,
-      matt_index: row.matt_index ?? null,
-      image_url: row.image_url,
-      points_award: row.points_award,
-      active: false,
-    };
-    const { error } = await supabase.from("guess_what_bank").insert([payload]);
-    if (error) console.error(error);
-    await load();
-  }
-
-  async function removeRow(id: string) {
-    if (!confirm("Delete this question?")) return;
-    const { error } = await supabase.from("guess_what_bank").delete().eq("id", id);
-    if (error) console.error(error);
-    await load();
-  }
-
-  const pointsTotal = useMemo(
-    () => (rows || []).filter(r => r.active).reduce((s, r) => s + Number(r.points_award || 0), 0),
-    [rows]
-  );
-
-  if (rows === null) return <div className="mt-8 p-6 bg-white rounded-xl shadow">Loading questions…</div>;
-
-  return (
-    <div className="mt-8 p-6 bg-white rounded-xl shadow space-y-4">
-      <div className="flex items-center justify-between">
-        <div className="flex items-baseline gap-4">
-          <h3 className="text-lg font-semibold">Questions in this round</h3>
-          <div className="text-sm text-gray-600">
-            Active points total: <strong className="text-gray-900">{pointsTotal}</strong>
-          </div>
-        </div>
-        <button
-          type="button"
-          className={BTN_PRIMARY}
-          onClick={() =>
-            setEditing({
-              id: "" as any,
-              round_id: roundId,
-              slug: "",
-              locale,
-              prompt: "",
-              options: ["", "", ""],
-              correct_index: 0,
-              matt_index: null,
-              image_url: "",
-              points_award: 50,
-              active: true,
-              created_at: "" as any,
-              updated_at: "" as any,
-            })
-          }
-        >
-          <Plus className="w-4 h-4 mr-2" />
-          Add Question
-        </button>
-      </div>
-
-      {/* List */}
-      {rows.length === 0 ? (
-        <div className="text-sm text-gray-600">No questions yet.</div>
-      ) : (
-        <ul className="divide-y">
-          {rows.map((r, idx) => {
-            const correct = r.options?.[Number(r.correct_index ?? -1)] ?? "—";
-            const matt = r.matt_index == null ? "—" : (r.options?.[Number(r.matt_index)] ?? "—");
-            return (
-              <li key={r.id} className="py-4">
-                <div className="flex items-start justify-between">
-                  <div className="pr-4">
-                    <div className="text-sm text-gray-500 mb-1">Q{idx + 1}</div>
-                    <div className="font-medium text-gray-900 mb-1">{r.prompt}</div>
-                    <div className="text-sm text-gray-600">
-                      {r.options?.map((o, i) =>
-                        i === r.correct_index ? (
-                          <strong key={i} className="text-green-700">
-                            {o}
-                            {i < (r.options?.length || 0) - 1 ? ", " : ""}
-                          </strong>
-                        ) : (
-                          <span key={i}>
-                            {o}
-                            {i < (r.options?.length || 0) - 1 ? ", " : ""}
-                          </span>
-                        )
-                      )}
-                    </div>
-                    <div className="mt-1 text-xs text-gray-700">
-                      Correct: <span className="font-medium">{correct}</span>
-                      {" · "}
-                      Matt: <span className="font-medium">{matt}</span>
-                      {" · "}
-                      <span className="text-amber-700">+{Number(r.points_award ?? 0)} pts</span>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <IconBtn title={r.active ? "Hide" : "Publish"} onClick={() => toggleActive(r)}>
-                      {r.active ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                    </IconBtn>
-                    <IconBtn title="Duplicate" onClick={() => duplicate(r)}>
-                      <DuplicateIcon className="w-4 h-4" />
-                    </IconBtn>
-                    <IconBtn title="Edit" onClick={() => setEditing(r)}>
-                      <Edit className="w-4 h-4" />
-                    </IconBtn>
-                    <IconBtn title="Delete" onClick={() => removeRow(r.id)}>
-                      <Trash2 className="w-4 h-4" />
-                    </IconBtn>
-                  </div>
-                </div>
-              </li>
-            );
-          })}
-        </ul>
-      )}
-
-      {/* Inline editor */}
-      {editing && (
-        <QuestionFormInline
-          key={editing.id || "new"}
-          record={editing}
-          onCancel={() => setEditing(null)}
-          onSaved={async () => {
-            setEditing(null);
-            await load();
-          }}
-        />
-      )}
-    </div>
-  );
-}
-
-function uniqueSlug(rows: BankRow[], base: string) {
-  const taken = new Set(rows.map((r) => r.slug));
-  if (!taken.has(base)) return base;
-  let i = 2;
-  while (taken.has(`${base}-${i}`)) i++;
-  return `${base}-${i}`;
-}
-
-/* ============== Inline Question Form (no modal) ============== */
-function QuestionFormInline({
-  record,
-  onCancel,
-  onSaved,
-}: {
-  record: BankRow;
-  onCancel(): void;
-  onSaved(): void;
-}) {
-  const creating = !record.id;
-  const [form, setForm] = useState(record);
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState("");
-
-  function updateOption(i: number, v: string) {
-    const copy = [...(form.options || [])];
-    copy[i] = v;
-    setForm({ ...form, options: copy });
-  }
-  function addOption() {
-    setForm((f) => ({ ...f, options: [...(f.options || []), ""] }));
-  }
-  function removeOption() {
-    setForm((f) => ({
-      ...f,
-      options: (f.options || []).slice(0, Math.max(2, (f.options || []).length - 1)),
-    }));
-    setForm((f) => ({
-      ...f,
-      correct_index: Math.min(
-        Number(f.correct_index ?? 0),
-        Math.max(0, (f.options?.length || 1) - 2)
+  const testimonials = [
+    {
+      name: 'Sarah Chen',
+      role: 'Premium Member',
+      tier: 'premium',
+      avatar:
+        'https://images.pexels.com/photos/774909/pexels-photo-774909.jpeg?auto=compress&cs=tinysrgb&w=150',
+      quote: t(
+        'home.testimonials.sarah.quote',
+        "Matt's approach transformed how I understand wine. The blind tastings are addictive!"
       ),
-      matt_index:
-        f.matt_index == null
-          ? null
-          : Math.min(Number(f.matt_index), Math.max(0, (f.options?.length || 1) - 2)),
-    }));
-  }
-  function moveOption(from: number, to: number) {
-    const opts = [...(form.options || [])];
-    if (to < 0 || to >= opts.length) return;
-    const [moved] = opts.splice(from, 1);
-    opts.splice(to, 0, moved);
+      achievement: 'Completed 15 courses',
+    },
+    {
+      name: 'James Rodriguez',
+      role: 'Basic Member',
+      tier: 'basic',
+      avatar:
+        'https://images.pexels.com/photos/1222271/pexels-photo-1222271.jpeg?auto=compress&cs=tinysrgb&w=150',
+      quote: t(
+        'home.testimonials.james.quote',
+        'Weekly wine shorts are perfect for my schedule. Learning so much in just 10 minutes!'
+      ),
+      achievement: '45-day learning streak',
+    },
+    {
+      name: 'Emma Thompson',
+      role: 'Free Member',
+      tier: 'free',
+      avatar:
+        'https://images.pexels.com/photos/1239291/pexels-photo-1239291.jpeg?auto=compress&cs=tinysrgb&w=150',
+      quote: t(
+        'home.testimonials.emma.quote',
+        "Started with the free guide and now I'm hooked. The community is so welcoming!"
+      ),
+      achievement: 'Downloaded wine guide',
+    },
+  ];
 
-    let ci = Number(form.correct_index ?? 0);
-    if (ci === from) ci = to;
-    else if (ci > from && ci <= to) ci = ci - 1;
-    else if (ci < from && ci >= to) ci = ci + 1;
-
-    let mi = form.matt_index == null ? null : Number(form.matt_index);
-    if (mi != null) {
-      if (mi === from) mi = to;
-      else if (mi > from && mi <= to) mi = mi - 1;
-      else if (mi < from && mi >= to) mi = mi + 1;
-    }
-
-    setForm({ ...form, options: opts, correct_index: ci, matt_index: mi });
-  }
-
-  async function save(e: React.FormEvent) {
-    e.preventDefault();
-    setSaving(true);
-    setError("");
-
-    try {
-      const cleanOptions = (form.options || []).map((o) => o.trim()).filter(Boolean);
-      if (cleanOptions.length < 2) throw new Error("Please provide at least two options.");
-      if (
-        typeof form.correct_index !== "number" ||
-        form.correct_index < 0 ||
-        form.correct_index >= cleanOptions.length
-      ) {
-        throw new Error("Please mark a valid correct option.");
-      }
-
-      const payload = {
-        round_id: form.round_id,
-        slug: form.slug || `gw-${Date.now()}`,
-        locale: form.locale,
-        prompt: form.prompt,
-        options: cleanOptions.slice(0, 6), // 2–6 options
-        correct_index: Number(form.correct_index ?? 0),
-        matt_index:
-          form.matt_index == null || Number.isNaN(Number(form.matt_index))
-            ? null
-            : Number(form.matt_index),
-        image_url: form.image_url || null,
-        points_award: Number(form.points_award ?? 0),
-        active: Boolean(form.active),
-      };
-
-      if (creating) {
-        const { error } = await supabase.from("guess_what_bank").insert([payload]);
-        if (error) throw error;
-      } else {
-        const { error } = await supabase.from("guess_what_bank").update(payload).eq("id", form.id);
-        if (error) throw error;
-      }
-      onSaved();
-    } catch (e: any) {
-      setError(e?.message || "Failed to save question.");
-    } finally {
-      setSaving(false);
-    }
-  }
+  const features = [
+    {
+      icon: <Video className="w-8 h-8 text-red-600" />,
+      title: t('home.features.shorts.title', 'Weekly Wine Shorts'),
+      description: t(
+        'home.features.shorts.description',
+        'Bite-sized wine education videos perfect for busy schedules'
+      ),
+      cta: t('home.features.shorts.cta', 'Watch Latest'),
+      route: '/shorts',
+      gated: false,
+    },
+    {
+      icon: <Brain className="w-8 h-8 text-purple-600" />,
+      title: t('home.features.swirdle.title', 'Swirdle Daily'),
+      description: t(
+        'home.features.swirdle.description',
+        'Daily wine word game that builds your vocabulary'
+      ),
+      cta: t('home.features.swirdle.cta', 'Play Today'),
+      route: '/swirdle',
+      gated: true,
+      badge: t('home.features.swirdle.badge', 'Members Only'),
+    },
+    {
+      icon: <Target className="w-8 h-8 text-amber-600" />,
+      title: t('home.features.blindTasting.title', 'Blind Tasting Challenges'),
+      description: t(
+        'home.features.blindTasting.description',
+        'Test your palate with weekly blind tasting sessions'
+      ),
+      cta: t('home.features.blindTasting.cta', 'Join Session'),
+      route: '/play',
+      gated: true,
+    },
+    {
+      icon: <Users className="w-8 h-8 text-green-600" />,
+      title: t('home.features.community.title', 'Wine Community'),
+      description: t(
+        'home.features.community.description',
+        'Connect with fellow wine enthusiasts worldwide'
+      ),
+      cta: t('home.features.community.cta', 'Join Discussion'),
+      route: '/blog',
+      gated: false,
+    },
+  ];
 
   return (
-    <div className="border rounded-xl p-4">
-      <div className="flex items-center justify-between mb-2">
-        <div className="font-semibold">{creating ? "Add Question" : "Edit Question"}</div>
-        <button onClick={onCancel} className="p-1 rounded hover:bg-gray-100" aria-label="Close" type="button">
-          <X className="w-5 h-5" />
-        </button>
-      </div>
-
-      {error && (
-        <div className="mb-3 p-3 rounded bg-red-50 text-red-700 border border-red-200 text-sm">
-          {error}
-        </div>
-      )}
-
-      <form onSubmit={save} className="space-y-4">
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <Field label="Slug">
-            <input
-              className="w-full px-3 py-2 border rounded-md"
-              value={form.slug}
-              onChange={(e) => setForm({ ...form, slug: e.target.value })}
-              placeholder="unique-slug"
-            />
-          </Field>
-          <Field label="Points">
-            <input
-              type="number"
-              min={0}
-              className="w-full px-3 py-2 border rounded-md"
-              value={Number(form.points_award ?? 0)}
-              onChange={(e) => setForm({ ...form, points_award: Number(e.target.value || 0) })}
-            />
-          </Field>
-        </div>
-
-        <Field label="Prompt">
-          <textarea
-            className="w-full px-3 py-2 border rounded-md"
-            rows={3}
-            value={form.prompt}
-            onChange={(e) => setForm({ ...form, prompt: e.target.value })}
-          />
-        </Field>
-
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <Field label="Question Image (optional)">
-            <input
-              className="w-full px-3 py-2 border rounded-md"
-              value={form.image_url || ""}
-              onChange={(e) => setForm({ ...form, image_url: e.target.value })}
-              placeholder="https://…"
-            />
-          </Field>
-          <Field label="Visibility">
-            <select
-              className="w-full px-3 py-2 border rounded-md"
-              value={form.active ? "1" : "0"}
-              onChange={(e) => setForm({ ...form, active: e.target.value === "1" })}
-            >
-              <option value="1">Active (shown)</option>
-              <option value="0">Hidden</option>
-            </select>
-          </Field>
-        </div>
-
-        <div className="flex items-center justify-between">
-          <label className="text-sm font-medium">Options</label>
-          <div className="flex items-center gap-2">
-            <button type="button" onClick={addOption} className={BTN_ALT_OUTLINE}>
-              + Add
-            </button>
-            <button type="button" onClick={removeOption} className={BTN_ALT_OUTLINE}>
-              − Remove
-            </button>
-          </div>
-        </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-          {(form.options || []).map((opt, i) => (
-            <div key={i} className="flex items-center gap-2">
-              <div className="flex items-center gap-1">
-                <button
-                  type="button"
-                  className={`${BTN_ALT_OUTLINE} p-1`}
-                  onClick={() => moveOption(i, i - 1)}
-                  disabled={i === 0}
-                  title="Move up"
-                >
-                  <ArrowUp className="w-4 h-4" />
-                </button>
-                <button
-                  type="button"
-                  className={`${BTN_ALT_OUTLINE} p-1`}
-                  onClick={() => moveOption(i, i + 1)}
-                  disabled={i === (form.options?.length || 1) - 1}
-                  title="Move down"
-                >
-                  <ArrowDown className="w-4 h-4" />
-                </button>
+    // ✅ Force page-level vertical scrolling, even if some child uses sticky or fixed
+    <main className="min-h-screen overflow-y-auto overflow-x-hidden">
+      {/* Hero Section */}
+      {/* ⛏️ Remove overflow-hidden to avoid clipping content that can block scroll on some mobile layouts */}
+      <section className="relative bg-gradient-to-br from-amber-50 via-white to-purple-50 py-20 bg-dotted-pattern">
+        <div className="relative max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-12 items-center">
+            <div className="text-center lg:text-left">
+              {/* Badge */}
+              <div className="inline-flex items-center px-4 py-2 bg-amber-100 text-amber-800 rounded-full text-sm font-medium mb-6">
+                <Trophy className="w-4 h-4 mr-2" />
+                {t('home.hero.badge', 'Wine Spectator Top 100 Winemaker')}
               </div>
 
-              <input
-                className="flex-1 px-3 py-2 border rounded-md"
-                placeholder={`Option ${i + 1}`}
-                value={opt}
-                onChange={(e) => updateOption(i, e.target.value)}
-              />
+              <h1 className="text-4xl sm:text-5xl lg:text-6xl font-bold text-gray-900 mb-6 leading-tight">
+                {t(
+                  'home.hero.headline',
+                  'Learn wine from the winemaker behind 10 years of Wine Spectator Top 100'
+                )}
+              </h1>
 
-              {/* Correct Answer */}
-              <label className="text-xs flex items-center gap-1">
-                <input
-                  type="radio"
-                  name="correct"
-                  checked={Number(form.correct_index ?? 0) === i}
-                  onChange={() => setForm({ ...form, correct_index: i })}
-                />
-                Correct
-              </label>
+              <p className="text-xl text-gray-700 mb-8 max-w-2xl">
+                {t(
+                  'home.hero.subheadline',
+                  'Taste, talk, and think like a winemaker — without the pretension.'
+                )}
+              </p>
 
-              {/* Matt's Answer */}
-              <label className="text-xs flex items-center gap-1">
-                <input
-                  type="radio"
-                  name="matt"
-                  checked={form.matt_index != null && Number(form.matt_index) === i}
-                  onChange={() => setForm({ ...form, matt_index: i })}
-                />
-                Matt
-              </label>
+              {/* ✅ Same buttons for guests & members (gated where needed) */}
+              <div className="flex flex-col sm:flex-row gap-4 justify-center lg:justify-start mb-8">
+                {/* Dashboard (gated) */}
+                <a
+                  href="/dashboard"
+                  onClick={authOnClick('/dashboard')}
+                  className="bg-green-600 hover:bg-green-700 text-white font-semibold py-4 px-8 rounded-lg shadow-lg hover:shadow-xl transition-all transform hover:-translate-y-0.5 flex items-center justify-center"
+                >
+                  <ArrowRight className="w-5 h-5 mr-2" />
+                  {t('home.hero.cta.continueLearning', 'Continue Learning')}
+                </a>
+
+                {/* Wine Games hub (gated) */}
+                <a
+                  href="/play"
+                  onClick={authOnClick('/play')}
+                  className="bg-purple-600 hover:bg-purple-700 text-white font-semibold py-4 px-8 rounded-lg shadow-lg hover:shadow-xl transition-all transform hover:-translate-y-0.5 flex items-center justify-center"
+                >
+                  <Target className="w-5 h-5 mr-2" />
+                  Wine Games & Content
+                </a>
+
+                {/* Community (public) */}
+                <Link
+                  to="/blog"
+                  className="bg-white border-2 border-blue-600 text-blue-600 hover:bg-blue-50 font-semibold py-4 px-8 rounded-lg shadow-lg hover:shadow-xl transition-all transform hover:-translate-y-0.5 flex items-center justify-center"
+                >
+                  <Users className="w-5 h-5 mr-2" />
+                  {t('home.hero.cta.joinCommunity', 'Join Community')}
+                </Link>
+              </div>
+
+              {/* Stats */}
+              <div className="flex items-center justify-center lg:justify-start space-x-8 text-sm text-gray-600">
+                <div className="flex items-center">
+                  <Star className="w-4 h-4 text-amber-500 mr-1" />
+                  <span>2,500+ {t('home.hero.stats.students', 'Happy Students')}</span>
+                </div>
+                <div className="flex items-center">
+                  <Trophy className="w-4 h-4 text-amber-500 mr-1" />
+                  <span>10 Years Top 100</span>
+                </div>
+              </div>
             </div>
-          ))}
+
+            {/* Hero Visual */}
+            <div className="flex justify-center">
+              <div className="relative">
+                <div className="w-full max-w-md h-80 bg-gradient-to-br from-purple-100 to-amber-100 rounded-2xl shadow-2xl flex items-center justify-center overflow-hidden">
+                  <div className="text-center p-8">
+                    <Wine className="w-16 h-16 text-purple-600 mx-auto mb-4" />
+                    <p className="text-gray-600 font-medium">
+                      {t("home.hero.videoPlaceholder", "Watch Matt's Introduction")}
+                    </p>
+                  </div>
+
+                  {/* 📐 Dimensions badge (w / h) */}
+                  <div className="absolute bottom-2 right-2 bg-white/80 text-gray-700 text-xs px-2 py-1 rounded-md shadow">
+                    w: max-w-md, h: 20rem
+                  </div>
+                </div>
+                {/* Floating elements */}
+                <div className="absolute -top-4 -right-4 bg-white rounded-full p-3 shadow-lg">
+                  <Play className="w-6 h-6 text-blue-600" />
+                </div>
+                <div className="absolute -bottom-4 -left-4 bg-white rounded-full p-3 shadow-lg">
+                  <Trophy className="w-6 h-6 text-amber-600" />
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
+      </section>
 
-        <div className="flex gap-3">
-          <button type="submit" disabled={saving} className={`${BTN_PRIMARY} flex-1`}>
-            <Save className="w-4 h-4 mr-2" />
-            {saving ? "Saving…" : creating ? "Create Question" : "Save Question"}
-          </button>
-          <button type="button" onClick={onCancel} className={`${BTN_ALT_OUTLINE} flex-1`}>
-            Cancel
-          </button>
+      {/* Interactive Preview Section */}
+      <section className="py-20 bg-white">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="text-center mb-16">
+            <h2 className="text-3xl sm:text-4xl font-bold text-gray-900 mb-4">
+              {t('home.preview.title', 'Experience Wine Learning Like Never Before')}
+            </h2>
+            <p className="text-xl text-gray-600 max-w-3xl mx-auto">
+              {t('home.preview.subtitle', 'Interactive, engaging, and designed for real wine lovers')}
+            </p>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-8">
+            {features.map((feature, index) => {
+              const gated = feature.gated || isGatedRoute(feature.route);
+              const card = (
+                <>
+                  <div className="flex items-center justify-between mb-4">
+                    <div className="bg-gray-50 group-hover:bg-blue-50 rounded-lg p-3 transition-colors">
+                      {feature.icon}
+                    </div>
+                    {feature.badge && (
+                      <span className="px-2 py-1 bg-purple-100 text-purple-700 text-xs font-medium rounded-full">
+                        {feature.badge}
+                      </span>
+                    )}
+                  </div>
+                  <h3 className="text-lg font-semibold text-gray-900 mb-2">{feature.title}</h3>
+                  <p className="text-gray-600 mb-4 text-sm">{feature.description}</p>
+                  <span className="inline-flex items-center text-blue-600 hover:text-blue-800 font-medium text-sm group-hover:translate-x-1 transition-transform">
+                    {feature.cta}
+                    <ArrowRight className="w-4 h-4 ml-1" />
+                  </span>
+                </>
+              );
+
+              return (
+                <div
+                  key={index}
+                  className="group relative bg-white border border-gray-200 rounded-xl p-6 hover:shadow-xl hover:border-blue-300 transition-all duration-300 transform hover:-translate-y-1"
+                >
+                  {gated ? (
+                    <a href={feature.route} onClick={authOnClick(feature.route)}>{card}</a>
+                  ) : (
+                    <Link to={feature.route}>{card}</Link>
+                  )}
+                </div>
+              );
+            })}
+          </div>
         </div>
-      </form>
-    </div>
-  );
-}
+      </section>
 
-/* ============== Small UI helpers ============== */
-function Kpi({ icon, label, value }: { icon: React.ReactNode; label: string; value: number | string }) {
-  return (
-    <div className="bg-white rounded-xl shadow p-6">
-      <div className="flex items-center gap-3">
-        {icon}
-        <div>
-          <div className="text-sm text-gray-600">{label}</div>
-          <div className="text-2xl font-bold text-gray-900 tabular-nums">{value}</div>
+      {/* Credibility Section */}
+      <section className="py-20 bg-gray-50">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="text-center mb-16">
+            <h2 className="text-3xl sm:text-4xl font-bold text-gray-900 mb-4">
+              {t('home.credibility.title', 'Trusted by wine lovers worldwide')}
+            </h2>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
+            <div className="text-center">
+              <div className="w-20 h-20 bg-amber-100 rounded-full flex items-center justify-center mx-auto mb-6">
+                <Trophy className="w-10 h-10 text-amber-600" />
+              </div>
+              <h3 className="text-2xl font-bold text-gray-900 mb-2">
+                {t('home.credibility.experience', '30+ years')}
+              </h3>
+              <p className="text-gray-600">
+                {t('home.credibility.experienceDesc', 'Winemaking experience')}
+              </p>
+            </div>
+
+            <div className="text-center">
+              <div className="w-20 h-20 bg-purple-100 rounded-full flex items-center justify-center mx-auto mb-6">
+                <Award className="w-10 h-10 text-purple-600" />
+              </div>
+              <h3 className="text-2xl font-bold text-gray-900 mb-2">
+                {t('home.credibility.recognition', 'Wine Spectator Top 100')}
+              </h3>
+              <p className="text-gray-600">{t('home.credibility.recognitionDesc', '10 years in a row')}</p>
+            </div>
+
+            <div className="text-center">
+              <div className="w-20 h-20 bg-blue-100 rounded-full flex items-center justify-center mx-auto mb-6">
+                <Globe className="w-10 h-10 text-blue-600" />
+              </div>
+              <h3 className="text-2xl font-bold text-gray-900 mb-2">
+                {t('home.credibility.expertise', 'Certified Wine Judge')}
+              </h3>
+              <p className="text-gray-600">
+                {t('home.credibility.expertiseDesc', 'International competitions')}
+              </p>
+            </div>
+          </div>
         </div>
-      </div>
-    </div>
-  );
-}
+      </section>
 
-/** Outline icon button — white bg, black border. */
-function IconBtn({
-  title,
-  onClick,
-  children,
-}: React.PropsWithChildren<{ title: string; onClick(): void }>) {
-  return (
-    <button
-      type="button"
-      title={title}
-      onClick={onClick}
-      className={`${BTN_ALT_OUTLINE} p-2`}
-    >
-      {children}
-    </button>
-  );
-}
+      {/* Community & Testimonials */}
+      <section className="py-20 bg-white">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="text-center mb-16">
+            <h2 className="text-3xl sm:text-4xl font-bold text-gray-900 mb-4">
+              {t('home.community.title', 'This is wine education for real people.')}
+            </h2>
+            <p className="text-xl text-gray-600 max-w-4xl mx-auto">
+              {t(
+                'home.community.description',
+                'Not stuffy. Not snobby. Just brilliant wine, great stories, and a winemaker who wants to take you along for the ride.'
+              )}
+            </p>
+          </div>
 
-/** Modal with NO overlay click-to-close (prevents accidental dismissal). */
-function Modal({
-  title,
-  children,
-  onClose,
-  wide,
-  z = 50,
-}: {
-  title: string;
-  children: React.ReactNode;
-  onClose(): void;
-  wide?: boolean;
-  z?: number;
-}) {
-  return (
-    <div className="fixed inset-0" style={{ zIndex: z }}>
-      {/* overlay (no click handler) */}
-      <div className="absolute inset-0 bg-black/40" />
-      <div
-        className={`relative bg-white rounded-xl shadow-xl p-6 mx-auto my-8 ${wide ? "max-w-5xl" : "max-w-2xl"} w-[92%]`}
-        onClick={(e) => e.stopPropagation()}
-        onMouseDown={(e) => e.stopPropagation()}
-      >
-        <div className="flex items-start justify-between mb-4">
-          <h3 className="text-lg font-semibold">{title}</h3>
-          <button
-            aria-label="Close"
-            onClick={onClose}
-            type="button"
-            className={`${BTN_ALT_OUTLINE} px-2 py-1`}
-          >
-            <X className="w-5 h-5" />
-          </button>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-8 mb-16">
+            {testimonials.map((testimonial, index) => (
+              <div key={index} className="bg-gray-50 rounded-xl p-6 relative">
+                <Quote className="w-8 h-8 text-gray-300 mb-4" />
+                <p className="text-gray-700 mb-6 italic">"{testimonial.quote}"</p>
+                <div className="flex items-center">
+                  <img
+                    src={testimonial.avatar}
+                    alt={testimonial.name}
+                    width={48}  // (w)
+                    height={48} // (h)
+                    className="w-12 h-12 rounded-full mr-4"
+                    title="w: 48px, h: 48px"
+                  />
+                  <div>
+                    <div className="flex items-center">
+                      <h4 className="font-semibold text-gray-900">{testimonial.name}</h4>
+                      {testimonial.tier === 'premium' && (
+                        <Crown className="w-4 h-4 text-purple-600 ml-2" />
+                      )}
+                      {testimonial.tier === 'basic' && (
+                        <Star className="w-4 h-4 text-amber-600 ml-2" />
+                      )}
+                    </div>
+                    <p className="text-sm text-gray-600">{testimonial.role}</p>
+                    <p className="text-xs text-gray-500">{testimonial.achievement}</p>
+                    {/* 📐 visible dimensions helper */}
+                    <div className="text-[10px] text-gray-500 mt-1">w: 48px · h: 48px</div>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          <div className="text-center">
+            <Link
+              to="/blog"
+              className="inline-flex items-center bg-green-600 hover:bg-green-700 text-white font-semibold py-3 px-8 rounded-lg shadow-lg hover:shadow-xl transition-all transform hover:-translate-y-0.5"
+            >
+              <Users className="w-5 h-5 mr-2" />
+              {t('home.community.cta.join', 'Join Matt Decanted Today')}
+            </Link>
+          </div>
         </div>
-        {children}
-      </div>
-    </div>
-  );
-}
+      </section>
 
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <label className="block">
-      <span className="block text-sm font-medium text-gray-700 mb-1">{label}</span>
-      {children}
-    </label>
+      {/* Daily Engagement Hook - Swirdle */}
+      <section className="py-20 bg-gradient-to-r from-purple-600 to-blue-600">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-12 items-center">
+            <div className="text-white">
+              <div className="inline-flex items-center px-4 py-2 bg-white bg-opacity-20 rounded-full text-sm font-medium mb-6">
+                <Sparkles className="w-4 h-4 mr-2" />
+                {t('home.swirdle.badge', 'Daily Challenge')}
+              </div>
+
+              <h2 className="text-3xl sm:text-4xl font-bold mb-4">
+                {t('home.swirdle.title', 'Swirdle: The Daily Wine Word Game')}
+              </h2>
+
+              <p className="text-xl text-purple-100 mb-6">
+                {t(
+                  'home.swirdle.description',
+                  'Challenge your wine vocabulary with our daily word puzzle. Guess the wine term in 6 tries!'
+                )}
+              </p>
+
+              <div className="flex items-center space-x-6 mb-8">
+                <div className="text-center">
+                  <div className="text-2xl font-bold">2,847</div>
+                  <div className="text-purple-200 text-sm">Players Today</div>
+                </div>
+                <div className="text-center">
+                  <div className="text-2xl font-bold">89%</div>
+                  <div className="text-purple-200 text-sm">Success Rate</div>
+                </div>
+                <div className="text-center">
+                  <div className="text-2xl font-bold">156</div>
+                  <div className="text-purple-200 text-sm">Day Streak Record</div>
+                </div>
+              </div>
+
+              {/* ✅ Single button, gated for guests */}
+              <a
+                href="/swirdle"
+                onClick={authOnClick('/swirdle')}
+                className="inline-flex items-center bg-white text-purple-600 hover:bg-gray-100 font-semibold py-3 px-6 rounded-lg shadow-lg transition-all"
+              >
+                <Brain className="w-5 h-5 mr-2" />
+                {t("home.swirdle.cta.play", "Play Today's Swirdle")}
+              </a>
+            </div>
+
+            {/* Swirdle Preview */}
+            <div className="flex justify-center">
+              <div className="bg-white rounded-2xl shadow-2xl p-8 max-w-sm w-full relative">
+                <div className="text-center mb-6">
+                  <h3 className="text-lg font-bold text-gray-900 mb-2">Today's Swirdle</h3>
+                  <p className="text-sm text-gray-600">Guess the wine term!</p>
+                </div>
+
+                {/* Mock Swirdle Grid */}
+                <div className="space-y-2 mb-6">
+                  {[
+                    ['T', 'E', 'R', 'R', 'O', 'I', 'R'],
+                    ['', '', '', '', '', '', ''],
+                    ['', '', '', '', '', '', ''],
+                    ['', '', '', '', '', '', ''],
+                    ['', '', '', '', '', '', ''],
+                    ['', '', '', '', '', '', ''],
+                  ].map((row, rowIndex) => (
+                    <div key={rowIndex} className="flex space-x-1 justify-center">
+                      {row.map((letter, colIndex) => (
+                        <div
+                          key={colIndex}
+                          className={`w-8 h-8 border-2 rounded flex items-center justify-center text-sm font-bold ${
+                            rowIndex === 0 && letter
+                              ? 'border-green-500 bg-green-100 text-green-800'
+                              : 'border-gray-300 bg-gray-50'
+                          }`}
+                        >
+                          {letter}
+                        </div>
+                      ))}
+                    </div>
+                  ))}
+                </div>
+
+                <div className="text-center">
+                  <div className="text-xs text-gray-500 mb-2">Members Only Feature</div>
+                  <div className="flex items-center justify-center text-green-600">
+                    <CheckCircle className="w-4 h-4 mr-1" />
+                    <span className="text-sm font-medium">Solved in 1 try!</span>
+                  </div>
+                </div>
+
+                {/* 📐 dimensions badge for the mock preview */}
+                <div className="absolute bottom-2 right-2 bg-gray-100 text-gray-700 text-[10px] px-2 py-1 rounded">
+                  grid cell w: 2rem · h: 2rem
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* Learning Paths (pricing-like) */}
+      <section className="py-20 bg-gray-50">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="text-center mb-16">
+            <h2 className="text-3xl sm:text-4xl font-bold text-gray-900 mb-4">
+              {t('home.learning.title', 'Choose Your Wine Learning Journey')}
+            </h2>
+            <p className="text-xl text-gray-600">
+              {t('home.learning.subtitle', 'From casual sipping to sommelier skills')}
+            </p>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
+            {/* Free Path (public) */}
+            <div className="bg-white rounded-xl shadow-lg p-8 border-2 border-transparent hover:border-gray-300 transition-all">
+              <div className="text-center mb-6">
+                <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                  <BookOpen className="w-8 h-8 text-gray-600" />
+                </div>
+                <h3 className="text-xl font-bold text-gray-900 mb-2">
+                  {t('home.learning.free.title', 'Discover & Taste')}
+                </h3>
+                <p className="text-gray-600">
+                  {t('home.learning.free.description', 'Perfect for wine beginners')}
+                </p>
+              </div>
+
+              <ul className="space-y-3 mb-8">
+                <li className="flex items-center text-sm text-gray-600">
+                  <CheckCircle className="w-4 h-4 text-green-600 mr-2 flex-shrink-0" />
+                  {t('home.learning.free.feature1', 'Free wine tasting guide')}
+                </li>
+                <li className="flex items-center text-sm text-gray-600">
+                  <CheckCircle className="w-4 h-4 text-green-600 mr-2 flex-shrink-0" />
+                  {t('home.learning.free.feature2', 'Community access')}
+                </li>
+                <li className="flex items-center text-sm text-gray-600">
+                  <CheckCircle className="w-4 h-4 text-green-600 mr-2 flex-shrink-0" />
+                  {t('home.learning.free.feature3', 'Monthly wine tips')}
+                </li>
+              </ul>
+
+              <Link
+                to="/blog/wine-tasting-guide"
+                className="w-full bg-gray-600 hover:bg-gray-700 text-white py-3 px-6 rounded-lg font-semibold transition-colors block text-center"
+              >
+                {t('home.learning.free.cta', 'Get Free Guide')}
+              </Link>
+            </div>
+
+            {/* Basic Path (gated Swirdle) */}
+            <div className="bg-white rounded-xl shadow-lg p-8 border-2 border-blue-500 transform scale-105 relative">
+              <div className="absolute -top-4 left-1/2 transform -translate-x-1/2">
+                <span className="bg-blue-500 text-white px-4 py-1 rounded-full text-sm font-medium">
+                  {t('home.learning.popular', 'Most Popular')}
+                </span>
+              </div>
+
+              <div className="text-center mb-6">
+                <div className="w-16 h-16 bg-blue-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                  <Video className="w-8 h-8 text-blue-600" />
+                </div>
+                <h3 className="text-xl font-bold text-gray-900 mb-2">
+                  {t('home.learning.basic.title', 'Weekly Wine Shorts')}
+                </h3>
+                <p className="text-gray-600">
+                  {t('home.learning.basic.description', 'Regular wine education content')}
+                </p>
+                <div className="mt-2">
+                  <span className="text-2xl font-bold text-blue-600">$4.99</span>
+                  <span className="text-gray-600">/month</span>
+                </div>
+              </div>
+
+              <ul className="space-y-3 mb-8">
+                <li className="flex items-center text-sm text-gray-600">
+                  <CheckCircle className="w-4 h-4 text-green-600 mr-2 flex-shrink-0" />
+                  {t('home.learning.basic.feature1', 'Weekly premium videos')}
+                </li>
+                <li className="flex items-center text-sm text-gray-600">
+                  <CheckCircle className="w-4 h-4 text-green-600 mr-2 flex-shrink-0" />
+                  {t('home.learning.basic.feature2', 'Swirdle daily game')}
+                </li>
+                <li className="flex items-center text-sm text-gray-600">
+                  <CheckCircle className="w-4 h-4 text-green-600 mr-2 flex-shrink-0" />
+                  {t('home.learning.basic.feature3', 'Downloadable guides')}
+                </li>
+              </ul>
+
+              <Link
+                to="/pricing"
+                className="w-full bg-blue-600 hover:bg-blue-700 text-white py-3 px-6 rounded-lg font-semibold transition-colors block text-center"
+              >
+                {t('home.learning.basic.cta', 'Start Free Trial')}
+              </Link>
+            </div>
+
+            {/* Premium Path (public pricing link) */}
+            <div className="bg-white rounded-xl shadow-lg p-8 border-2 border-transparent hover:border-purple-300 transition-all">
+              <div className="text-center mb-6">
+                <div className="w-16 h-16 bg-purple-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                  <Crown className="w-8 h-8 text-purple-600" />
+                </div>
+                <h3 className="text-xl font-bold text-gray-900 mb-2">
+                  {t('home.learning.premium.title', 'All Access Cellar Door')}
+                </h3>
+                <p className="text-gray-600">
+                  {t('home.learning.premium.description', 'Complete wine education experience')}
+                </p>
+                <div className="mt-2">
+                  <span className="text-2xl font-bold text-purple-600">$59</span>
+                  <span className="text-gray-600"> one-time</span>
+                </div>
+              </div>
+
+              <Link
+                to="/pricing"
+                className="w-full bg-purple-600 hover:bg-purple-700 text-white py-3 px-6 rounded-lg font-semibold transition-colors block text-center"
+              >
+                {t('home.learning.premium.cta', 'Get Full Access')}
+              </Link>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* Final CTA Section */}
+      <section className="py-20 bg-gradient-to-br from-amber-600 to-orange-600">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 text-center">
+          <div className="max-w-3xl mx-auto">
+            <h2 className="text-3xl sm:text-4xl font-bold text-white mb-6">
+              {t('home.finalCta.title', 'Ready to Transform Your Wine Knowledge?')}
+            </h2>
+
+            <p className="text-xl text-amber-100 mb-8">
+              {t(
+                'home.finalCta.subtitle',
+                'Join thousands of wine lovers who have discovered the joy of authentic wine education'
+              )}
+            </p>
+
+            <div className="flex flex-col sm:flex-row gap-4 justify-center">
+              {/* Primary button (gated → /signin?next=/dashboard for guests) */}
+              <a
+                href="/dashboard"
+                onClick={authOnClick('/dashboard')}
+                className="bg-white text-amber-600 hover:bg-gray-100 font-semibold py-4 px-8 rounded-lg shadow-lg hover:shadow-xl transition-all transform hover:-translate-y-0.5 flex items-center justify-center"
+              >
+                <ArrowRight className="w-5 h-5 mr-2" />
+                {t('home.finalCta.dashboard', 'Continue Your Journey')}
+              </a>
+
+              {/* Public secondary CTA */}
+              <Link
+                to="/blog/wine-tasting-guide"
+                className="border-2 border-white text-white hover:bg-white hover:text-amber-600 font-semibold py-4 px-8 rounded-lg transition-all flex items-center justify-center"
+              >
+                <Download className="w-5 h-5 mr-2" />
+                {t('home.finalCta.secondary', 'Get Free Wine Guide')}
+              </Link>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
   );
-}
+};
+
+export default Home;
