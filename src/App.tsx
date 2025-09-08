@@ -11,6 +11,7 @@ import {
 
 // ✅ Lazy where useful
 const SwirdleLeaderboardPage = lazy(() => import("@/pages/SwirdleLeaderboardPage"));
+const CommunityPostPage = lazy(() => import("@/pages/CommunityPostPage"));
 
 // UI / Providers
 import { Toaster } from "@/components/ui/sonner";
@@ -382,6 +383,17 @@ function App() {
                       <Route path="/terms" element={<Terms />} />
                       <Route path="/events" element={<EventsPage />} />
                       <Route path="/community" element={<CommunityPage />} />
+                      {/* Community detail (gated read/reply) */}
+                      <Route
+                        path="/community/:id"
+                        element={
+                          <RequireAuth>
+                            <RequireOnboarded>
+                              <CommunityPostPage />
+                            </RequireOnboarded>
+                          </RequireAuth>
+                        }
+                      />
 
                       {/* NEW: Challenges landing (public) */}
                       <Route path="/challenges" element={<Challenges />} />
