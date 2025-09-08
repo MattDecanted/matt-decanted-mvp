@@ -18,6 +18,7 @@ import { AuthProvider, useAuth } from "@/context/AuthContext";
 import { PointsProvider } from "@/context/PointsContext";
 import { AnalyticsProvider } from "@/context/AnalyticsContext";
 import { LocaleProvider } from "@/context/LocaleContext";
+import EventsPage from "@/pages/EventsPage";
 
 // Layout & Pages
 import Layout from "@/components/Layout";
@@ -378,6 +379,7 @@ function App() {
                       <Route path="/activate" element={<Activate />} />
                       <Route path="/reset-password" element={<ResetPassword />} />
                       <Route path="/terms" element={<Terms />} />
+                      <Route path="/events" element={<EventsPage />} />
 
                       {/* NEW: Challenges landing (public) */}
                       <Route path="/challenges" element={<Challenges />} />
