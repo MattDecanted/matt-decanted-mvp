@@ -80,6 +80,9 @@ import ShortsManager from "@/pages/admin/ShortsManager";
 // ✅ NEW: Challenges landing (Bolt-style)
 import Challenges from "@/pages/Challenges";
 
+// ✅ NEW: auth boot helpers (consume magic-link before render)
+import { completeAuthFromUrl, isAuthUrl } from "@/lib/supabase";
+
 const FN_SUBMIT = "/.netlify/functions/trial-quiz-attempt";
 const PENDING_KEY = "md_trial_pending";
 
@@ -300,8 +303,29 @@ function WineOptionsJoinRoute() {
 }
 
 function App() {
+  // ✅ NEW: consume magic-link tokens before rendering the app
+  const [bootingAuth, setBootingAuth] = useState(true);
+
   useEffect(() => {
-    // Helpful diagnostics in production
+    let alive = true;
+    (async () => {
+      try {
+        if (isAuthUrl()) {
+          await completeAuthFromUrl(); // handles #access_token or ?code
+        }
+      } catch (e) {
+        console.error("[auth boot]", e);
+      } finally {
+        if (alive) setBootingAuth(false);
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  // Helpful diagnostics in production
+  useEffect(() => {
     window.addEventListener("error", (e) =>
       console.error("[window.error]", (e as any).error || (e as any).message)
     );
@@ -309,6 +333,14 @@ function App() {
       console.error("[unhandledrejection]", e?.reason || e)
     );
   }, []);
+
+  if (bootingAuth) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="h-8 w-8 animate-spin rounded-full border-2 border-gray-300 border-t-transparent" />
+      </div>
+    );
+  }
 
   return (
     <AnalyticsProvider>
@@ -399,8 +431,7 @@ function App() {
                       />
                       <Route
                         path="/game/:slug"
-                        element=
-                        {
+                        element={
                           <RequireAuth>
                             <RequireOnboarded>
                               <GamePage />
