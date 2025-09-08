@@ -6,123 +6,99 @@ import {
   Target,
   Wine,
   Trophy,
-  Video,
   BookOpen,
-  Crown,
   Sparkles,
-  ClipboardList,
-  BookOpenCheck,
   UtensilsCrossed,
-  Flame,
-  CalendarCheck,
-  Medal,
+  BadgeCheck,
+  ChevronRight,
 } from "lucide-react";
-
 import { useLocale } from "@/context/LocaleContext";
-import { usePoints } from "@/context/PointsContext";
-import { supabase } from "@/lib/supabase";
 import i18n from "i18next";
+import { supabase } from "@/lib/supabase";
 
-/* ---------------- i18n helper ---------------- */
+/* ---------- i18n helper (re-render on locale change) ---------- */
 function useT() {
   const { locale } = useLocale();
-  const t = React.useCallback(
-    (key: string, fallback: string) =>
-      (i18n?.t ? i18n.t(key, { defaultValue: fallback }) : fallback),
+  return React.useCallback(
+    (k: string, fallback: string) =>
+      (i18n?.t ? i18n.t(k, { defaultValue: fallback }) : fallback),
     [locale]
   );
-  return { t };
 }
 
-/* ---------------- Types ---------------- */
-type LBRow = { user_id: string; total_points?: number; points_30d?: number };
+/* ---------- Small types ---------- */
+type LBRow = { id: string; name: string; points: number; rank: number };
 
-/* ---------------- Page ---------------- */
+/* ---------- Page ---------- */
 export default function Challenges() {
-  const { t } = useT();
-  const { totalPoints } = usePoints();
+  const t = useT();
 
-  const [leaderboard, setLeaderboard] = React.useState<
-    { id: string; name: string; pts: number }[]
-  >([]);
-
+  // Lightweight leaderboard: try user_points; fallback to mock
+  const [lb, setLb] = React.useState<LBRow[]>([]);
   React.useEffect(() => {
-    let live = true;
+    let alive = true;
     (async () => {
       try {
-        // Try long-term total_points first
-        const up = await supabase
+        const r = await supabase
           .from("user_points")
           .select("user_id,total_points")
           .order("total_points", { ascending: false })
-          .limit(5);
-
-        let rows: LBRow[] | null = null;
-        if (!up.error && Array.isArray(up.data) && up.data.length) {
-          rows = up.data as any;
-        } else {
-          // Fallback to 30-day view if present
-          const lb30 = await supabase
-            .from("vocab_leaderboard_30d")
-            .select("user_id,points_30d")
-            .order("points_30d", { ascending: false })
-            .limit(5);
-          if (!lb30.error && Array.isArray(lb30.data) && lb30.data.length) {
-            rows = lb30.data as any;
-          }
-        }
-
-        const list =
-          rows?.map((r, i) => ({
-            id: r.user_id,
-            name: `User ${r.user_id.slice(0, 6)}…`,
-            pts: Number(r.total_points ?? r.points_30d ?? 0),
-          })) ??
-          [
-            { id: "demo1", name: "Sarah C.", pts: 2847 },
-            { id: "demo2", name: "James R.", pts: 2156 },
-            { id: "demo3", name: "Emma T.", pts: 1923 },
-            { id: "demo4", name: "Luca F.", pts: 1675 },
-            { id: "demo5", name: "Ava M.", pts: 1540 },
-          ];
-
-        if (live) setLeaderboard(list);
+          .limit(8);
+        const rows = (r?.data || []).map((row: any, i: number) => ({
+          id: row.user_id,
+          name: `Member ${row.user_id?.slice?.(0, 6) ?? ""}…`,
+          points: Number(row.total_points ?? 0),
+          rank: i + 1,
+        }));
+        if (alive && rows.length) return setLb(rows);
       } catch {
-        if (!live) return;
-        setLeaderboard([
-          { id: "demo1", name: "Sarah C.", pts: 2847 },
-          { id: "demo2", name: "James R.", pts: 2156 },
-          { id: "demo3", name: "Emma T.", pts: 1923 },
-          { id: "demo4", name: "Luca F.", pts: 1675 },
-          { id: "demo5", name: "Ava M.", pts: 1540 },
-        ]);
+        /* ignore */
       }
+      if (!alive) return;
+      setLb(
+        [
+          ["Sarah", 2847],
+          ["James", 2156],
+          ["Emma", 1923],
+          ["Alex", 1770],
+          ["Maya", 1660],
+          ["Luca", 1512],
+          ["Zoë", 1490],
+          ["Ben", 1415],
+        ].map(([name, points], i) => ({
+          id: String(i + 1),
+          name: String(name),
+          points: Number(points),
+          rank: i + 1,
+        }))
+      );
     })();
     return () => {
-      live = false;
+      alive = false;
     };
   }, []);
 
   return (
     <div className="min-h-screen py-12 bg-gray-50">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        {/* ---------------- Header ---------------- */}
+        {/* Header (bold style) */}
         <header className="text-center mb-12">
-          <h1 className="text-4xl font-extrabold tracking-tight text-gray-900 mb-3">
+          <h1 className="text-4xl font-extrabold tracking-tight text-gray-900">
             {t("challenges.title", "Wine Games & Special Content")}
           </h1>
-          <p className="text-lg text-gray-600 max-w-3xl mx-auto">
+          <p className="mt-3 text-lg text-gray-600 max-w-3xl mx-auto">
             {t(
               "challenges.subtitle",
-              "Interactive wine games and exclusive educational content to enhance your knowledge and palate."
+              "Interactive wine games and exclusive educational content to enhance your knowledge and palate"
             )}
+            .
           </p>
         </header>
 
-        {/* ---------------- Games (Bolt-style tiles) ---------------- */}
-        <section className="bg-white rounded-xl shadow-lg p-8 mb-10">
+        {/* Games grid */}
+        <section className="bg-white rounded-xl shadow border p-8 mb-12">
           <div className="text-center mb-8">
-            <h2 className="text-2xl font-bold text-gray-900 mb-1">
+            <h2 className="text-2xl font-bold text-gray-900">
               {t("challenges.games.heading", "Wine Games")}
             </h2>
             <p className="text-gray-600">
@@ -134,235 +110,192 @@ export default function Challenges() {
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {/* Swirdle */}
-            <Tile
+            <GameTile
               to="/swirdle"
-              icon={<Brain className="w-8 h-8" />}
-              accent="purple"
-              title={t("challenges.tiles.swirdle.title", "Swirdle")}
-              desc={t(
-                "challenges.tiles.swirdle.desc",
-                "Daily wine word puzzle — guess the term in 6 tries"
-              )}
-              cta={t("challenges.tiles.swirdle.cta", "Play Daily Challenge")}
+              icon={<Brain className="w-7 h-7" />}
+              iconClass="bg-purple-100 text-purple-700"
+              title="Swirdle"
+              desc="Daily wine word puzzle — guess the term in 6 tries"
+              cta="Play Daily Challenge"
+              ctaClass="bg-purple-600 hover:bg-purple-700"
             />
 
-            {/* Wine Options (multiplayer) */}
-            <Tile
-              to="/wine-options/multiplayer"
-              icon={<Target className="w-8 h-8" />}
-              accent="teal"
-              title={t("challenges.tiles.options.title", "Wine Options Game")}
-              desc={t(
-                "challenges.tiles.options.desc",
-                "Create or join a room and battle it out with friends"
-              )}
-              cta={t("challenges.tiles.options.cta", "Start Multiplayer")}
-            />
-
-            {/* Guess What */}
-            <Tile
-              to="/games/guess-what"
-              icon={<Wine className="w-8 h-8" />}
-              accent="amber"
-              title={t("challenges.tiles.guessWhat.title", "Guess What")}
-              desc={t(
-                "challenges.tiles.guessWhat.desc",
-                "Weekly blind tasting with Matt — compare your picks"
-              )}
-              cta={t("challenges.tiles.guessWhat.cta", "Join Challenge")}
-            />
-
-            {/* Vino Vocab */}
-            <Tile
+            <GameTile
               to="/vocab"
-              icon={<BookOpen className="w-8 h-8" />}
-              accent="rose"
-              title={t("challenges.tiles.vocab.title", "Vino Vocab")}
-              desc={t(
-                "challenges.tiles.vocab.desc",
-                "Timed rounds to sharpen your wine terminology"
-              )}
-              cta={t("challenges.tiles.vocab.cta", "Start Practising")}
+              icon={<BookOpen className="w-7 h-7" />}
+              iconClass="bg-rose-100 text-rose-700"
+              title="Vino Vocab"
+              desc="Timed rounds to sharpen your wine terminology"
+              cta="Start Flashcards"
+              ctaClass="bg-rose-600 hover:bg-rose-700"
             />
 
-            {/* Daily Wine Quiz */}
-            <Tile
+            <GameTile
               to="/daily-quiz"
-              icon={<Target className="w-8 h-8" />}
-              accent="blue"
-              title={t(
-                "challenges.tiles.dailyQuiz.title",
-                "Daily Wine Quiz"
-              )}
-              desc={t(
-                "challenges.tiles.dailyQuiz.desc",
-                "Five fresh questions every day. Build your streak!"
-              )}
-              cta={t("challenges.tiles.dailyQuiz.cta", "Take Today’s Quiz")}
+              icon={<Sparkles className="w-7 h-7" />}
+              iconClass="bg-blue-100 text-blue-700"
+              title="Daily Wine Quiz"
+              desc="Five fresh questions every day — build your streak"
+              cta="Take Today’s Quiz"
+              ctaClass="bg-blue-600 hover:bg-blue-700"
             />
 
-            {/* Leaderboards entry */}
-            <Tile
+            <GameTile
+              to="/wine-options/multiplayer"
+              icon={<Target className="w-7 h-7" />}
+              iconClass="bg-teal-100 text-teal-700"
+              title="Wine Options Game"
+              desc="Create or join a room and battle it out with friends"
+              cta="Start Multiplayer"
+              ctaClass="bg-teal-600 hover:bg-teal-700"
+            />
+
+            <GameTile
+              to="/games/guess-what"
+              icon={<Wine className="w-7 h-7" />}
+              iconClass="bg-amber-100 text-amber-700"
+              title="Guess What"
+              desc="Weekly blind tasting with Matt — compare your picks"
+              cta="Join Challenge"
+              ctaClass="bg-amber-600 hover:bg-amber-700"
+            />
+
+            <GameTile
               to="/swirdle/leaderboard"
-              icon={<Trophy className="w-8 h-8" />}
-              accent="indigo"
-              title={t("challenges.tiles.leaderboards.title", "Leaderboards")}
-              desc={t(
-                "challenges.tiles.leaderboards.desc",
-                "See how you rank and chase your next milestone"
-              )}
-              cta={t("challenges.tiles.leaderboards.cta", "View Rankings")}
-            />
-          </div>
-
-          {/* Inline Leaderboard */}
-          <div className="mt-10 rounded-lg border bg-gray-50">
-            <div className="flex items-center justify-between p-4 border-b">
-              <h3 className="font-semibold flex items-center gap-2">
-                <Trophy className="w-4 h-4" />
-                {t("challenges.lb.title", "Top players")}
-              </h3>
-              <Link to="/swirdle/leaderboard" className="text-sm underline">
-                {t("challenges.lb.viewAll", "View full leaderboard")}
-              </Link>
-            </div>
-            <ul className="divide-y">
-              {leaderboard.map((row, i) => (
-                <li key={row.id} className="px-4 py-3 flex items-center justify-between">
-                  <div className="flex items-center gap-3">
-                    <span className="w-6 text-right">{i + 1}</span>
-                    <div className="w-8 h-8 rounded-full bg-white border" />
-                    <div className="leading-tight">
-                      <div className="font-medium">{row.name}</div>
-                      <div className="text-xs text-gray-500">
-                        {i === 0 ? "Premium" : "Member"}
-                      </div>
-                    </div>
-                  </div>
-                  <div className="font-semibold">{row.pts} pts</div>
-                </li>
-              ))}
-            </ul>
-          </div>
-        </section>
-
-        {/* ---------------- Helper Tools ---------------- */}
-        <section className="mb-10">
-          <h2 className="text-2xl font-bold text-gray-900 mb-4 text-center">
-            {t("challenges.tools.heading", "Tools to help")}
-          </h2>
-          <p className="text-gray-600 text-center mb-6">
-            {t(
-              "challenges.tools.sub",
-              "Use these quick references to improve your tasting accuracy and speed."
-            )}
-          </p>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-            <HelperCard
-              to="/shorts?tag=tasting-cards"
-              icon={<ClipboardList className="w-7 h-7" />}
-              accent="emerald"
-              title={t("challenges.tools.tasting.title", "Tasting Cards")}
-              desc={t(
-                "challenges.tools.tasting.desc",
-                "Printable aroma, flavour and structure guides for classic grapes."
-              )}
-              cta={t("challenges.tools.cta", "Open")}
-            />
-            <HelperCard
-              to="/vocab"
-              icon={<BookOpenCheck className="w-7 h-7" />}
-              accent="rose"
-              title={t("challenges.tools.flash.title", "Vocab Flashcards")}
-              desc={t(
-                "challenges.tools.flash.desc",
-                "Rapid-fire decks for the most-tested wine terms."
-              )}
-              cta={t("challenges.tools.cta", "Practice")}
-            />
-            <HelperCard
-              to="/shorts?tag=pairing"
-              icon={<UtensilsCrossed className="w-7 h-7" />}
-              accent="amber"
-              title={t("challenges.tools.pairing.title", "Food & Wine Pairing")}
-              desc={t(
-                "challenges.tools.pairing.desc",
-                "Simple pairing rules + quick lookups for popular dishes."
-              )}
-              cta={t("challenges.tools.cta", "Explore")}
+              icon={<Trophy className="w-7 h-7" />}
+              iconClass="bg-indigo-100 text-indigo-700"
+              title="Leaderboards"
+              desc="See how you rank and chase your next milestone"
+              cta="View Rankings"
+              ctaClass="bg-indigo-600 hover:bg-indigo-700"
             />
           </div>
         </section>
 
-        {/* ---------------- Keep Learning ---------------- */}
-        <section className="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-10">
-          <PromoCard
-            icon={<Video className="w-8 h-8" />}
-            title={t("challenges.learn.shorts.heading", "Keep learning with Shorts")}
-            desc={t(
-              "challenges.learn.shorts.desc",
-              "Bite-sized videos under 2 minutes. Perfect for quick wins between tastings."
-            )}
+        {/* Tools to help */}
+        <section className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-12">
+          <ToolTile
             to="/shorts"
-            cta={t("challenges.learn.shorts.cta", "Browse Shorts")}
-            accent="purple"
+            icon={<BadgeCheck className="w-7 h-7" />}
+            bgClass="bg-emerald-50"
+            title="Tasting Cards"
+            desc="Printable prompts to structure your tastings."
+            cta="Open Cards"
+          />
+          <ToolTile
+            to="/vocab"
+            icon={<BookOpen className="w-7 h-7" />}
+            bgClass="bg-rose-50"
+            title="Vocab Flashcards"
+            desc="Drill core terms and aroma families fast."
+            cta="Practice Now"
+          />
+          <ToolTile
+            to="/blog/wine-tasting-guide"
+            icon={<UtensilsCrossed className="w-7 h-7" />}
+            bgClass="bg-amber-50"
+            title="Food & Wine Pairing"
+            desc="Simple rules of thumb for better matches."
+            cta="View Guide"
+          />
+        </section>
+
+        {/* Keep learning */}
+        <section className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-12">
+          <PromoCard
+            title="Keep learning with Shorts"
+            desc="Bite-sized videos to learn something useful in under 2 minutes."
+            to="/shorts"
+            cta="Browse Shorts"
           />
           <PromoCard
-            icon={<BookOpen className="w-8 h-8" />}
-            title={t("challenges.learn.modules.heading", "Stay on your journey")}
-            desc={t(
-              "challenges.learn.modules.desc",
-              "Short courses that build toward real confidence in the glass."
-            )}
+            title="Stay on your journey"
+            desc="Follow focused mini-modules to build knowledge step by step."
             to="/modules"
-            cta={t("challenges.learn.modules.cta", "Explore Modules")}
-            accent="blue"
+            cta="Explore Modules"
           />
         </section>
 
-        {/* ---------------- Keep Earning Points (loyalty best-practice) ---------------- */}
-        <section className="bg-white rounded-xl shadow p-6 mb-4">
-          <div className="flex items-center gap-2 mb-2">
-            <Crown className="w-5 h-5 text-yellow-600" />
-            <h3 className="text-xl font-bold">Keep earning points</h3>
-          </div>
-          <p className="text-gray-600 mb-4">
-            Earn points by playing daily, maintaining streaks, and finishing learning sprints.
-            Points unlock badges and perks over time.
-          </p>
-          <ul className="grid grid-cols-1 md:grid-cols-3 gap-3 text-sm">
-            <Tip
-              icon={<CalendarCheck className="w-4 h-4" />}
-              text="Daily Quiz & Swirdle — +points every day you show up."
-            />
-            <Tip icon={<Flame className="w-4 h-4" />} text="Streak bonuses at 3, 7, 14, 30 days." />
-            <Tip icon={<Medal className="w-4 h-4" />} text="Badges for vocab wins, blind tasting accuracy and more." />
-          </ul>
-
-          <div className="mt-5 flex flex-col sm:flex-row gap-3 sm:items-center sm:justify-between">
-            <div className="text-sm text-gray-600">
-              Current points: <strong>{Number(totalPoints ?? 0)}</strong>
-            </div>
-            <div className="flex gap-3">
-              <Link
-                to="/signin"
-                className="inline-flex items-center px-4 py-2 rounded-lg bg-black text-white"
-              >
-                {t("challenges.loyalty.signup", "Create free account")}
-              </Link>
-              <Link
-                to="/pricing"
-                className="inline-flex items-center px-4 py-2 rounded-lg border border-yellow-600 text-yellow-700 hover:bg-yellow-50"
-              >
-                <Sparkles className="w-4 h-4 mr-2" />
-                {t("challenges.loyalty.trial", "Start 7-day trial")}
-              </Link>
+        {/* Keep earning points (loyalty best-practice) */}
+        <section className="bg-white rounded-xl shadow border p-6 mb-12">
+          <div className="flex items-start gap-3">
+            <Trophy className="w-5 h-5 text-amber-600 mt-1" />
+            <div className="flex-1">
+              <h3 className="font-semibold">Keep earning points</h3>
+              <p className="text-sm text-gray-600 mt-1">
+                Earn points by playing daily, maintaining streaks, and finishing
+                learning sprints. Points unlock badges, tiers, and member perks.
+              </p>
+              <ul className="mt-4 grid grid-cols-1 md:grid-cols-3 gap-3 text-sm">
+                <li className="rounded-lg border p-3">
+                  <span className="font-medium">Daily Quiz & Swirdle</span>
+                  <div className="text-gray-600">
+                    Earn every day you show up.
+                  </div>
+                </li>
+                <li className="rounded-lg border p-3">
+                  <span className="font-medium">Streak bonuses</span>
+                  <div className="text-gray-600">
+                    Milestones at 7, 14, 30 days.
+                  </div>
+                </li>
+                <li className="rounded-lg border p-3">
+                  <span className="font-medium">Badges & milestones</span>
+                  <div className="text-gray-600">
+                    Extra points for wins and mastery.
+                  </div>
+                </li>
+              </ul>
+              <div className="mt-4 flex flex-wrap gap-3">
+                <Link
+                  to="/signin"
+                  className="inline-flex items-center rounded-lg bg-black text-white px-4 py-2 text-sm"
+                >
+                  Save my points
+                  <ChevronRight className="w-4 h-4 ml-1" />
+                </Link>
+                <Link
+                  to="/pricing"
+                  className="inline-flex items-center rounded-lg border px-4 py-2 text-sm"
+                >
+                  See membership perks
+                </Link>
+              </div>
             </div>
           </div>
         </section>
 
-        <footer className="text-center text-sm text-gray-500">
+        {/* Compact leaderboard */}
+        <section className="bg-white rounded-xl shadow border p-6">
+          <h3 className="font-semibold mb-3 flex items-center gap-2">
+            <Trophy className="w-4 h-4 text-amber-600" />
+            Top members
+          </h3>
+          <ul className="divide-y">
+            {lb.map((m) => (
+              <li key={m.id} className="py-3 flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <span className="w-6 text-right text-gray-500">{m.rank}</span>
+                  <div className="w-8 h-8 rounded-full bg-gray-100 grid place-items-center text-xs font-medium">
+                    {m.name?.[0] ?? "M"}
+                  </div>
+                  <div className="font-medium">{m.name}</div>
+                </div>
+                <div className="text-sm">
+                  <span className="font-semibold">{m.points}</span>{" "}
+                  <span className="text-gray-500">pts</span>
+                </div>
+              </li>
+            ))}
+          </ul>
+          <div className="mt-4 text-right">
+            <Link to="/swirdle/leaderboard" className="text-sm underline">
+              View full leaderboard
+            </Link>
+          </div>
+        </section>
+
+        <footer className="mt-10 text-center text-xs text-gray-500">
           Crafted with 🍇 — keep tasting, keep learning.
         </footer>
       </div>
@@ -370,155 +303,92 @@ export default function Challenges() {
   );
 }
 
-/* ---------------- Reusable UI ---------------- */
+/* ---------- Components ---------- */
 
-function Tile({
-  to,
-  icon,
-  accent,
-  title,
-  desc,
-  cta,
-}: {
+function GameTile(props: {
   to: string;
   icon: React.ReactNode;
-  accent:
-    | "purple"
-    | "teal"
-    | "amber"
-    | "rose"
-    | "blue"
-    | "indigo"
-    | "emerald";
+  iconClass: string; // e.g. "bg-purple-100 text-purple-700"
   title: string;
   desc: string;
   cta: string;
+  ctaClass: string; // e.g. "bg-purple-600 hover:bg-purple-700"
 }) {
-  const wrap =
-    accent === "purple"
-      ? "bg-purple-100"
-      : accent === "teal"
-      ? "bg-teal-100"
-      : accent === "amber"
-      ? "bg-amber-100"
-      : accent === "rose"
-      ? "bg-rose-100"
-      : accent === "indigo"
-      ? "bg-indigo-100"
-      : accent === "emerald"
-      ? "bg-emerald-100"
-      : "bg-blue-100";
-
-  const btn =
-    accent === "purple"
-      ? "bg-purple-600"
-      : accent === "teal"
-      ? "bg-teal-600"
-      : accent === "amber"
-      ? "bg-amber-600"
-      : accent === "rose"
-      ? "bg-rose-600"
-      : accent === "indigo"
-      ? "bg-indigo-600"
-      : accent === "emerald"
-      ? "bg-emerald-600"
-      : "bg-blue-600";
+  const { to, icon, iconClass, title, desc, cta, ctaClass } = props;
+  const titleId = React.useId();
 
   return (
     <Link
       to={to}
-      className="bg-white border border-gray-200 rounded-lg p-6 hover:shadow-lg transition-all hover:border-gray-300 block focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-gray-300"
+      className="group block rounded-xl border bg-white p-6 shadow-sm hover:shadow-md transition"
+      aria-labelledby={titleId}
     >
-      <div className="flex items-center gap-4 mb-3">
-        <div className={`w-12 h-12 ${wrap} rounded-full flex items-center justify-center shrink-0`}>
-          <div className="w-7 h-7">{icon}</div>
+      <div className="flex items-center gap-4">
+        <div
+          className={`w-12 h-12 rounded-full flex items-center justify-center ${iconClass}`}
+        >
+          {icon}
         </div>
-        <h3 className="text-lg font-semibold text-gray-900">{title}</h3>
+        <h3 id={titleId} className="text-lg font-semibold text-gray-900">
+          {title}
+        </h3>
       </div>
-      <p className="text-gray-600 text-sm mb-4">{desc}</p>
-      <div className={`${btn} text-white px-4 py-2 rounded-lg font-medium inline-block`}>
+
+      <p className="mt-3 text-sm text-gray-600">{desc}</p>
+
+      <span
+        className={`mt-4 inline-flex items-center text-sm font-medium text-white ${ctaClass} px-4 py-2 rounded-lg`}
+      >
         {cta}
-      </div>
+      </span>
     </Link>
   );
 }
 
-function HelperCard({
-  to,
-  icon,
-  title,
-  desc,
-  cta,
-  accent,
-}: {
+function ToolTile(props: {
   to: string;
   icon: React.ReactNode;
+  bgClass: string;
   title: string;
   desc: string;
   cta: string;
-  accent: "emerald" | "rose" | "amber";
 }) {
-  const wrap =
-    accent === "emerald"
-      ? "bg-emerald-100 text-emerald-800"
-      : accent === "rose"
-      ? "bg-rose-100 text-rose-800"
-      : "bg-amber-100 text-amber-800";
-
+  const { to, icon, bgClass, title, desc, cta } = props;
   return (
-    <div className="bg-white rounded-lg shadow p-6">
+    <Link
+      to={to}
+      className="rounded-xl border bg-white hover:shadow-md transition p-6 block"
+    >
       <div className="flex items-center gap-3 mb-2">
-        <div className={`w-10 h-10 rounded-full flex items-center justify-center ${wrap}`}>
+        <div className={`w-10 h-10 rounded-full grid place-items-center ${bgClass}`}>
           {icon}
         </div>
-        <h3 className="text-lg font-semibold">{title}</h3>
+        <h3 className="font-semibold">{title}</h3>
       </div>
-      <p className="text-sm text-gray-600 mb-4">{desc}</p>
-      <Link to={to} className="inline-flex items-center px-3 py-1.5 rounded-lg border hover:bg-gray-50">
+      <p className="text-sm text-gray-600 mb-3">{desc}</p>
+      <span className="inline-flex items-center text-sm font-medium text-gray-900">
         {cta}
-      </Link>
-    </div>
+        <ChevronRight className="w-4 h-4 ml-1" />
+      </span>
+    </Link>
   );
 }
 
-function PromoCard({
-  icon,
-  title,
-  desc,
-  to,
-  cta,
-  accent,
-}: {
-  icon: React.ReactNode;
-  title: string;
-  desc: string;
-  to: string;
-  cta: string;
-  accent: "purple" | "blue";
-}) {
-  const btn = accent === "purple" ? "bg-purple-600" : "bg-blue-600";
+function PromoCard(props: { title: string; desc: string; to: string; cta: string }) {
+  const { title, desc, to, cta } = props;
   return (
-    <div className="bg-white rounded-lg shadow-lg p-6">
-      <div className="flex items-center mb-3">
-        {icon}
-        <h3 className="text-2xl font-bold text-gray-900 ml-3">{title}</h3>
+    <div className="rounded-xl border bg-white p-6 flex items-start justify-between">
+      <div>
+        <h3 className="text-lg font-semibold">{title}</h3>
+        <p className="text-sm text-gray-600 mt-1">{desc}</p>
       </div>
-      <p className="text-gray-600 mb-6">{desc}</p>
       <Link
         to={to}
-        className={`inline-flex items-center justify-center px-4 py-2 rounded-lg text-white font-medium hover:opacity-95 transition ${btn}`}
+        className="mt-3 sm:mt-0 inline-flex items-center rounded-lg bg-gray-900 text-white px-4 py-2 text-sm hover:opacity-95"
       >
         {cta}
+        <ChevronRight className="w-4 h-4 ml-1" />
       </Link>
     </div>
-  );
-}
-
-function Tip({ icon, text }: { icon: React.ReactNode; text: string }) {
-  return (
-    <li className="flex items-start gap-2 p-3 rounded-lg bg-gray-50">
-      <span className="mt-0.5">{icon}</span>
-      <span>{text}</span>
-    </li>
   );
 }
