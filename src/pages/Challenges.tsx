@@ -250,21 +250,31 @@ function Tile({
   ctaBg: string; // e.g. bg-purple-600
   ctaText: string;
 }) {
+  const titleId = React.useId();
+
   return (
     <Link
       to={to}
-      className="bg-white border border-gray-200 rounded-lg p-6 hover:shadow-lg transition-all hover:border-gray-300"
-      aria-label={title}
+      className="bg-white border border-gray-200 rounded-lg p-6 hover:shadow-lg transition-all hover:border-gray-300 block focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-gray-300"
+      aria-labelledby={titleId}
     >
-      <div className="text-center">
-        <div className={`w-16 h-16 ${iconWrap} rounded-full flex items-center justify-center mx-auto mb-4`}>
-          {icon}
+      {/* Header row: logo + title side-by-side */}
+      <div className="flex items-center gap-4 mb-3">
+        <div className={`w-12 h-12 ${iconWrap} rounded-full flex items-center justify-center shrink-0`}>
+          {/* keep icon size consistent */}
+          <div className="w-7 h-7">{icon}</div>
         </div>
-        <h3 className="text-lg font-semibold text-gray-900 mb-2">{title}</h3>
-        <p className="text-gray-600 text-sm mb-4">{desc}</p>
-        <div className={`${ctaBg} text-white px-4 py-2 rounded-lg font-medium inline-block`}>
-          {ctaText}
-        </div>
+        <h3 id={titleId} className="text-lg font-semibold text-gray-900">
+          {title}
+        </h3>
+      </div>
+
+      {/* Description */}
+      <p className="text-gray-600 text-sm mb-4">{desc}</p>
+
+      {/* CTA */}
+      <div className={`${ctaBg} text-white px-4 py-2 rounded-lg font-medium inline-block`}>
+        {ctaText}
       </div>
     </Link>
   );
