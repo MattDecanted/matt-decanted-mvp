@@ -1,3 +1,4 @@
+// src/pages/SignIn.tsx
 import React, { useEffect, useRef, useState } from "react";
 import { useLocation, useSearchParams } from "react-router-dom";
 import { supabase } from "@/lib/supabase";
@@ -16,13 +17,13 @@ export default function SignIn() {
   const location = useLocation();
   const [params] = useSearchParams();
 
-  // prefill email from ?email=
+  // Prefill email from ?email=
   const [email, setEmail] = useState<string>(() => params.get("email") || "");
 
-  const [sending, setSending] = useState(false);
-  const [cooldown, setCooldown] = useState(0);
-  const [mode, setMode] = useState<Mode>("idle");
-  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [sending,      setSending]      = useState(false);
+  const [cooldown,     setCooldown]     = useState(0);
+  const [mode,         setMode]         = useState<Mode>("idle");
+  const [errorMsg,     setErrorMsg]     = useState<string | null>(null);
   const timerRef = useRef<number | null>(null);
 
   const authParam = params.get("auth");
@@ -32,11 +33,7 @@ export default function SignIn() {
   useEffect(() => {
     const from = (location.state as any)?.from?.pathname as string | undefined;
     if (from) {
-      try {
-        localStorage.setItem(POST_LOGIN_KEY, from);
-      } catch {
-        /* ignore */
-      }
+      try { localStorage.setItem(POST_LOGIN_KEY, from); } catch {}
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -54,12 +51,10 @@ export default function SignIn() {
         try {
           const stored = localStorage.getItem(POST_LOGIN_KEY);
           if (stored) {
-            to = stored;
+            to = stored.startsWith("/") ? stored : `/${stored}`;
             localStorage.removeItem(POST_LOGIN_KEY);
           }
-        } catch {
-          /* ignore */
-        }
+        } catch {}
         window.location.replace(to);
         return true;
       }
@@ -76,9 +71,7 @@ export default function SignIn() {
       setTimeout(tick, 250);
     })();
 
-    return () => {
-      alive = false;
-    };
+    return () => { alive = false; };
   }, [location.state]);
 
   const isEmailValid = (e: string) =>
@@ -99,11 +92,7 @@ export default function SignIn() {
   };
 
   const setCooldownNow = (secs: number) => {
-    try {
-      localStorage.setItem(KEY, String(Date.now()));
-    } catch {
-      /* ignore */
-    }
+    try { localStorage.setItem(KEY, String(Date.now())); } catch {}
     startTimer(secs);
   };
 
@@ -115,14 +104,9 @@ export default function SignIn() {
     }
     try {
       const last = Number(localStorage.getItem(KEY) || 0);
-      const delta = Math.max(
-        0,
-        COOLDOWN_SEC - Math.floor((Date.now() - last) / 1000)
-      );
+      const delta = Math.max(0, COOLDOWN_SEC - Math.floor((Date.now() - last) / 1000));
       if (delta > 0) startTimer(delta);
-    } catch {
-      /* ignore */
-    }
+    } catch {}
     return () => {
       if (timerRef.current) window.clearInterval(timerRef.current);
     };
@@ -143,7 +127,8 @@ export default function SignIn() {
       const { error } = await supabase.auth.signInWithOtp({
         email: email.trim(),
         options: {
-          emailRedirectTo: REDIRECT_TO,
+          emailRedirectTo: REDIRECT_TO,  // lands on /auth/callback
+          shouldCreateUser: true,        // ensure new users are created
         },
       });
 
@@ -155,7 +140,6 @@ export default function SignIn() {
           setErrorMsg(`We just sent a link recently. Try again in ~${secs}s.`);
           return;
         }
-        // eslint-disable-next-line no-console
         console.error("signInWithOtp error:", error);
         setMode("error");
         setErrorMsg(error.message);
@@ -175,24 +159,18 @@ export default function SignIn() {
 
     setSending(true);
     try {
-      const { error } = await supabase.auth.resetPasswordForEmail(
-        email.trim(),
-        {
-          redirectTo: `${REDIRECT_TO}?type=recovery`,
-        }
-      );
+      const { error } = await supabase.auth.resetPasswordForEmail(email.trim(), {
+        redirectTo: `${REDIRECT_TO}?type=recovery`,
+      });
 
       if (error) {
         const secs = secondsFrom429(error.message) ?? COOLDOWN_SEC;
         if (String(error.message).toLowerCase().includes("429")) {
           setCooldownNow(secs);
           setMode("idle");
-          setErrorMsg(
-            `Recovery already requested. Try again in ~${secs}s.`
-          );
+          setErrorMsg(`Recovery already requested. Try again in ~${secs}s.`);
           return;
         }
-        // eslint-disable-next-line no-console
         console.error("resetPasswordForEmail error:", error);
         setMode("error");
         setErrorMsg(error.message);
@@ -245,13 +223,9 @@ export default function SignIn() {
         <button
           type="submit"
           className="w-full rounded bg-black px-4 py-2 text-white disabled:opacity-50"
-          disabled={
-            sending || (!ignoreCooldown && cooldown > 0) || !isEmailValid(email)
-          }
+          disabled={sending || (!ignoreCooldown && cooldown > 0) || !isEmailValid(email)}
         >
-          {cooldown > 0 && !ignoreCooldown
-            ? `Wait ${cooldown}s...`
-            : "Send magic link"}
+          {cooldown > 0 && !ignoreCooldown ? `Wait ${cooldown}s...` : "Send magic link"}
         </button>
       </form>
 
@@ -259,32 +233,19 @@ export default function SignIn() {
       <button
         className="w-full rounded border px-4 py-2 disabled:opacity-50"
         onClick={sendRecovery}
-        disabled={
-          sending || (!ignoreCooldown && cooldown > 0) || !isEmailValid(email)
-        }
+        disabled={sending || (!ignoreCooldown && cooldown > 0) || !isEmailValid(email)}
       >
-        {cooldown > 0 && !ignoreCooldown
-          ? `Wait ${cooldown}s...`
-          : "Send recovery email"}
+        {cooldown > 0 && !ignoreCooldown ? `Wait ${cooldown}s...` : "Send recovery email"}
       </button>
 
       {mode === "sent-magic" && (
-        <div
-          className="rounded-md bg-green-50 p-3 text-sm"
-          role="status"
-          aria-live="polite"
-        >
+        <div className="rounded-md bg-green-50 p-3 text-sm" role="status" aria-live="polite">
           Check <b>{email}</b> for your sign-in link. Open it on this device.
         </div>
       )}
       {mode === "sent-recovery" && (
-        <div
-          className="rounded-md bg-green-50 p-3 text-sm"
-          role="status"
-          aria-live="polite"
-        >
-          Recovery email sent to <b>{email}</b>. Use the link to set a new
-          password.
+        <div className="rounded-md bg-green-50 p-3 text-sm" role="status" aria-live="polite">
+          Recovery email sent to <b>{email}</b>. Use the link to set a new password.
         </div>
       )}
       {errorMsg && (
@@ -293,8 +254,7 @@ export default function SignIn() {
         </div>
       )}
       <p className="text-xs text-gray-500">
-        Tip: links expire quickly. If it says expired, request another and use
-        it straight away.
+        Tip: links expire quickly. If it says expired, request another and use it straight away.
       </p>
     </div>
   );
