@@ -15,173 +15,129 @@ const TIERS = [
 
 type FormState = {
   alias: string;
-  display_name: string;
+  name: string; // maps to profiles.first_name (or display_name if present)
   bio: string;
   country: string;
   state: string;
   accept_terms: boolean;
 };
 
-type SchemaFlags = {
+type SchemaInfo = {
   hasAlias: boolean;
-  hasDisplayName: boolean;
+  nameField: "display_name" | "first_name" | null;
   hasBio: boolean;
   hasCountry: boolean;
   hasState: boolean;
   hasTermsAcceptedAt: boolean;
 };
 
-type BadgeRow = { id?: string; title?: string; badge_key?: string; earned_at?: string };
+type BadgeRow = Record<string, any>; // unknown columns; we'll pick sensible labels at runtime
 
 export default function AccountPage() {
   const { user, loading, profile, refreshProfile } = useAuth();
   const pointsCtx = usePoints?.();
   const location = useLocation();
 
-  const [schema, setSchema] = useState<SchemaFlags>({
+  const [schema, setSchema] = useState<SchemaInfo>({
     hasAlias: true,
-    hasDisplayName: true,
+    nameField: "first_name",
     hasBio: false,
-    hasCountry: false,
-    hasState: false,
+    hasCountry: true,
+    hasState: true,
     hasTermsAcceptedAt: true,
   });
 
   const [badges, setBadges] = useState<BadgeRow[]>([]);
-  const [trialEndsAt, setTrialEndsAt] = useState<string | null>(null);
-  const [plan, setPlan] = useState<string | null>(null);
+  const [trialStartedAt, setTrialStartedAt] = useState<string | null>(null);
+  const [membershipTier, setMembershipTier] = useState<string | null>(null);
 
-  // Keep Account in sync with the navbar: refresh points once when page opens
+  // Keep Account in sync with navbar: refresh points once on mount
   useEffect(() => {
-    if ((pointsCtx as any)?.refreshPoints) {
-      (pointsCtx as any).refreshPoints();
-    }
+    (pointsCtx as any)?.refreshPoints?.();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Inspect schema, badges, and trial info
+  // Introspect schema + read badges + trial
   useEffect(() => {
     (async () => {
       if (!user) return;
 
-      // schema (safe: select "*")
+      // schema
       try {
         const { data } = await supabase
           .from("profiles")
           .select("*")
           .or(`id.eq.${user.id},user_id.eq.${user.id}`)
           .maybeSingle();
+
         const keys = Object.keys(data || {});
+        const nameField = keys.includes("display_name")
+          ? ("display_name" as const)
+          : keys.includes("first_name")
+          ? ("first_name" as const)
+          : null;
+
         setSchema({
-          hasAlias: keys.includes("alias") || true,
-          hasDisplayName: keys.includes("display_name") || true,
+          hasAlias: keys.includes("alias"),
+          nameField,
           hasBio: keys.includes("bio"),
-          hasCountry: keys.includes("country"),
+          hasCountry: keys.includes("country") || keys.includes("country_code"),
           hasState: keys.includes("state"),
-          hasTermsAcceptedAt: keys.includes("terms_accepted_at") || true,
+          hasTermsAcceptedAt: keys.includes("terms_accepted_at"),
         });
+
+        // trial + plan in *your* schema: trial_started_at + membership_tier
+        setTrialStartedAt((data as any)?.trial_started_at ?? null);
+        setMembershipTier((data as any)?.membership_tier ?? null);
       } catch {
         /* ignore */
       }
 
-      // badges (try common shapes; merge results)
-      const setUnique = (arr: BadgeRow[]) => {
-        const seen = new Set<string>();
-        const out: BadgeRow[] = [];
-        for (const b of arr) {
-          const key = (b.id || b.badge_key || JSON.stringify(b)) as string;
-          if (!seen.has(key)) {
-            seen.add(key);
-            out.push(b);
-          }
-        }
-        return out;
-      };
+      // badges — load whatever columns exist
+      const merged: BadgeRow[] = [];
+      try {
+        const { data } = await supabase
+          .from("user_badges")
+          .select("*")
+          .or(`user_id.eq.${user.id},profile_id.eq.${user.id}`)
+          .order("created_at", { ascending: false });
+        if (Array.isArray(data)) merged.push(...data);
+      } catch {
+        /* ignore if table or policy missing */
+      }
 
-      const collected: BadgeRow[] = [];
-      // user_badges by user_id
-      try {
-        const { data } = await supabase
-          .from("user_badges")
-          .select("id,title,badge_key,earned_at")
-          .eq("user_id", user.id)
-          .order("earned_at", { ascending: false });
-        if (Array.isArray(data)) collected.push(...(data as any));
-      } catch {}
-      // user_badges by profile_id
-      try {
-        const { data } = await supabase
-          .from("user_badges")
-          .select("id,title,badge_key,earned_at")
-          .eq("profile_id", user.id)
-          .order("earned_at", { ascending: false });
-        if (Array.isArray(data)) collected.push(...(data as any));
-      } catch {}
-      // badges_earned table (alt name)
+      // optional alternates (no-ops if they don't exist)
       try {
         const { data } = await supabase
           .from("badges_earned")
-          .select("id,title,badge_key,earned_at")
+          .select("*")
           .or(`user_id.eq.${user.id},profile_id.eq.${user.id}`)
           .order("earned_at", { ascending: false });
-        if (Array.isArray(data)) collected.push(...(data as any));
+        if (Array.isArray(data)) merged.push(...data);
       } catch {}
 
-      setBadges(setUnique(collected));
-
-      // trial: first match wins
-      const candidates: Array<() => Promise<{ end?: string | null; plan?: string | null }>> = [
-        async () => {
-          const end = (profile as any)?.trial_ends_at || null;
-          const p = (profile as any)?.plan || null;
-          return { end, plan: p };
-        },
-        async () => {
-          const { data } = await supabase
-            .from("memberships")
-            .select("trial_ends_at,plan")
-            .or(`user_id.eq.${user.id},profile_id.eq.${user.id}`)
-            .maybeSingle();
-          return { end: data?.trial_ends_at || null, plan: data?.plan || null };
-        },
-        async () => {
-          const { data } = await supabase
-            .from("subscriptions")
-            .select("trial_end,plan")
-            .or(`user_id.eq.${user.id},profile_id.eq.${user.id}`)
-            .maybeSingle();
-          return { end: data?.trial_end || null, plan: data?.plan || null };
-        },
-      ];
-
-      for (const fn of candidates) {
-        try {
-          const { end, plan } = await fn();
-          if (end) {
-            setTrialEndsAt(end);
-            if (plan) setPlan(plan);
-            break;
-          }
-          if (plan && !trialEndsAt) setPlan(plan);
-        } catch {}
+      // unique
+      const seen = new Set<string>();
+      const unique: BadgeRow[] = [];
+      for (const b of merged) {
+        const key =
+          String(b.id ?? b.badge_id ?? b.badge_key ?? b.slug ?? JSON.stringify(b));
+        if (!seen.has(key)) {
+          seen.add(key);
+          unique.push(b);
+        }
       }
+      setBadges(unique);
     })();
-  }, [user, profile]);
+  }, [user]);
 
-  // Points = use the same source as the navbar (PointsContext), fallback to profile fields
-  const pointsFromProfile =
-    (profile as any)?.points_total ??
-    (profile as any)?.points ??
-    (profile as any)?.score ??
-    (profile as any)?.xp ??
-    0;
-
+  // Points: match the navbar (PointsContext), fallback 0
   const pointsLoading = Boolean((pointsCtx as any)?.loading);
   const pointsValue =
     (pointsCtx as any)?.totalPoints ??
     (pointsCtx as any)?.points ??
     (pointsCtx as any)?.balance ??
-    pointsFromProfile;
+    0;
 
   const currentTier = useMemo(() => {
     const p = Number(pointsValue || 0);
@@ -203,19 +159,25 @@ export default function AccountPage() {
     return Math.round((pos / span) * 100);
   }, [pointsValue, currentTier, nextTier]);
 
-  // Trial label
+  // Trial label using trial_started_at (+7 days)
   const trialLabel = useMemo(() => {
-    if (!trialEndsAt) return plan ? `Plan: ${plan}` : "Plan: FREE";
-    const end = new Date(trialEndsAt);
-    const daysLeft = Math.max(0, Math.ceil((end.getTime() - Date.now()) / 86400000));
+    if (!trialStartedAt) {
+      return membershipTier ? `Plan: ${membershipTier}` : "Plan: FREE";
+    }
+    const start = new Date(trialStartedAt).getTime();
+    const end = start + 7 * 86400000; // 7 days
+    const daysLeft = Math.max(0, Math.ceil((end - Date.now()) / 86400000));
     return `Trial: ${daysLeft} day${daysLeft === 1 ? "" : "s"} left`;
-  }, [trialEndsAt, plan]);
+  }, [trialStartedAt, membershipTier]);
 
-  // Form seed
+  // Form seed (map to first_name if present)
   const initial: FormState = useMemo(
     () => ({
       alias: profile?.alias ?? "",
-      display_name: profile?.display_name ?? "",
+      name:
+        (profile as any)?.display_name ??
+        (profile as any)?.first_name ??
+        "",
       bio: (profile as any)?.bio ?? "",
       country: (profile as any)?.country ?? "",
       state: (profile as any)?.state ?? "",
@@ -224,7 +186,8 @@ export default function AccountPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [
       profile?.alias,
-      profile?.display_name,
+      (profile as any)?.display_name,
+      (profile as any)?.first_name,
       (profile as any)?.bio,
       (profile as any)?.country,
       (profile as any)?.state,
@@ -244,10 +207,7 @@ export default function AccountPage() {
     return <Navigate to="/signin" replace state={{ from: location }} />;
   }
 
-  const canSave =
-    form.alias.trim().length > 0 &&
-    form.display_name.trim().length > 0 &&
-    !saving;
+  const canSave = form.alias.trim().length > 0 && form.name.trim().length > 0 && !saving;
 
   // Upsert w/out onConflict; drop unknown columns and retry.
   async function safeUpsert(payload: Record<string, any>) {
@@ -289,7 +249,11 @@ export default function AccountPage() {
       };
 
       if (schema.hasAlias) patch.alias = form.alias.trim();
-      if (schema.hasDisplayName) patch.display_name = form.display_name.trim();
+
+      if (schema.nameField) {
+        patch[schema.nameField] = form.name.trim();
+      }
+
       if (schema.hasBio) patch.bio = form.bio;
       if (schema.hasCountry) patch.country = form.country.trim();
       if (schema.hasState) patch.state = form.state.trim();
@@ -308,6 +272,28 @@ export default function AccountPage() {
     } finally {
       setSaving(false);
     }
+  }
+
+  // Utilities to display unknown badge row nicely
+  function badgeTitle(b: BadgeRow) {
+    return (
+      b.title ??
+      b.name ??
+      b.label ??
+      b.badge ??
+      b.badge_key ??
+      b.key ??
+      "Badge"
+    );
+  }
+  function badgeDate(b: BadgeRow) {
+    const s =
+      b.earned_at ??
+      b.created_at ??
+      b.awarded_at ??
+      b.inserted_at ??
+      null;
+    return s ? new Date(s).toLocaleDateString() : null;
   }
 
   return (
@@ -355,13 +341,11 @@ export default function AccountPage() {
           </p>
         ) : (
           <ul className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-            {badges.map((b) => (
-              <li key={b.id || b.badge_key} className="border rounded p-3">
-                <div className="font-medium">{b.title || b.badge_key || "Badge"}</div>
-                {b.earned_at && (
-                  <div className="text-xs text-gray-600">
-                    Earned {new Date(b.earned_at).toLocaleDateString()}
-                  </div>
+            {badges.map((b, i) => (
+              <li key={b.id ?? b.badge_id ?? b.badge_key ?? i} className="border rounded p-3">
+                <div className="font-medium">{badgeTitle(b)}</div>
+                {badgeDate(b) && (
+                  <div className="text-xs text-gray-600">Earned {badgeDate(b)}</div>
                 )}
               </li>
             ))}
@@ -390,17 +374,16 @@ export default function AccountPage() {
             <label className="block text-sm font-medium mb-1">Display name</label>
             <input
               className="w-full rounded border p-2"
-              value={form.display_name}
-              onChange={(e) => setForm((f) => ({ ...f, display_name: e.target.value }))}
-              placeholder="Your name"
+              value={form.name}
+              onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
+              placeholder="Your first name"
               required
             />
             <p className="text-xs text-gray-500 mt-1">
-              <strong>Display name</strong> is how we greet you in the app (can be your real name).
+              We store this as <code>{schema.nameField ?? "first_name"}</code> in your profile.
             </p>
           </div>
 
-          {/* Bio */}
           {schema.hasBio && (
             <div>
               <label className="block text-sm font-medium mb-1">Bio</label>
@@ -466,7 +449,7 @@ export default function AccountPage() {
             {errorMsg && <span className="text-sm text-red-600">{errorMsg}</span>}
             {skippedFields.length > 0 && !errorMsg && (
               <span className="text-xs text-amber-700">
-                Note: skipped fields not present in your database: {skippedFields.join(", ")}.
+                Skipped fields not in database: {skippedFields.join(", ")}.
               </span>
             )}
           </div>
