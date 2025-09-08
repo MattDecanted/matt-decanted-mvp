@@ -1,7 +1,7 @@
 // src/components/Layout.tsx
 import * as React from "react";
 import { useLocation, useNavigate } from "react-router-dom";
-import { Globe, Trophy, Flame, Menu, X } from "lucide-react";
+import { Globe, Trophy, Flame, Menu, X, User } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 import { usePoints } from "@/context/PointsContext";
 import { useLocale } from "@/context/LocaleContext";
@@ -29,7 +29,7 @@ const LANGS = [
 export default function Layout({ children }: { children: React.ReactNode }) {
   const { user, signOut, profile } = useAuth();
   const pointsCtx = usePoints?.();
-  const { locale, setLocale } = useLocale();
+  const { selected, locale, setSelected } = useLocale(); // <- matches your LocaleContext
   const navigate = useNavigate();
   const loc = useLocation();
 
@@ -76,25 +76,25 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     const qLang = params.get("lang");
     if (!qLang) return;
     const supported = LANGS.some((l) => l.code === qLang);
-    if (supported && qLang !== locale) {
-      setLocale(qLang);
+    if (supported && qLang !== selected) {
+      setSelected(qLang);
       try {
         localStorage.setItem("md_locale", qLang);
       } catch {}
     }
-  }, [loc.search, locale, setLocale]);
+  }, [loc.search, selected, setSelected]);
 
-  // 2) Restore from localStorage on first mount if no locale yet
+  // 2) Restore from localStorage on first mount if not set yet
   React.useEffect(() => {
-    if (!locale) {
+    if (!selected) {
       try {
         const saved = localStorage.getItem("md_locale");
-        setLocale(saved && LANGS.some((l) => l.code === saved) ? saved : "en");
+        setSelected(saved && LANGS.some((l) => l.code === saved) ? saved : "en");
       } catch {
-        setLocale("en");
+        setSelected("en");
       }
     }
-  }, [locale, setLocale]);
+  }, [selected, setSelected]);
 
   // 3) Always keep ?lang in the URL on every route
   React.useEffect(() => {
@@ -109,7 +109,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
 
   // 4) Handler for dropdown
   function handleLangChange(next: string) {
-    setLocale(next);
+    setSelected(next);
     try {
       localStorage.setItem("md_locale", next);
     } catch {}
@@ -197,7 +197,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
               <NavLink to="/modules" className={linkClass}>
                 Modules
               </NavLink>
-              <NavLink to="/play" className={linkClass}>
+              <NavLink to="/challenges" className={linkClass}>
                 Challenges
               </NavLink>
               <NavLink to="/about" className={linkClass}>
@@ -215,7 +215,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
               )}
             </nav>
 
-            {/* Right cluster */}
+            {/* Right cluster (desktop) */}
             <div className="hidden md:flex items-center gap-2">
               {/* Language switcher */}
               <label
@@ -274,7 +274,10 @@ export default function Layout({ children }: { children: React.ReactNode }) {
                 </button>
               ) : (
                 <>
-                  <Link to="/signin" className="btn-ghost">
+                  <Link
+                    to="/signin"
+                    className="inline-flex items-center rounded-md border border-gray-300 bg-white px-3 py-1 text-xs font-semibold text-gray-800 hover:bg-gray-50"
+                  >
                     Sign in
                   </Link>
                   <Link
@@ -287,14 +290,24 @@ export default function Layout({ children }: { children: React.ReactNode }) {
               )}
             </div>
 
-            {/* Mobile hamburger */}
-            <button
-              className="md:hidden inline-flex items-center justify-center w-9 h-9 rounded-md border border-gray-200"
-              onClick={() => setOpen((v) => !v)}
-              aria-label="Toggle menu"
-            >
-              {open ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
-            </button>
+            {/* Right cluster (mobile): Account + Menu */}
+            <div className="md:hidden flex items-center gap-2">
+              <Link
+                to={user ? "/account" : "/signin"}
+                aria-label={user ? "Account" : "Sign in"}
+                className="inline-flex items-center justify-center w-9 h-9 rounded-md border border-gray-200 bg-white"
+                onClick={() => setOpen(false)}
+              >
+                <User className="w-5 h-5 text-gray-800" />
+              </Link>
+              <button
+                className="inline-flex items-center justify-center w-9 h-9 rounded-md border border-gray-200 bg-white"
+                onClick={() => setOpen((v) => !v)}
+                aria-label="Toggle menu"
+              >
+                {open ? <X className="w-5 h-5 text-gray-800" /> : <Menu className="w-5 h-5 text-gray-800" />}
+              </button>
+            </div>
           </div>
         </div>
 
@@ -311,7 +324,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
               <NavLink to="/modules" className={linkClass} onClick={() => setOpen(false)}>
                 Modules
               </NavLink>
-              <NavLink to="/play" className={linkClass} onClick={() => setOpen(false)}>
+              <NavLink to="/challenges" className={linkClass} onClick={() => setOpen(false)}>
                 Challenges
               </NavLink>
               <NavLink to="/about" className={linkClass} onClick={() => setOpen(false)}>
