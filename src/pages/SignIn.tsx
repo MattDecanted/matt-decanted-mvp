@@ -1,29 +1,42 @@
 // src/pages/SignIn.tsx
 import React, { useEffect, useRef, useState } from "react";
+import { useLocation, useSearchParams } from "react-router-dom";
 import { supabase } from "@/lib/supabase";
 
 const COOLDOWN_SEC = 60;
 const KEY = "otp_last_request_at";
-const REDIRECT_TO = `${window.location.origin}/auth/callback`;
+const REDIRECT_TO =
+  typeof window !== "undefined"
+    ? `${window.location.origin}/auth/callback`
+    : "/auth/callback";
 
 type Mode = "idle" | "sent-magic" | "sent-recovery" | "error";
 
 export default function SignIn() {
-  const [email, setEmail] = useState("");
+  const location = useLocation();
+  const [params] = useSearchParams();
+
+  // prefill email from ?email= if present
+  const [email, setEmail] = useState(() => params.get("email") || "");
+
   const [sending, setSending] = useState(false);
   const [cooldown, setCooldown] = useState(0);
   const [mode, setMode] = useState<Mode>("idle");
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const timerRef = useRef<number | null>(null);
 
-  // If already signed in, skip this page
+  // If already signed in, bounce to where they came from, else /account
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => {
       if (data.session) {
-        window.location.replace("/account");
+        const to =
+          ((location.state as any)?.from?.pathname as string | undefined) ||
+          "/account";
+        window.location.replace(to);
       }
     });
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // run once on mount
 
   const isEmailValid = (e: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e.trim());
 
@@ -42,14 +55,22 @@ export default function SignIn() {
   };
 
   const setCooldownNow = (secs: number) => {
-    localStorage.setItem(KEY, String(Date.now()));
+    try {
+      localStorage.setItem(KEY, String(Date.now()));
+    } catch {
+      /* ignore */
+    }
     startTimer(secs);
   };
 
   useEffect(() => {
-    const last = Number(localStorage.getItem(KEY) || 0);
-    const delta = Math.max(0, COOLDOWN_SEC - Math.floor((Date.now() - last) / 1000));
-    if (delta > 0) startTimer(delta);
+    try {
+      const last = Number(localStorage.getItem(KEY) || 0);
+      const delta = Math.max(0, COOLDOWN_SEC - Math.floor((Date.now() - last) / 1000));
+      if (delta > 0) startTimer(delta);
+    } catch {
+      /* ignore */
+    }
     return () => {
       if (timerRef.current) window.clearInterval(timerRef.current);
     };
@@ -132,9 +153,24 @@ export default function SignIn() {
     void sendMagic();
   };
 
+  // Helpful banner if we arrived via ?auth=missing|expired
+  const authParam = params.get("auth");
+  const banner =
+    authParam === "missing"
+      ? "We couldn’t complete sign in from that link. Please request a new magic link."
+      : authParam === "expired"
+      ? "That magic link has expired. Please request a new one."
+      : null;
+
   return (
     <div className="mx-auto max-w-md p-6 space-y-5">
       <h1 className="text-2xl font-semibold">Sign in</h1>
+
+      {banner && (
+        <div className="rounded border border-amber-300 bg-amber-50 text-amber-800 px-3 py-2 text-sm" role="status">
+          {banner}
+        </div>
+      )}
 
       <form onSubmit={onSubmit} className="space-y-3">
         <label className="block text-sm font-medium">Email</label>
@@ -166,17 +202,17 @@ export default function SignIn() {
       </button>
 
       {mode === "sent-magic" && (
-        <div className="rounded-md bg-green-50 p-3 text-sm">
+        <div className="rounded-md bg-green-50 p-3 text-sm" role="status" aria-live="polite">
           Check <b>{email}</b> for your sign-in link. Open it on this device.
         </div>
       )}
       {mode === "sent-recovery" && (
-        <div className="rounded-md bg-green-50 p-3 text-sm">
+        <div className="rounded-md bg-green-50 p-3 text-sm" role="status" aria-live="polite">
           Recovery email sent to <b>{email}</b>. Use the link to set a new password.
         </div>
       )}
       {errorMsg && (
-        <div className="rounded-md bg-red-50 p-3 text-sm">
+        <div className="rounded-md bg-red-50 p-3 text-sm" role="alert">
           {errorMsg}
         </div>
       )}
