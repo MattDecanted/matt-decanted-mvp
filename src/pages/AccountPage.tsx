@@ -31,205 +31,130 @@ type SchemaInfo = {
   hasTermsAcceptedAt: boolean;
 };
 
-type BadgeRow = Record<string, any>;
-
-type BadgeDef = {
-  key: string;
-  title: string;
+type BadgeRow = {
+  code?: string | null;
+  badge_code?: string | null;
+  name?: string | null;
   description?: string | null;
-  iconUrl?: string | null;
-  emoji?: string | null;
-};
+  icon?: string | null;
+  category?: string | null;
+  level?: number | null;
+  tier?: string | null;
+  created_at?: string | null;
+  awarded_at?: string | null;
+  user_id?: string | null;
+  evidence?: any;
+} & Record<string, any>;
 
-/* ------------------- ROBUST HELPERS ------------------- */
+/* ------------------- Helpers ------------------- */
 
-// Try a query; on missing-column (42703) fall back. On RLS warn + return null.
+// Try a query; if a column is missing or RLS blocks, just return null.
 async function tryQ<T>(
   q: Promise<{ data: T | null; error: any }>,
-  fallback: () => Promise<T | null>
 ): Promise<T | null> {
   const { data, error } = await q;
   if (!error) return data;
   const msg = String(error?.message || "");
-  const code = (error?.code || error?.details || "") as string;
-
-  if (code === "42703" || /column .* does not exist/i.test(msg)) {
-    return fallback();
-  }
-  if (code === "42501" || /permission denied/i.test(msg) || /RLS/i.test(msg)) {
-    // eslint-disable-next-line no-console
-    console.warn("[badges/benefits] RLS likely blocking read:", error);
+  if (
+    error?.code === "42501" ||
+    /permission denied|RLS/i.test(msg)
+  ) {
+    console.warn("[account/badges] RLS likely blocking read:", error);
     return null;
   }
-  // eslint-disable-next-line no-console
-  console.warn("[badges/benefits] unexpected error:", error);
+  if (error?.code === "42703" || /column .* does not exist/i.test(msg)) {
+    console.warn("[account/badges] column mismatch:", error);
+    return null;
+  }
+  console.warn("[account/badges] unexpected error:", error);
   return null;
 }
 
-// Heuristic: choose a stable key from a badge row
-function pickBadgeKey(b: BadgeRow): string | null {
-  return (
-    (b.badge_key ?? b.key ?? b.slug ?? b.code ?? b.name ?? b.title ?? b.id ?? null) &&
-    String(b.badge_key ?? b.key ?? b.slug ?? b.code ?? b.name ?? b.title ?? b.id)
+// Load badges tailored to your schema (fast path), with gentle fallbacks.
+async function loadBadgesFast(uid: string): Promise<BadgeRow[]> {
+  // Primary: read from `user_badges` using your columns (code/name/description/icon/badge_code/awarded_at/user_id)
+  const primary = await tryQ<BadgeRow[]>(
+    supabase
+      .from("user_badges")
+      .select("code,name,description,icon,category,level,created_at,tier,user_id,badge_code,awarded_at,evidence")
+      .eq("user_id", uid)
+      .order("awarded_at", { ascending: false, nullsFirst: false } as any)
   );
-}
+  if (Array.isArray(primary) && primary.length) return primary;
 
-async function loadBadgesForUser(uid: string): Promise<BadgeRow[]> {
-  // 1) Try user_id/profile_id filter + typical ordering
-  const orderFields = ["earned_at", "created_at", "awarded_at", "inserted_at", "updated_at"];
-  for (const ofield of orderFields) {
-    const data = await tryQ(
-      supabase
-        .from("user_badges")
-        .select("*")
-        .or(`user_id.eq.${uid},profile_id.eq.${uid}`)
-        .order(ofield as any, { ascending: false }),
-      async () =>
-        (await supabase
-          .from("user_badges")
-          .select("*")
-          .or(`user_id.eq.${uid},profile_id.eq.${uid}`)).data
-    );
-    if (Array.isArray(data) && data.length) return data;
-    if (data === null) break; // RLS
-  }
-
-  // 2) Try likely owner columns individually
-  const likelyCols = ["user_id", "profile_id", "uid", "owner_id", "account_id"];
-  for (const col of likelyCols) {
-    const data = await tryQ(
-      supabase.from("user_badges").select("*").eq(col as any, uid),
-      async () => null
-    );
-    if (Array.isArray(data) && data.length) return data;
-    if (data === null) break; // RLS
-  }
-
-  // 3) Last resort: small batch; client-side filter
-  const data = await tryQ(
-    supabase.from("user_badges").select("*").limit(250),
-    async () => null
+  // Fallback #1: still user_badges but select all and filter client-side
+  const allMaybe = await tryQ<BadgeRow[]>(
+    supabase.from("user_badges").select("*").limit(250)
   );
-  if (Array.isArray(data) && data.length) {
-    const keep = data.filter((r: any) =>
-      [r.user_id, r.profile_id, r.uid, r.owner_id, r.account_id].includes(uid)
-    );
+  if (Array.isArray(allMaybe) && allMaybe.length) {
+    const keep = allMaybe.filter((r) => r.user_id === uid);
     if (keep.length) return keep;
   }
 
-  return [];
-}
-
-// Load a “badge catalog” from one of several possible tables/columns
-async function loadBadgeCatalog(): Promise<Record<string, BadgeDef>> {
-  const catalog: Record<string, BadgeDef> = {};
-
-  // Candidate catalog tables and their best-guess column mappings
-  const candidates = [
-    { table: "badges",            title: ["title", "name", "label"], key: ["key", "badge_key", "slug", "code", "id"], icon: ["icon_url", "image_url", "svg_url"], emoji: ["emoji"], desc: ["description", "summary"] },
-    { table: "badge_defs",        title: ["title", "name", "label"], key: ["key", "badge_key", "slug", "code", "id"], icon: ["icon_url", "image_url", "svg_url"], emoji: ["emoji"], desc: ["description", "summary"] },
-    { table: "badge_catalog",     title: ["title", "name", "label"], key: ["key", "badge_key", "slug", "code", "id"], icon: ["icon_url", "image_url", "svg_url"], emoji: ["emoji"], desc: ["description", "summary"] },
-    { table: "badges_definitions",title: ["title", "name", "label"], key: ["key", "badge_key", "slug", "code", "id"], icon: ["icon_url", "image_url", "svg_url"], emoji: ["emoji"], desc: ["description", "summary"] },
-  ];
-
-  for (const c of candidates) {
-    try {
-      // Load all and map
-      const rows = await tryQ(
-        supabase.from(c.table as any).select("*").limit(500),
-        async () => null
-      );
-      if (!Array.isArray(rows) || rows.length === 0) continue;
-
-      const resolve = (r: any, fields: string[]) => {
-        for (const f of fields) if (r && r[f] != null) return r[f];
-        return null;
-      };
-
-      for (const r of rows) {
-        const k = String(resolve(r, c.key) ?? "");
-        if (!k) continue;
-        const title = String(resolve(r, c.title) ?? k);
-        const iconUrl = resolve(r, c.icon);
-        const emoji = resolve(r, c.emoji);
-        const description = resolve(r, c.desc);
-        catalog[k] = {
-          key: k,
-          title,
-          description: description ? String(description) : null,
-          iconUrl: iconUrl ? String(iconUrl) : null,
-          emoji: emoji ? String(emoji) : null,
-        };
-      }
-      // First table found wins; break after success
-      break;
-    } catch {
-      // ignore and try next
-    }
-  }
-
-  return catalog;
+  // Fallback #2: legacy alternates
+  const alt = await tryQ<BadgeRow[]>(
+    supabase
+      .from("badges_earned")
+      .select("*")
+      .or(`user_id.eq.${uid},profile_id.eq.${uid}`)
+      .order("earned_at", { ascending: false } as any)
+  );
+  return Array.isArray(alt) ? alt : [];
 }
 
 // Try to load benefits for tiers. Fallback to copy if nothing exists.
 async function loadTierBenefits(): Promise<Record<string, string[]>> {
   const out: Record<string, string[]> = {};
 
-  // Candidate tables that might store benefits
   const candidates = [
-    { table: "tiers",              key: ["key", "slug", "code", "id", "name"], benefits: ["benefits", "perks"] },
-    { table: "membership_tiers",   key: ["key", "slug", "code", "id", "name"], benefits: ["benefits", "perks"] },
-    { table: "tier_benefits",      key: ["tier_key", "tier", "key", "slug", "code", "id"], benefits: ["benefits", "perks"] },
+    { table: "tiers",            key: ["key", "slug", "code", "id", "name"],     benefits: ["benefits", "perks"] },
+    { table: "membership_tiers", key: ["key", "slug", "code", "id", "name"],     benefits: ["benefits", "perks"] },
+    { table: "tier_benefits",    key: ["tier_key", "tier", "key", "slug", "id"], benefits: ["benefits", "perks"] },
   ];
 
+  const rowsOrNull = async (table: string) =>
+    await tryQ<any[]>(supabase.from(table as any).select("*").limit(200));
+
   for (const c of candidates) {
-    try {
-      const rows = await tryQ(
-        supabase.from(c.table as any).select("*").limit(200),
-        async () => null
-      );
-      if (!Array.isArray(rows) || rows.length === 0) continue;
+    const rows = await rowsOrNull(c.table);
+    if (!Array.isArray(rows) || rows.length === 0) continue;
 
-      for (const r of rows) {
-        const tierKey = String(
-          r["tier_key"] ?? r["key"] ?? r["slug"] ?? r["code"] ?? r["id"] ?? r["name"] ?? ""
-        ).toLowerCase();
-        if (!tierKey) continue;
+    for (const r of rows) {
+      const tierKey = String(
+        r["tier_key"] ?? r["key"] ?? r["slug"] ?? r["code"] ?? r["id"] ?? r["name"] ?? ""
+      ).toLowerCase();
+      if (!tierKey) continue;
 
-        // If benefits column is an array, use directly; if it's JSON/text, coerce
-        let benefits: string[] = [];
-        const bf = r["benefits"] ?? r["perks"];
-        if (Array.isArray(bf)) {
-          benefits = bf.map(String);
-        } else if (typeof bf === "string") {
-          try {
-            const maybe = JSON.parse(bf);
-            benefits = Array.isArray(maybe) ? maybe.map(String) : [bf];
-          } catch {
-            benefits = [bf];
-          }
+      let benefits: string[] = [];
+      const bf = r["benefits"] ?? r["perks"];
+      if (Array.isArray(bf)) benefits = bf.map(String);
+      else if (typeof bf === "string") {
+        try {
+          const maybe = JSON.parse(bf);
+          benefits = Array.isArray(maybe) ? maybe.map(String) : [bf];
+        } catch {
+          benefits = [bf];
         }
-        if (benefits.length) out[tierKey] = benefits;
       }
-      if (Object.keys(out).length) break; // stop at first populated table
-    } catch {
-      // ignore and try next
+      if (benefits.length) out[tierKey] = benefits;
     }
+    if (Object.keys(out).length) break;
   }
 
-  // Fallback copy if nothing found in DB
   if (!Object.keys(out).length) {
-    out["novice"] = ["Daily access to games", "Earn starter badges", "Unlock Enthusiast at 100 pts"];
-    out["enthusiast"] = ["Extra quiz variants", "Priority in community events", "Unlock Scholar at 300 pts"];
-    out["scholar"] = ["Advanced challenges", "Feature on leaderboards spotlight", "Unlock Connoisseur at 700 pts"];
-    out["connoisseur"] = ["Early access to new content", "VIP community channels", "Unlock Maestro at 1200 pts"];
-    out["maestro"] = ["All benefits unlocked", "Exclusive tasting invites", "Beta access to new features"];
+    out["novice"]       = ["Daily access to games", "Earn starter badges", "Unlock Enthusiast at 100 pts"];
+    out["enthusiast"]   = ["Extra quiz variants", "Priority in community events", "Unlock Scholar at 300 pts"];
+    out["scholar"]      = ["Advanced challenges", "Leaderboard spotlight", "Unlock Connoisseur at 700 pts"];
+    out["connoisseur"]  = ["Early access to new content", "VIP community channels", "Unlock Maestro at 1200 pts"];
+    out["maestro"]      = ["All benefits unlocked", "Exclusive tasting invites", "Beta access to new features"];
   }
-
   return out;
 }
 
-/* ------------------- PAGE ------------------- */
+function looksLikeUrl(s?: string | null) {
+  if (!s) return false;
+  return /^https?:\/\//i.test(s) || s.startsWith("/") || s.startsWith("data:");
+}
 
 export default function AccountPage() {
   const { user, loading, profile, refreshProfile } = useAuth();
@@ -246,7 +171,6 @@ export default function AccountPage() {
   });
 
   const [badges, setBadges] = useState<BadgeRow[]>([]);
-  const [badgeCatalog, setBadgeCatalog] = useState<Record<string, BadgeDef>>({});
   const [trialStartedAt, setTrialStartedAt] = useState<string | null>(null);
   const [membershipTier, setMembershipTier] = useState<string | null>(null);
   const [tierBenefits, setTierBenefits] = useState<Record<string, string[]>>({});
@@ -290,26 +214,15 @@ export default function AccountPage() {
         setMembershipTier((data as any)?.membership_tier ?? null);
       } catch {}
 
-      // badges (user rows)
+      // badges (fast path tailored to your schema)
       try {
-        const rows = await loadBadgesForUser(user.id);
-        const merged: BadgeRow[] = Array.isArray(rows) ? rows.slice() : [];
-
-        // optional alternates
-        try {
-          const { data } = await supabase
-            .from("badges_earned")
-            .select("*")
-            .or(`user_id.eq.${user.id},profile_id.eq.${user.id}`)
-            .order("earned_at", { ascending: false });
-          if (Array.isArray(data)) merged.push(...data);
-        } catch {}
-
-        // unique by a stable-ish key
+        const rows = await loadBadgesFast(user.id);
+        // Unique by badge_code || code || (name+awarded_at)
         const seen = new Set<string>();
         const unique: BadgeRow[] = [];
-        for (const b of merged) {
-          const key = String(pickBadgeKey(b) ?? JSON.stringify(b));
+        for (const b of rows || []) {
+          const key =
+            String(b.badge_code ?? b.code ?? `${b.name ?? "badge"}::${b.awarded_at ?? b.created_at ?? ""}`);
           if (!seen.has(key)) {
             seen.add(key);
             unique.push(b);
@@ -318,14 +231,6 @@ export default function AccountPage() {
         setBadges(unique);
       } catch {
         setBadges([]);
-      }
-
-      // badge catalog (names/logos/desc)
-      try {
-        const map = await loadBadgeCatalog();
-        setBadgeCatalog(map);
-      } catch {
-        setBadgeCatalog({});
       }
 
       // benefits (for tiers)
@@ -477,53 +382,29 @@ export default function AccountPage() {
     }
   }
 
-  // Badge display helpers
+  // Badge display helpers (using your schema)
+  function badgeKey(b: BadgeRow) {
+    return String(b.badge_code ?? b.code ?? `${b.name ?? "badge"}::${b.awarded_at ?? b.created_at ?? ""}`);
+  }
   function badgeTitle(b: BadgeRow) {
-    const key = pickBadgeKey(b);
-    const def = key ? badgeCatalog[key] : undefined;
-    return (
-      def?.title ??
-      b.title ??
-      b.name ??
-      b.label ??
-      b.badge ??
-      b.badge_key ??
-      b.key ??
-      "Badge"
-    );
+    return b.name ?? b.code ?? "Badge";
   }
   function badgeDate(b: BadgeRow) {
-    const s =
-      b.earned_at ??
-      b.created_at ??
-      b.awarded_at ??
-      b.inserted_at ??
-      b.updated_at ??
-      null;
+    const s = b.awarded_at ?? b.created_at ?? null;
     return s ? new Date(s).toLocaleDateString() : null;
   }
-  function badgeIcon(b: BadgeRow) {
-    const key = pickBadgeKey(b);
-    const def = key ? badgeCatalog[key] : undefined;
-    if (def?.iconUrl) {
+  function badgeIconNode(b: BadgeRow) {
+    if (looksLikeUrl(b.icon)) {
       return (
         <img
-          src={def.iconUrl}
+          src={String(b.icon)}
           alt=""
           className="h-10 w-10 rounded"
           onError={(e) => ((e.currentTarget as HTMLImageElement).style.display = "none")}
         />
       );
     }
-    if (def?.emoji) {
-      return <span className="text-2xl leading-none">{def.emoji}</span>;
-    }
-    return <span className="text-2xl leading-none">🏅</span>; // fallback
-  }
-  function badgeDesc(b: BadgeRow) {
-    const key = pickBadgeKey(b);
-    const def = key ? badgeCatalog[key] : undefined;
-    return def?.description || null;
+    return <span className="text-2xl leading-none">🏅</span>; // fallback emoji if icon isn't a URL
   }
 
   const nextBenefits: string[] = useMemo(() => {
@@ -599,20 +480,29 @@ export default function AccountPage() {
           </p>
         ) : (
           <ul className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-            {badges.map((b, i) => (
-              <li
-                key={pickBadgeKey(b) ?? b.id ?? b.badge_id ?? b.badge_key ?? i}
-                className="border rounded p-3 flex items-start gap-3"
-              >
-                <div className="shrink-0">{badgeIcon(b)}</div>
+            {badges.map((b) => (
+              <li key={badgeKey(b)} className="border rounded p-3 flex items-start gap-3">
+                <div className="shrink-0">{badgeIconNode(b)}</div>
                 <div className="min-w-0">
                   <div className="font-medium truncate">{badgeTitle(b)}</div>
-                  {badgeDate(b) && (
-                    <div className="text-xs text-gray-600">Earned {badgeDate(b)}</div>
+                  {b.category && (
+                    <div className="mt-0.5 inline-flex items-center gap-2">
+                      <span className="text-[11px] rounded bg-gray-100 px-2 py-0.5 text-gray-700">
+                        {b.category}
+                      </span>
+                      {typeof b.level === "number" && (
+                        <span className="text-[11px] rounded bg-gray-100 px-2 py-0.5 text-gray-700">
+                          Lv {b.level}
+                        </span>
+                      )}
+                    </div>
                   )}
-                  {badgeDesc(b) && (
+                  {badgeDate(b) && (
+                    <div className="text-xs text-gray-600 mt-0.5">Earned {badgeDate(b)}</div>
+                  )}
+                  {b.description && (
                     <div className="text-xs text-gray-700 mt-1 line-clamp-3">
-                      {badgeDesc(b)}
+                      {b.description}
                     </div>
                   )}
                 </div>
