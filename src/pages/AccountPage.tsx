@@ -2,9 +2,9 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { Navigate, useLocation } from "react-router-dom";
 import { useAuth } from "@/context/AuthContext";
+import { usePoints } from "@/context/PointsContext";
 import { supabase } from "@/lib/supabase";
 
-/** Adjust thresholds/tier names as you like */
 const TIERS = [
   { key: "novice", label: "Novice", min: 0 },
   { key: "enthusiast", label: "Enthusiast", min: 100 },
@@ -16,9 +16,9 @@ const TIERS = [
 type FormState = {
   alias: string;
   display_name: string;
-  bio: string;        // saved only if column exists
-  country: string;    // saved only if column exists
-  state: string;      // saved only if column exists
+  bio: string;
+  country: string;
+  state: string;
   accept_terms: boolean;
 };
 
@@ -31,8 +31,11 @@ type SchemaFlags = {
   hasTermsAcceptedAt: boolean;
 };
 
+type BadgeRow = { id?: string; title?: string; badge_key?: string; earned_at?: string };
+
 export default function AccountPage() {
-  const { user, loading, profile, upsertProfile, refreshProfile } = useAuth();
+  const { user, loading, profile, refreshProfile } = useAuth();
+  const pointsCtx = usePoints?.();
   const location = useLocation();
 
   const [schema, setSchema] = useState<SchemaFlags>({
@@ -44,21 +47,30 @@ export default function AccountPage() {
     hasTermsAcceptedAt: true,
   });
 
-  const [badges, setBadges] = useState<
-    Array<{ id?: string; title?: string; badge_key?: string; earned_at?: string }>
-  >([]);
+  const [badges, setBadges] = useState<BadgeRow[]>([]);
+  const [trialEndsAt, setTrialEndsAt] = useState<string | null>(null);
+  const [plan, setPlan] = useState<string | null>(null);
 
-  // Infer which columns exist via select("*")
+  // Keep Account in sync with the navbar: refresh points once when page opens
+  useEffect(() => {
+    if ((pointsCtx as any)?.refreshPoints) {
+      (pointsCtx as any).refreshPoints();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Inspect schema, badges, and trial info
   useEffect(() => {
     (async () => {
       if (!user) return;
-      const { data, error } = await supabase
-        .from("profiles")
-        .select("*")
-        .or(`id.eq.${user.id},user_id.eq.${user.id}`)
-        .maybeSingle();
 
-      if (!error) {
+      // schema (safe: select "*")
+      try {
+        const { data } = await supabase
+          .from("profiles")
+          .select("*")
+          .or(`id.eq.${user.id},user_id.eq.${user.id}`)
+          .maybeSingle();
         const keys = Object.keys(data || {});
         setSchema({
           hasAlias: keys.includes("alias") || true,
@@ -68,39 +80,115 @@ export default function AccountPage() {
           hasState: keys.includes("state"),
           hasTermsAcceptedAt: keys.includes("terms_accepted_at") || true,
         });
+      } catch {
+        /* ignore */
       }
 
-      // Load badges if table exists
+      // badges (try common shapes; merge results)
+      const setUnique = (arr: BadgeRow[]) => {
+        const seen = new Set<string>();
+        const out: BadgeRow[] = [];
+        for (const b of arr) {
+          const key = (b.id || b.badge_key || JSON.stringify(b)) as string;
+          if (!seen.has(key)) {
+            seen.add(key);
+            out.push(b);
+          }
+        }
+        return out;
+      };
+
+      const collected: BadgeRow[] = [];
+      // user_badges by user_id
       try {
-        const { data: b } = await supabase
+        const { data } = await supabase
           .from("user_badges")
           .select("id,title,badge_key,earned_at")
           .eq("user_id", user.id)
           .order("earned_at", { ascending: false });
-        if (Array.isArray(b)) setBadges(b);
-      } catch {
-        /* ignore if table not present */
+        if (Array.isArray(data)) collected.push(...(data as any));
+      } catch {}
+      // user_badges by profile_id
+      try {
+        const { data } = await supabase
+          .from("user_badges")
+          .select("id,title,badge_key,earned_at")
+          .eq("profile_id", user.id)
+          .order("earned_at", { ascending: false });
+        if (Array.isArray(data)) collected.push(...(data as any));
+      } catch {}
+      // badges_earned table (alt name)
+      try {
+        const { data } = await supabase
+          .from("badges_earned")
+          .select("id,title,badge_key,earned_at")
+          .or(`user_id.eq.${user.id},profile_id.eq.${user.id}`)
+          .order("earned_at", { ascending: false });
+        if (Array.isArray(data)) collected.push(...(data as any));
+      } catch {}
+
+      setBadges(setUnique(collected));
+
+      // trial: first match wins
+      const candidates: Array<() => Promise<{ end?: string | null; plan?: string | null }>> = [
+        async () => {
+          const end = (profile as any)?.trial_ends_at || null;
+          const p = (profile as any)?.plan || null;
+          return { end, plan: p };
+        },
+        async () => {
+          const { data } = await supabase
+            .from("memberships")
+            .select("trial_ends_at,plan")
+            .or(`user_id.eq.${user.id},profile_id.eq.${user.id}`)
+            .maybeSingle();
+          return { end: data?.trial_ends_at || null, plan: data?.plan || null };
+        },
+        async () => {
+          const { data } = await supabase
+            .from("subscriptions")
+            .select("trial_end,plan")
+            .or(`user_id.eq.${user.id},profile_id.eq.${user.id}`)
+            .maybeSingle();
+          return { end: data?.trial_end || null, plan: data?.plan || null };
+        },
+      ];
+
+      for (const fn of candidates) {
+        try {
+          const { end, plan } = await fn();
+          if (end) {
+            setTrialEndsAt(end);
+            if (plan) setPlan(plan);
+            break;
+          }
+          if (plan && !trialEndsAt) setPlan(plan);
+        } catch {}
       }
     })();
-  }, [user]);
+  }, [user, profile]);
 
-  // Points from any supported column
-  const points = useMemo(() => {
-    if (!profile) return 0;
-    return (
-      (profile as any)?.points_total ??
-      (profile as any)?.points ??
-      (profile as any)?.score ??
-      (profile as any)?.xp ??
-      0
-    );
-  }, [profile]);
+  // Points = use the same source as the navbar (PointsContext), fallback to profile fields
+  const pointsFromProfile =
+    (profile as any)?.points_total ??
+    (profile as any)?.points ??
+    (profile as any)?.score ??
+    (profile as any)?.xp ??
+    0;
+
+  const pointsLoading = Boolean((pointsCtx as any)?.loading);
+  const pointsValue =
+    (pointsCtx as any)?.totalPoints ??
+    (pointsCtx as any)?.points ??
+    (pointsCtx as any)?.balance ??
+    pointsFromProfile;
 
   const currentTier = useMemo(() => {
+    const p = Number(pointsValue || 0);
     let idx = 0;
-    for (let i = 0; i < TIERS.length; i++) if (points >= TIERS[i].min) idx = i;
+    for (let i = 0; i < TIERS.length; i++) if (p >= TIERS[i].min) idx = i;
     return TIERS[idx];
-  }, [points]);
+  }, [pointsValue]);
 
   const nextTier = useMemo(() => {
     const idx = TIERS.findIndex((t) => t.key === currentTier.key);
@@ -108,13 +196,22 @@ export default function AccountPage() {
   }, [currentTier]);
 
   const progressPct = useMemo(() => {
+    const p = Number(pointsValue || 0);
     if (!nextTier) return 100;
     const span = nextTier.min - currentTier.min;
-    const pos = Math.max(0, Math.min(span, points - currentTier.min));
+    const pos = Math.max(0, Math.min(span, p - currentTier.min));
     return Math.round((pos / span) * 100);
-  }, [points, currentTier, nextTier]);
+  }, [pointsValue, currentTier, nextTier]);
 
-  // Seed form from profile
+  // Trial label
+  const trialLabel = useMemo(() => {
+    if (!trialEndsAt) return plan ? `Plan: ${plan}` : "Plan: FREE";
+    const end = new Date(trialEndsAt);
+    const daysLeft = Math.max(0, Math.ceil((end.getTime() - Date.now()) / 86400000));
+    return `Trial: ${daysLeft} day${daysLeft === 1 ? "" : "s"} left`;
+  }, [trialEndsAt, plan]);
+
+  // Form seed
   const initial: FormState = useMemo(
     () => ({
       alias: profile?.alias ?? "",
@@ -152,7 +249,7 @@ export default function AccountPage() {
     form.display_name.trim().length > 0 &&
     !saving;
 
-  /** Upsert without specifying onConflict; drop unknown columns and retry. */
+  // Upsert w/out onConflict; drop unknown columns and retry.
   async function safeUpsert(payload: Record<string, any>) {
     const dropped: string[] = [];
     let body = { ...payload };
@@ -160,20 +257,13 @@ export default function AccountPage() {
 
     // eslint-disable-next-line no-constant-condition
     while (true) {
-      const { error } = await supabase.from("profiles").upsert(body); // <-- no onConflict
+      const { error } = await supabase.from("profiles").upsert(body);
       if (!error) return { dropped };
 
       const msg = String(error.message || "");
-      // Unknown column?
       const m1 = msg.match(/column\s+"?([a-zA-Z0-9_]+)"?\s+does not exist/i);
       const m2 = msg.match(/could not find the '([a-zA-Z0-9_]+)'\s+column/i);
       const bad = (m1?.[1] || m2?.[1]) as string | undefined;
-
-      // If it's the ON CONFLICT error (from older deployments), just retry once without any change
-      if (/no unique or exclusion constraint matching the ON CONFLICT specification/i.test(msg)) {
-        if (tries++ > 0) throw error;
-        continue;
-      }
 
       if (!bad || !(bad in body) || tries++ > 8) throw error;
 
@@ -224,12 +314,15 @@ export default function AccountPage() {
     <div className="max-w-4xl mx-auto p-6 space-y-8">
       <h1 className="text-2xl font-bold">Your Profile</h1>
 
-      {/* Points + Tier progress */}
+      {/* Plan / Trial + Points (from PointsContext for consistency) */}
       <section className="bg-white rounded-lg shadow border p-6">
+        <div className="text-sm text-gray-600 mb-2">{trialLabel}</div>
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
           <div>
             <div className="text-sm text-gray-600">Points</div>
-            <div className="text-3xl font-bold">{points}</div>
+            <div className="text-3xl font-bold">
+              {pointsLoading ? "…" : Number(pointsValue || 0)}
+            </div>
           </div>
           <div className="flex-1">
             <div className="text-sm text-gray-600">
@@ -279,7 +372,6 @@ export default function AccountPage() {
       {/* Profile form */}
       <section className="bg-white rounded-lg shadow border p-6">
         <form onSubmit={onSave} className="space-y-5">
-          {/* Alias */}
           <div>
             <label className="block text-sm font-medium mb-1">Alias</label>
             <input
@@ -294,7 +386,6 @@ export default function AccountPage() {
             </p>
           </div>
 
-          {/* Display name */}
           <div>
             <label className="block text-sm font-medium mb-1">Display name</label>
             <input
@@ -309,7 +400,7 @@ export default function AccountPage() {
             </p>
           </div>
 
-          {/* Bio (only render if column exists) */}
+          {/* Bio */}
           {schema.hasBio && (
             <div>
               <label className="block text-sm font-medium mb-1">Bio</label>
@@ -323,7 +414,6 @@ export default function AccountPage() {
             </div>
           )}
 
-          {/* Country/State (optional; saved iff columns exist) */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
               <label className="block text-sm font-medium mb-1">Country (optional)</label>
@@ -345,7 +435,6 @@ export default function AccountPage() {
             </div>
           </div>
 
-          {/* Terms */}
           <div className="flex items-start gap-2">
             <input
               id="terms"
@@ -363,7 +452,6 @@ export default function AccountPage() {
             </label>
           </div>
 
-          {/* Buttons / Status */}
           <div className="flex items-center gap-3">
             <button
               type="submit"
