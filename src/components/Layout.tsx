@@ -6,6 +6,7 @@ import { useAuth } from "@/context/AuthContext";
 import { usePoints } from "@/context/PointsContext";
 import { useLocale } from "@/context/LocaleContext";
 import { LangLink as Link, LangNavLink as NavLink } from "@/components/LangLink";
+import { fetchTrialStatus } from "@/lib/membership";
 
 function cx(...xs: Array<string | false | null | undefined>) {
   return xs.filter(Boolean).join(" ");
@@ -29,7 +30,7 @@ const LANGS = [
 export default function Layout({ children }: { children: React.ReactNode }) {
   const { user, signOut, profile } = useAuth();
   const pointsCtx = usePoints?.();
-  const { selected, locale, setSelected } = useLocale(); // matches your LocaleContext
+  const { selected, locale, setSelected } = useLocale(); // from LocaleContext
   const navigate = useNavigate();
   const loc = useLocation();
 
@@ -70,7 +71,6 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     loc.pathname.startsWith("/reset-password");
 
   // ---- Language handling ----
-  // 1) Pick up ?lang=xx → set context + persist
   React.useEffect(() => {
     const params = new URLSearchParams(loc.search);
     const qLang = params.get("lang");
@@ -84,7 +84,6 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     }
   }, [loc.search, selected, setSelected]);
 
-  // 2) Restore from localStorage on first mount if not set yet
   React.useEffect(() => {
     if (!selected) {
       try {
@@ -96,7 +95,6 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     }
   }, [selected, setSelected]);
 
-  // 3) Always keep ?lang in the URL on every route
   React.useEffect(() => {
     if (!locale) return;
     const params = new URLSearchParams(loc.search);
@@ -107,7 +105,6 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loc.pathname, locale]);
 
-  // 4) Handler for dropdown
   function handleLangChange(next: string) {
     setSelected(next);
     try {
@@ -138,6 +135,36 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     setMeta("googlebot", content);
   }, [loc.pathname]);
 
+  // ---- Trial/Tier chip (via trial_status RPC) ----
+  const [tierChip, setTierChip] = React.useState<string | null>(null);
+
+  React.useEffect(() => {
+    let active = true;
+    (async () => {
+      if (!user) {
+        if (active) setTierChip(null);
+        return;
+      }
+      try {
+        const t = await fetchTrialStatus();
+        if (!active) return;
+        if (t?.is_trial) {
+          const d = t.days_left ?? "?";
+          setTierChip(`TRIAL (${d}d)`);
+        } else if (t?.tier) {
+          setTierChip(String(t.tier).toUpperCase());
+        } else {
+          setTierChip(null);
+        }
+      } catch {
+        if (active) setTierChip(null);
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, [user?.id, loc.pathname]);
+
   if (hideChrome) {
     return (
       <div className="min-h-screen flex flex-col">
@@ -146,10 +173,9 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     );
   }
 
-  // prefer display name if available (falls back to first_name per your schema)
+  // prefer display name if available
   const displayName =
     (profile as any)?.display_name ||
-    (profile as any)?.first_name ||
     user?.user_metadata?.name ||
     user?.email ||
     "";
@@ -253,6 +279,16 @@ export default function Layout({ children }: { children: React.ReactNode }) {
                 <Flame className="w-3.5 h-3.5 text-orange-500" />
                 <span className="tabular-nums">0</span>
               </Link>
+
+              {/* Tier / Trial chip */}
+              {tierChip && (
+                <span
+                  className="inline-flex items-center rounded-md border border-violet-300 bg-violet-50 px-2.5 py-1 text-[11px] font-semibold text-violet-700"
+                  title="Your current plan"
+                >
+                  {tierChip}
+                </span>
+              )}
 
               {/* User name (truncate) */}
               {user && (
@@ -380,6 +416,13 @@ export default function Layout({ children }: { children: React.ReactNode }) {
                 <Flame className="w-3.5 h-3.5 text-orange-500" />
                 <span className="tabular-nums">0</span>
               </Link>
+
+              {/* Tier / Trial chip (mobile) */}
+              {tierChip && (
+                <div className="mt-2 inline-flex items-center self-start rounded-md border border-violet-300 bg-violet-50 px-2.5 py-1 text-[11px] font-semibold text-violet-700">
+                  {tierChip}
+                </div>
+              )}
 
               {/* Auth actions (mobile) */}
               <div className="mt-2 flex items-center gap-2">
