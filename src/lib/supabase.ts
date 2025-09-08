@@ -5,7 +5,7 @@ import {
   type SupabaseClient,
 } from "@supabase/supabase-js";
 
-const url  = import.meta.env.VITE_SUPABASE_URL!;
+const url = import.meta.env.VITE_SUPABASE_URL!;
 const anon = import.meta.env.VITE_SUPABASE_ANON_KEY!;
 
 export const supabase: SupabaseClient = createClient(url, anon, {
@@ -13,6 +13,7 @@ export const supabase: SupabaseClient = createClient(url, anon, {
     persistSession: true,       // keep user signed in (localStorage)
     autoRefreshToken: true,     // refresh JWT automatically
     detectSessionInUrl: false,  // we'll manually parse the URL
+    // @ts-expect-error: 'flowType' exists in newer supabase-js; safe to include
     flowType: "implicit",       // your current email magic-link style
     storageKey: "md_auth_v1",   // namespaced storage key
   },
@@ -47,15 +48,15 @@ export async function setSessionFromHash(
   if (typeof window === "undefined") return null;
 
   const loc = new URL(href);
-  const hp  = new URLSearchParams(loc.hash.replace(/^#/, ""));
+  const hp = new URLSearchParams(loc.hash.replace(/^#/, ""));
 
   const err = hp.get("error") || hp.get("error_description");
   if (err) throw new Error(decodeURIComponent(err));
 
-  const access_token  = hp.get("access_token") || undefined;
+  const access_token = hp.get("access_token") || undefined;
   const refresh_token = hp.get("refresh_token") || undefined;
-  const expires_in    = Number(hp.get("expires_in") || "3600");
-  const token_type    = (hp.get("token_type") || "bearer") as "bearer";
+  const expires_in = Number(hp.get("expires_in") || "3600");
+  const token_type = (hp.get("token_type") || "bearer") as "bearer";
 
   if (!access_token || !refresh_token) return null;
 
@@ -74,7 +75,7 @@ export async function setSessionFromHash(
   return data.session ?? null;
 }
 
-/** Complete auth from PKCE (?code=…) if you ever switch to it or use OAuth. */
+/** Complete auth from PKCE (?code=…) — tries href then code for broad version support. */
 export async function exchangeCodeFromUrl(
   href: string = (typeof window !== "undefined" ? window.location.href : "")
 ): Promise<Session | null> {
@@ -84,8 +85,28 @@ export async function exchangeCodeFromUrl(
   const code = u.searchParams.get("code");
   if (!code) return null;
 
-  const { error } = await supabase.auth.exchangeCodeForSession(code);
-  if (error) throw error;
+  // Some supabase-js versions expect the FULL URL, others accept just the code.
+  let err1: any = null;
+  let err2: any = null;
+
+  // Try full URL first
+  try {
+    const r1 = await supabase.auth.exchangeCodeForSession(u.href as any);
+    if (r1.error) throw r1.error;
+  } catch (e) {
+    err1 = e;
+    // Fallback: try just the code
+    try {
+      const r2 = await supabase.auth.exchangeCodeForSession(code as any);
+      if (r2.error) throw r2.error;
+    } catch (e2) {
+      err2 = e2;
+    }
+  }
+
+  if (err1 && err2) {
+    throw (err2 || err1);
+  }
 
   // Clean query
   window.history.replaceState({}, document.title, u.pathname);
