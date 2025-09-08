@@ -1,497 +1,167 @@
 // src/pages/AccountPage.tsx
-import React, { useEffect, useState } from 'react';
-import { Link, useLocation } from 'react-router-dom';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Badge } from '@/components/ui/badge';
-import { Progress } from '@/components/ui/progress';
-import { User, Trophy, Calendar, Mail, LogOut, Crown, Image as ImageIcon } from 'lucide-react';
+import React, { useEffect, useMemo, useState } from "react";
+import { Navigate, useLocation } from "react-router-dom";
+import { useAuth } from "@/context/AuthContext";
 
-import { useAuth } from '@/context/AuthContext';
-import { usePoints } from '@/context/PointsContext';
-import { useAnalytics } from '@/context/AnalyticsContext';
-import { toast } from 'sonner';
-import { supabase, setSessionFromHash } from '@/lib/supabase';
+type FormState = {
+  alias: string;
+  display_name: string;
+  bio: string;
+  accept_terms: boolean; // UI-only; maps to terms_accepted_at
+};
 
-import MyBadgesStrip from '@/components/MyBadgesStrip';
-
-/* ------------------------------ Helpers ---------------------------------- */
-function adelaideNow(): Date {
-  return new Date(new Date().toLocaleString('en-US', { timeZone: 'Australia/Adelaide' }));
-}
-function addDays(d: Date, days: number): Date {
-  const x = new Date(d);
-  x.setDate(x.getDate() + days);
-  return x;
-}
-function formatAdelaide(dt: Date): string {
-  return dt.toLocaleString('en-AU', {
-    timeZone: 'Australia/Adelaide',
-    weekday: 'short',
-    day: '2-digit',
-    month: 'short',
-    year: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-  });
-}
-
-/** Safe, non-blocking attempt to ensure membership row exists */
-async function bestEffortJoinMember() {
-  try {
-    const { data: s } = await supabase.auth.getSession();
-    if (!s?.session) return;
-
-    const p = supabase.rpc('join_member', {
-      p_plan: 'free',
-      p_start_trial: true,
-      p_locale: (navigator.language || 'en').slice(0, 2),
-    });
-
-    // Don’t hang the page if the RPC is slow
-    await Promise.race([p, new Promise((r) => setTimeout(r, 1200))]);
-  } catch (err) {
-    console.warn('[join_member] best-effort call failed:', err);
-  }
-}
-
-/** Fallback: if a magic link lands directly on /account, finalize it here. */
-function useFinalizeAuthIfNeeded() {
-  const { hash, pathname, search } = useLocation();
-
-  useEffect(() => {
-    (async () => {
-      try {
-        const url = new URL(window.location.href);
-
-        if (hash.includes('error=')) {
-          const params = new URLSearchParams(hash.replace(/^#/, ''));
-          const desc = params.get('error_description') || 'Sign-in link is invalid or expired.';
-          toast.error(decodeURIComponent(desc));
-          history.replaceState({}, document.title, pathname);
-          return;
-        }
-
-        const hasHashToken =
-          hash.includes('access_token') ||
-          hash.includes('refresh_token') ||
-          hash.includes('type=magiclink');
-
-        const code = url.searchParams.get('code');
-
-        if (hasHashToken) {
-          await setSessionFromHash(); // sets session + cleans hash
-          await bestEffortJoinMember();
-          history.replaceState({}, document.title, pathname + search.replace(/\??$/, ''));
-        } else if (code) {
-          // Pass JUST the code to Supabase (not the whole URL)
-          const { error } = await supabase.auth.exchangeCodeForSession(code);
-          if (error) throw error;
-          await bestEffortJoinMember();
-          history.replaceState({}, document.title, pathname);
-        }
-      } catch (e) {
-        console.error('[AccountPage] finalize auth failed:', e);
-        toast.error('Could not complete sign-in. Please request a new link.');
-      }
-    })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-}
-
-/* ------------------------------ Component -------------------------------- */
 export default function AccountPage() {
-  useFinalizeAuthIfNeeded();
+  const { user, loading, profile, upsertProfile, refreshProfile } = useAuth();
+  const location = useLocation();
 
-  const [email, setEmail] = useState('');
-  const [loading, setLoading] = useState(false);
+  // Seed the form from the loaded profile
+  const initial: FormState = useMemo(
+    () => ({
+      alias: profile?.alias ?? "",
+      display_name: profile?.display_name ?? "",
+      bio: profile?.bio ?? "",
+      accept_terms: Boolean(profile?.terms_accepted_at),
+    }),
+    // re-seed when any of these specific fields change
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [profile?.alias, profile?.display_name, profile?.bio, profile?.terms_accepted_at]
+  );
 
-  const { user, signOut } = useAuth();
-  const { track } = useAnalytics();
+  const [form, setForm] = useState<FormState>(initial);
+  const [saving, setSaving] = useState(false);
+  const [savedMsg, setSavedMsg] = useState<string | null>(null);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
-  // points (guarded)
-  const pointsCtx = usePoints?.();
-  const totalPoints = (pointsCtx?.totalPoints ?? pointsCtx?.points ?? 0) as number;
-
-  // session expiry (status banner)
-  const [expiresAt, setExpiresAt] = useState<number | null>(null);
+  // keep local form in sync when profile arrives/changes
   useEffect(() => {
-    (async () => {
-      const { data } = await supabase.auth.getSession();
-      setExpiresAt(data.session?.expires_at ?? null);
-    })();
-  }, []);
+    setForm(initial);
+  }, [initial]);
 
-  // trial status
-  const [trialStartedAt, setTrialStartedAt] = useState<string | null>(null);
-  const [trialLoading, setTrialLoading] = useState(true);
-  const [trialError, setTrialError] = useState<string | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        if (!user?.id) {
-          setTrialLoading(false);
-          return;
-        }
-        const { data, error } = await supabase
-          .from('profiles')
-          .select('trial_started_at')
-          .eq('user_id', user.id)
-          .maybeSingle();
-
-        if (error) throw error;
-        if (!cancelled) {
-          setTrialStartedAt(data?.trial_started_at ?? null);
-          setTrialLoading(false);
-        }
-      } catch (e: any) {
-        if (!cancelled) {
-          setTrialError(e?.message || 'Failed to load trial status.');
-          setTrialLoading(false);
-        }
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [user?.id]);
-
-  // simple profile editor state
-  const [profileLoading, setProfileLoading] = useState(false);
-  const [displayName, setDisplayName] = useState<string>('');
-  const [avatarUrl, setAvatarUrl] = useState<string>('');
-
-  // load existing profile fields
-  useEffect(() => {
-    let stop = false;
-    (async () => {
-      if (!user?.id) {
-        setDisplayName('');
-        setAvatarUrl('');
-        return;
-      }
-      try {
-        setProfileLoading(true);
-        const { data, error } = await supabase
-          .from('profiles')
-          .select('display_name, avatar_url')
-          .eq('user_id', user.id)
-          .maybeSingle();
-        if (error) throw error;
-        if (!stop) {
-          setDisplayName(data?.display_name ?? '');
-          setAvatarUrl(data?.avatar_url ?? '');
-        }
-      } catch (e) {
-        console.warn('profile load failed:', e);
-      } finally {
-        if (!stop) setProfileLoading(false);
-      }
-    })();
-    return () => { stop = true; };
-  }, [user?.id]);
-
-  const handleSaveProfile = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!user?.id) return;
-    try {
-      setProfileLoading(true);
-      const { error } = await supabase
-        .from('profiles')
-        .upsert(
-          {
-            user_id: user.id,
-            display_name: displayName?.trim() || null,
-            avatar_url: avatarUrl?.trim() || null,
-          },
-          { onConflict: 'user_id' }
-        );
-      if (error) throw error;
-      toast.success('Profile updated');
-      track?.('profile_updated');
-    } catch (err) {
-      console.error('save profile error:', err);
-      toast.error('Could not save profile');
-    } finally {
-      setProfileLoading(false);
-    }
-  };
-
-  // Send magic link from here (forces correct redirect)
-  const handleSignIn = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!email.trim()) return;
-    setLoading(true);
-    try {
-      const { error } = await supabase.auth.signInWithOtp({
-        email: email.trim(),
-        options: { emailRedirectTo: `${window.location.origin}/auth/callback` },
-      });
-      if (error) throw error;
-      toast.success('Check your email for the sign-in link.');
-      track?.('signup_complete', { method: 'magic_link' });
-      setEmail('');
-    } catch (err) {
-      console.error('Sign in error:', err);
-      toast.error('Failed to send sign-in link. Please try again.');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleSignOut = async () => {
-    try {
-      await signOut();
-      toast.success('Signed out successfully');
-    } catch (error) {
-      console.error('Sign out error:', error);
-      toast.error('Failed to sign out');
-    }
-  };
-
-  /* ---------------------------- Unauthed view ----------------------------- */
-  if (!user) {
-    return (
-      <div className="max-w-md mx-auto">
-        <Card>
-          <CardHeader className="text-center">
-            <div className="w-16 h-16 bg-primary/10 rounded-full flex items-center justify-center mx-auto mb-4">
-              <Mail className="h-8 w-8 text-primary" />
-            </div>
-            <CardTitle className="text-2xl">Sign In</CardTitle>
-            <p className="text-muted-foreground">Enter your email to receive a magic sign-in link</p>
-          </CardHeader>
-
-          <CardContent>
-            <form onSubmit={handleSignIn} className="space-y-4">
-              <Input
-                type="email"
-                placeholder="your@email.com"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                required
-              />
-              <Button type="submit" className="w-full" disabled={loading}>
-                {loading ? 'Sending...' : 'Send Magic Link'}
-              </Button>
-            </form>
-
-            <div className="mt-6 text-center">
-              <div className="bg-muted/50 rounded-lg p-4 space-y-2">
-                <Badge variant="secondary" className="bg-green-500/10 text-green-700">
-                  <Crown className="h-3 w-3 mr-1" />
-                  Free 7-Day Trial
-                </Badge>
-                <p className="text-sm text-muted-foreground">Start your free trial instantly upon sign-in</p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-    );
+  // Gate: if unauthenticated (and not loading), send to /signin
+  if (!loading && !user) {
+    return <Navigate to="/signin" replace state={{ from: location }} />;
   }
 
-  /* ------------------------- Trial state (server) ------------------------- */
-  const nowADL = adelaideNow();
-  const started = trialStartedAt ? new Date(trialStartedAt) : null;
-  const ends = started ? addDays(started, 7) : null;
-  const msLeft = started ? ends!.getTime() - nowADL.getTime() : 0;
-  const daysLeft = started ? Math.max(0, Math.ceil(msLeft / (1000 * 60 * 60 * 24))) : null;
-  const trialActive = started ? msLeft > 0 : false;
+  const canSave =
+    form.alias.trim().length > 0 &&
+    form.display_name.trim().length > 0 &&
+    !saving;
 
-  /* --------------------------- Authed view --------------------------- */
+  async function onSave(e: React.FormEvent) {
+    e.preventDefault();
+    if (!user) return;
+    setSaving(true);
+    setSavedMsg(null);
+    setErrorMsg(null);
+
+    try {
+      const patch: Record<string, any> = {
+        alias: form.alias.trim(),
+        display_name: form.display_name.trim(),
+        bio: form.bio,
+      };
+
+      // only set terms_accepted_at if user newly accepts them
+      if (form.accept_terms && !profile?.terms_accepted_at) {
+        patch.terms_accepted_at = new Date().toISOString();
+      }
+
+      // uses AuthContext helper which upserts with { id: user.id, user_id: user.id, ... }
+      await upsertProfile(patch);
+      await refreshProfile();
+
+      setSavedMsg("Profile saved.");
+      setTimeout(() => setSavedMsg(null), 2500);
+    } catch (err: any) {
+      setErrorMsg(err?.message || "Could not save profile.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
   return (
-    <div className="max-w-4xl mx-auto space-y-6">
-      {/* ✅ Signed-in status banner */}
-      <div
-        className={
-          'rounded-md border px-3 py-2 text-sm ' +
-          (user ? 'border-green-200 bg-green-50 text-green-800' : 'border-red-200 bg-red-50 text-red-800')
-        }
-      >
-        {user ? (
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="font-medium">Signed in</span>
-            <span>
-              as <b>{user.email}</b>
-            </span>
-            {expiresAt ? (
-              <span className="text-xs text-gray-600">
-                (token expires {new Date(expiresAt * 1000).toLocaleString()})
-              </span>
-            ) : null}
-          </div>
-        ) : (
+    <div className="max-w-2xl mx-auto p-6">
+      <h1 className="text-2xl font-bold mb-4">Your Profile</h1>
+
+      {loading ? (
+        <div className="p-6">
+          <div className="h-8 w-8 animate-spin rounded-full border-2 border-gray-300 border-t-transparent" />
+        </div>
+      ) : (
+        <form onSubmit={onSave} className="bg-white rounded-lg shadow border p-6 space-y-5">
+          {/* Alias */}
           <div>
-            <span className="font-medium">Not signed in.</span>{' '}
-            <a className="underline" href="/signin">
-              Go to sign in
-            </a>
+            <label className="block text-sm font-medium mb-1">Alias</label>
+            <input
+              className="w-full rounded border p-2"
+              value={form.alias}
+              onChange={(e) => setForm((f) => ({ ...f, alias: e.target.value }))}
+              placeholder="e.g. winefan123"
+              required
+            />
+            <p className="text-xs text-gray-500 mt-1">
+              Shown on leaderboards and community posts.
+            </p>
           </div>
-        )}
-      </div>
 
-      {/* Profile + quick actions */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <User className="w-5 h-5" />
-            Your Account
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 items-center">
-            <div className="flex items-center gap-3">
-              <div className="h-12 w-12 rounded-full bg-gray-100 overflow-hidden flex items-center justify-center">
-                {avatarUrl ? (
-                  <img src={avatarUrl} alt="" className="h-12 w-12 object-cover" />
-                ) : (
-                  <span className="text-xl">👤</span>
-                )}
-              </div>
-              <div className="min-w-0">
-                <div className="font-semibold truncate">{displayName || user.email}</div>
-                <div className="text-xs text-gray-500 truncate">{user.email}</div>
-              </div>
-            </div>
-            <div className="rounded border p-3">
-              <div className="text-xs text-gray-500">User ID</div>
-              <div className="font-mono text-[11px] break-all">{user.id}</div>
-            </div>
-            <div className="flex gap-2 justify-start sm:justify-end">
-              <Link to="/dashboard" className="inline-flex items-center rounded border px-3 py-2 text-sm">
-                <Trophy className="w-4 h-4 mr-2" />
-                Dashboard
-              </Link>
-              <Button variant="outline" onClick={async () => { await handleSignOut(); }}>
-                <LogOut className="w-4 h-4 mr-2" />
-                Sign out
-              </Button>
-            </div>
+          {/* Display Name */}
+          <div>
+            <label className="block text-sm font-medium mb-1">Display name</label>
+            <input
+              className="w-full rounded border p-2"
+              value={form.display_name}
+              onChange={(e) => setForm((f) => ({ ...f, display_name: e.target.value }))}
+              placeholder="Your name"
+              required
+            />
           </div>
-        </CardContent>
-      </Card>
 
-      {/* Points & Trial + quick links */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <Card className="lg:col-span-1">
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Trophy className="w-5 h-5" />
-              Points
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-3xl font-bold">{Number(totalPoints || 0)}</div>
-            <div className="text-xs text-gray-500">Total points earned</div>
-            <div className="mt-4">
-              <Progress value={Math.min(100, Number(totalPoints || 0) % 100)} />
-              <div className="text-xs mt-1 text-gray-500">Next reward at +100</div>
-            </div>
+          {/* Bio */}
+          <div>
+            <label className="block text-sm font-medium mb-1">Bio</label>
+            <textarea
+              className="w-full rounded border p-2"
+              rows={4}
+              value={form.bio}
+              onChange={(e) => setForm((f) => ({ ...f, bio: e.target.value }))}
+              placeholder="Tell us a little about your wine journey…"
+            />
+          </div>
 
-            <div className="mt-4 flex gap-2">
-              <Link to="/swirdle" className="inline-flex items-center rounded border px-3 py-2 text-sm">
-                Play Swirdle
-              </Link>
-              <Link to="/leaderboard" className="inline-flex items-center rounded border px-3 py-2 text-sm">
-                Leaderboard
-              </Link>
-              <Link to="/badges" className="inline-flex items-center rounded border px-3 py-2 text-sm">
-                Badges
-              </Link>
-            </div>
-          </CardContent>
-        </Card>
+          {/* Terms */}
+          <div className="flex items-start gap-2">
+            <input
+              id="terms"
+              type="checkbox"
+              checked={form.accept_terms}
+              onChange={(e) => setForm((f) => ({ ...f, accept_terms: e.target.checked }))}
+              className="mt-1"
+            />
+            <label htmlFor="terms" className="text-sm text-gray-700">
+              I accept the{" "}
+              <a href="/terms" className="underline">
+                Terms of Service
+              </a>
+              .
+            </label>
+          </div>
 
-        <Card className="lg:col-span-1">
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Calendar className="w-5 h-5" />
-              Trial
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-2">
-            {trialLoading ? (
-              <div className="text-sm text-gray-500">Loading trial status…</div>
-            ) : trialError ? (
-              <div className="text-sm text-red-600">{trialError}</div>
-            ) : started ? (
-              <>
-                <div className="text-sm">
-                  Started: <b>{formatAdelaide(started)}</b>
-                </div>
-                <div className="text-sm">
-                  Ends: <b>{formatAdelaide(ends!)}</b>
-                </div>
-                <div className="text-sm">
-                  Status:{' '}
-                  {trialActive ? (
-                    <Badge className="bg-green-600">Active ({daysLeft} day{daysLeft === 1 ? '' : 's'} left)</Badge>
-                  ) : (
-                    <Badge variant="secondary">Expired</Badge>
-                  )}
-                </div>
-              </>
-            ) : (
-              <div className="text-sm">Your free trial will start the first time you play.</div>
-            )}
-          </CardContent>
-        </Card>
-
-        {/* My badges strip */}
-        <Card className="lg:col-span-1">
-          <CardHeader>
-            <CardTitle>Recent Badges</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <MyBadgesStrip limit={8} />
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* Complete your profile */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <ImageIcon className="w-5 h-5" />
-            Complete your profile
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          <form onSubmit={handleSaveProfile} className="space-y-4">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <label className="text-sm font-medium">Display name</label>
-                <Input
-                  value={displayName}
-                  onChange={(e) => setDisplayName(e.target.value)}
-                  placeholder="How should we show your name?"
-                />
-              </div>
-              <div className="space-y-2">
-                <label className="text-sm font-medium">Avatar URL</label>
-                <Input
-                  value={avatarUrl}
-                  onChange={(e) => setAvatarUrl(e.target.value)}
-                  placeholder="https://…"
-                />
-              </div>
-            </div>
-
-            <div className="flex gap-2">
-              <Button type="submit" disabled={profileLoading}>
-                {profileLoading ? 'Saving…' : 'Save profile'}
-              </Button>
-              <Link to="/badges" className="inline-flex items-center rounded border px-3 py-2 text-sm">
-                View badges
-              </Link>
-            </div>
-          </form>
-        </CardContent>
-      </Card>
+          {/* Buttons / Status */}
+          <div className="flex items-center gap-3">
+            <button
+              type="submit"
+              disabled={!canSave}
+              className={`px-4 py-2 rounded text-white ${
+                canSave ? "bg-gray-900 hover:opacity-95" : "bg-gray-400"
+              }`}
+            >
+              {saving ? "Saving…" : "Save"}
+            </button>
+            {savedMsg && <span className="text-sm text-green-600">{savedMsg}</span>}
+            {errorMsg && <span className="text-sm text-red-600">{errorMsg}</span>}
+          </div>
+        </form>
+      )}
     </div>
   );
 }
