@@ -29,7 +29,7 @@ const LANGS = [
 export default function Layout({ children }: { children: React.ReactNode }) {
   const { user, signOut, profile } = useAuth();
   const pointsCtx = usePoints?.();
-  const { selected, locale, setSelected } = useLocale(); // <- matches your LocaleContext
+  const { selected, locale, setSelected } = useLocale(); // matches your LocaleContext
   const navigate = useNavigate();
   const loc = useLocation();
 
@@ -146,9 +146,10 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     );
   }
 
-  // prefer display name if available
+  // prefer display name if available (falls back to first_name per your schema)
   const displayName =
     (profile as any)?.display_name ||
+    (profile as any)?.first_name ||
     user?.user_metadata?.name ||
     user?.email ||
     "";
