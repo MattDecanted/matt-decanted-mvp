@@ -548,20 +548,21 @@ const Home: React.FC = () => {
                 </p>
               </div>
 
-              <ul className="space-y-3 mb-8">
-                <li className="flex items-center text-sm text-gray-600">
-                  <CheckCircle className="w-4 h-4 text-green-600 mr-2 flex-shrink-0" />
-                  {t('home.learning.free.feature1', 'Free wine tasting guide')}
-                </li>
-                <li className="flex items-center text-sm text-gray-600">
-                  <CheckCircle className="w-4 h-4 text-green-600 mr-2 flex-shrink-0" />
-                  {t('home.learning.free.feature2', 'Community access')}
-                </li>
-                <li className="flex items-center text-sm text-gray-600">
-                  <CheckCircle className="w-4 h-4 text-green-600 mr-2 flex-shrink-0" />
-                  {t('home.learning.free.feature3', 'Monthly wine tips')}
-                </li>
-              </ul>
+<ul className="space-y-3 mb-8">
+  <li className="flex items-center text-sm text-gray-600">
+    <CheckCircle className="w-4 h-4 text-green-600 mr-2 flex-shrink-0" />
+    {t('home.learning.basic.feature1', 'Weekly premium videos')}
+  </li>
+  <li className="flex items-center text-sm text-gray-600">
+    <CheckCircle className="w-4 h-4 text-green-600 mr-2 flex-shrink-0" />
+    {t('home.learning.basic.feature2', 'Swirdle daily game')}
+  </li>
+  <li className="flex items-center text-sm text-gray-600">
+    <CheckCircle className="w-4 h-4 text-green-600 mr-2 flex-shrink-0" />
+    {t('home.learning.basic.feature3', 'Downloadable guides')}
+  </li>
+</ul>
+
 
               <Link
                 to="/blog/wine-tasting-guide"
