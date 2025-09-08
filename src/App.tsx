@@ -11,7 +11,7 @@ import {
 
 // ✅ Lazy where useful
 const SwirdleLeaderboardPage = lazy(() => import("@/pages/SwirdleLeaderboardPage"));
-const CommunityPostPage = lazy(() => import("@/pages/CommunityPostPage"));
+const CommunityPostPage = lazy(() => import("@/pages/CommunityPage"));
 
 // UI / Providers
 import { Toaster } from "@/components/ui/sonner";
