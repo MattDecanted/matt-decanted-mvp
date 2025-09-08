@@ -19,6 +19,7 @@ import { PointsProvider } from "@/context/PointsContext";
 import { AnalyticsProvider } from "@/context/AnalyticsContext";
 import { LocaleProvider } from "@/context/LocaleContext";
 import EventsPage from "@/pages/EventsPage";
+import CommunityPage from "@/pages/CommunityPage";
 
 // Layout & Pages
 import Layout from "@/components/Layout";
@@ -380,6 +381,7 @@ function App() {
                       <Route path="/reset-password" element={<ResetPassword />} />
                       <Route path="/terms" element={<Terms />} />
                       <Route path="/events" element={<EventsPage />} />
+                      <Route path="/community" element={<CommunityPage />} />
 
                       {/* NEW: Challenges landing (public) */}
                       <Route path="/challenges" element={<Challenges />} />
