@@ -138,7 +138,7 @@ function RequireAuth({ children }: { children: React.ReactNode }) {
   return <>{children}</>;
 }
 
-/** Onboarding guard: needs alias + terms_accepted_at (profiles.user_id) */
+/** Onboarding guard: needs alias + terms_accepted_at (profiles.id OR profiles.user_id) */
 function RequireOnboarded({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuth();
   const location = useLocation();
@@ -159,8 +159,8 @@ function RequireOnboarded({ children }: { children: React.ReactNode }) {
       const { data, error } = await supabase
         .from("profiles")
         .select("alias, terms_accepted_at")
-        .eq("user_id", user.id)
-        .single();
+        .or(`id.eq.${user.id},user_id.eq.${user.id}`)
+        .maybeSingle();
 
       if (!active) return;
 
