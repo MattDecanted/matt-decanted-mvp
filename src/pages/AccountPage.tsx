@@ -1,9 +1,10 @@
+// src/pages/AccountPage.tsx
 import React, { useEffect, useMemo, useState } from "react";
 import { Navigate, useLocation } from "react-router-dom";
 import { useAuth } from "@/context/AuthContext";
 import { supabase } from "@/lib/supabase";
 
-/** Simple tier ladder. Adjust thresholds any time. */
+/** Adjust thresholds/tier names as you like */
 const TIERS = [
   { key: "novice", label: "Novice", min: 0 },
   { key: "enthusiast", label: "Enthusiast", min: 100 },
@@ -15,9 +16,9 @@ const TIERS = [
 type FormState = {
   alias: string;
   display_name: string;
-  bio: string;        // UI only; saved iff column exists
-  country: string;    // optional; saved iff column exists
-  state: string;      // optional; saved iff column exists
+  bio: string;        // saved only if column exists
+  country: string;    // saved only if column exists
+  state: string;      // saved only if column exists
   accept_terms: boolean;
 };
 
@@ -28,7 +29,6 @@ type SchemaFlags = {
   hasCountry: boolean;
   hasState: boolean;
   hasTermsAcceptedAt: boolean;
-  pointsKey: string | null; // which key holds points
 };
 
 export default function AccountPage() {
@@ -42,14 +42,13 @@ export default function AccountPage() {
     hasCountry: false,
     hasState: false,
     hasTermsAcceptedAt: true,
-    pointsKey: null,
   });
 
   const [badges, setBadges] = useState<
     Array<{ id?: string; title?: string; badge_key?: string; earned_at?: string }>
   >([]);
 
-  // Infer schema by reading your row once with select("*")
+  // Infer which columns exist via select("*")
   useEffect(() => {
     (async () => {
       if (!user) return;
@@ -59,28 +58,19 @@ export default function AccountPage() {
         .or(`id.eq.${user.id},user_id.eq.${user.id}`)
         .maybeSingle();
 
-      if (error) {
-        // If select("*") fails, keep defaults and let saves be minimal.
-        console.warn("[Account] profiles select(*) error:", error.message);
-        return;
+      if (!error) {
+        const keys = Object.keys(data || {});
+        setSchema({
+          hasAlias: keys.includes("alias") || true,
+          hasDisplayName: keys.includes("display_name") || true,
+          hasBio: keys.includes("bio"),
+          hasCountry: keys.includes("country"),
+          hasState: keys.includes("state"),
+          hasTermsAcceptedAt: keys.includes("terms_accepted_at") || true,
+        });
       }
-      const row = data || {};
-      const keys = Object.keys(row);
 
-      const pointsKey =
-        ["points_total", "points", "score", "xp"].find((k) => keys.includes(k)) || null;
-
-      setSchema({
-        hasAlias: keys.includes("alias") || true, // assume true if missing; alias commonly exists
-        hasDisplayName: keys.includes("display_name") || true,
-        hasBio: keys.includes("bio"),
-        hasCountry: keys.includes("country"),
-        hasState: keys.includes("state"),
-        hasTermsAcceptedAt: keys.includes("terms_accepted_at") || true,
-        pointsKey,
-      });
-
-      // Try to load badges from a common table name
+      // Load badges if table exists
       try {
         const { data: b } = await supabase
           .from("user_badges")
@@ -88,13 +78,13 @@ export default function AccountPage() {
           .eq("user_id", user.id)
           .order("earned_at", { ascending: false });
         if (Array.isArray(b)) setBadges(b);
-      } catch (e) {
-        // no badges table; ignore
+      } catch {
+        /* ignore if table not present */
       }
     })();
   }, [user]);
 
-  // Compute points from profile (try several possible keys)
+  // Points from any supported column
   const points = useMemo(() => {
     if (!profile) return 0;
     return (
@@ -108,9 +98,7 @@ export default function AccountPage() {
 
   const currentTier = useMemo(() => {
     let idx = 0;
-    for (let i = 0; i < TIERS.length; i++) {
-      if (points >= TIERS[i].min) idx = i;
-    }
+    for (let i = 0; i < TIERS.length; i++) if (points >= TIERS[i].min) idx = i;
     return TIERS[idx];
   }, [points]);
 
@@ -126,7 +114,7 @@ export default function AccountPage() {
     return Math.round((pos / span) * 100);
   }, [points, currentTier, nextTier]);
 
-  // Seed the form from loaded profile
+  // Seed form from profile
   const initial: FormState = useMemo(
     () => ({
       alias: profile?.alias ?? "",
@@ -136,7 +124,6 @@ export default function AccountPage() {
       state: (profile as any)?.state ?? "",
       accept_terms: Boolean((profile as any)?.terms_accepted_at),
     }),
-    // only seed when these change
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [
       profile?.alias,
@@ -154,10 +141,7 @@ export default function AccountPage() {
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [skippedFields, setSkippedFields] = useState<string[]>([]);
 
-  // keep form in sync with profile arrival
-  useEffect(() => {
-    setForm(initial);
-  }, [initial]);
+  useEffect(() => setForm(initial), [initial]);
 
   if (!loading && !user) {
     return <Navigate to="/signin" replace state={{ from: location }} />;
@@ -168,29 +152,34 @@ export default function AccountPage() {
     form.display_name.trim().length > 0 &&
     !saving;
 
-  /** Try upsert; if we hit "column does not exist" errors, drop those fields and retry. */
-  async function safeUpsert(patch: Record<string, any>) {
+  /** Upsert without specifying onConflict; drop unknown columns and retry. */
+  async function safeUpsert(payload: Record<string, any>) {
     const dropped: string[] = [];
-    let payload = { ...patch };
+    let body = { ...payload };
     let tries = 0;
+
     // eslint-disable-next-line no-constant-condition
     while (true) {
-      const { error } = await supabase.from("profiles").upsert(payload, { onConflict: "id" });
-      if (!error) {
-        return { dropped };
-      }
+      const { error } = await supabase.from("profiles").upsert(body); // <-- no onConflict
+      if (!error) return { dropped };
+
       const msg = String(error.message || "");
-      // Try to parse which column failed
+      // Unknown column?
       const m1 = msg.match(/column\s+"?([a-zA-Z0-9_]+)"?\s+does not exist/i);
       const m2 = msg.match(/could not find the '([a-zA-Z0-9_]+)'\s+column/i);
       const bad = (m1?.[1] || m2?.[1]) as string | undefined;
-      if (!bad || !(bad in payload) || tries++ > 6) {
-        throw error; // give up; unknown error
+
+      // If it's the ON CONFLICT error (from older deployments), just retry once without any change
+      if (/no unique or exclusion constraint matching the ON CONFLICT specification/i.test(msg)) {
+        if (tries++ > 0) throw error;
+        continue;
       }
-      // Drop the offending field and retry
+
+      if (!bad || !(bad in body) || tries++ > 8) throw error;
+
       dropped.push(bad);
-      const { [bad]: _omit, ...rest } = payload;
-      payload = rest;
+      const { [bad]: _omit, ...rest } = body;
+      body = rest;
     }
   }
 
@@ -246,10 +235,7 @@ export default function AccountPage() {
             <div className="text-sm text-gray-600">
               Tier: <span className="font-semibold">{currentTier.label}</span>
               {nextTier ? (
-                <>
-                  {" "}
-                  · Next: <span className="font-semibold">{nextTier.label}</span> at {nextTier.min}
-                </>
+                <> · Next: <span className="font-semibold">{nextTier.label}</span> at {nextTier.min}</>
               ) : (
                 " · Top tier"
               )}
@@ -304,7 +290,7 @@ export default function AccountPage() {
               required
             />
             <p className="text-xs text-gray-500 mt-1">
-              Alias is your public handle. It appears on leaderboards and community posts.
+              <strong>Alias</strong> is your public handle shown on leaderboards and community posts.
             </p>
           </div>
 
@@ -319,7 +305,7 @@ export default function AccountPage() {
               required
             />
             <p className="text-xs text-gray-500 mt-1">
-              Display name is how we greet you in the app. It can be your real name.
+              <strong>Display name</strong> is how we greet you in the app (can be your real name).
             </p>
           </div>
 
