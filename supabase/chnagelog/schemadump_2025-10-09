@@ -1,0 +1,11 @@
+tc to download: Option A — Export from the Supabase Dashboard (quick + easy)
+
+Open your project → left sidebar SQL → (•••) Options → “Generate types & schema” or “New query” → “Templates” → “Schema dump” (wording may vary slightly).
+
+Choose schema = public (include functions, views, RLS policies, indexes).
+
+Run → when the SQL appears, Copy it.
+
+In your repo, create the folder (if not already):
+-- 2025-09-10: Baseline schema dump
+-- Source: Supabase dashboard export
