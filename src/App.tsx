@@ -393,7 +393,12 @@ function App() {
                     <Routes>
                       {/* Avoid double render inside Layout */}
                       <Route path="/auth/callback" element={<></>} />
+// inside <Routes> …
+<Route path="/admin" element={<AdminHub />} />
+<Route path="/admin/quizzes" element={<VocabChallengeManager />} />
+<Route path="/admin/swirdle" element={<SwirdleAdmin />} />   // ✅ this is the one
 
+                      
                       {/* Onboarding */}
                       <Route path="/onboarding" element={<Onboarding />} />
 
@@ -419,6 +424,8 @@ function App() {
                         }
                       />
 
+
+                      
                       {/* NEW: Challenges landing (public) */}
                       <Route path="/challenges" element={<Challenges />} />
 
