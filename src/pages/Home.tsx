@@ -70,7 +70,7 @@ function useAuthLink() {
 const isGatedRoute = (route: string) => {
   return [
     '/dashboard',
-    '/swirdle',
+    // '/swirdle',            // ❌ UNGATED: allow direct access from Home
     '/play',
     '/game/',
     '/daily-quiz',
@@ -146,8 +146,8 @@ const Home: React.FC = () => {
       ),
       cta: t('home.features.swirdle.cta', 'Play Today'),
       route: '/swirdle',
-      gated: true,
-      badge: t('home.features.swirdle.badge', 'Members Only'),
+      gated: false, // ✅ UNGATED here
+      // badge intentionally left off to avoid "Members Only" label for Swirdle
     },
     {
       icon: <Target className="w-8 h-8 text-amber-600" />,
@@ -461,10 +461,9 @@ const Home: React.FC = () => {
                 </div>
               </div>
 
-              {/* ✅ Single button, gated for guests */}
+              {/* ✅ Now UNGATED: direct link without authOnClick */}
               <a
                 href="/swirdle"
-                onClick={authOnClick('/swirdle')}
                 className="inline-flex items-center bg-white text-purple-600 hover:bg-gray-100 font-semibold py-3 px-6 rounded-lg shadow-lg transition-all"
               >
                 <Brain className="w-5 h-5 mr-2" />
