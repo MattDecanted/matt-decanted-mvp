@@ -7,6 +7,7 @@ import {
   Target, TrendingUp, X, Plus, Upload, LayoutGrid, Rows
 } from 'lucide-react';
 
+// ---------- tiny helper ------------------------------------------------------
 async function safeQuery<T>(
   fn: () => Promise<{ data: T | null; error: any }>,
   fallback: T
@@ -64,6 +65,7 @@ const getDifficultyColor = (d: string) => {
 };
 const getWinRateColor = (wr: number) => (wr >= 80 ? 'text-green-600' : wr >= 60 ? 'text-amber-600' : 'text-red-600');
 
+/** Admin gate via public.admins */
 function useAdminGate(userId?: string) {
   const [isAdmin, setIsAdmin] = useState(false);
   const [loadingGate, setLoadingGate] = useState(true);
@@ -90,7 +92,6 @@ function useAdminGate(userId?: string) {
         setLoadingGate(false);
       }
     })();
-
     return () => { cancelled = true; };
   }, [userId]);
 
@@ -275,7 +276,7 @@ const SwirdleAdmin: React.FC = () => {
   const [monthValue, setMonthValue] = useState<string>(curMonthStr);
   const [includeUnpublished, setIncludeUnpublished] = useState<boolean>(true);
 
-  // data
+  // data + UI
   const [words, setWords] = useState<WordRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [view, setView] = useState<'schedule' | 'table'>('schedule');
@@ -299,75 +300,131 @@ const SwirdleAdmin: React.FC = () => {
     return { effFrom: fmtYMD(fromDate), effTo: fmtYMD(toDate) };
   }, [dateMode, fromDate, toDate, monthValue]);
 
-  async function tryRpcVariants(paramsList: Array<Record<string, any>>): Promise<any[] | null> {
-    for (const params of paramsList) {
-      const { data, error } = await supabase.rpc('get_swirdle_words_with_stats_api', params);
-      if (error) {
-        console.warn('[admin] RPC variant failed:', error?.message, params);
-        continue;
+  // --- core loader (direct SELECT; no RPC dependency) ------------------------
+  const load = async () => {
+    setLoading(true);
+    try {
+      const wantsCategory = categoryFilter !== 'all';
+      const search = (searchTerm ?? '').trim();
+
+      let q = supabase
+        .from('swirdle_words')
+        .select('id, word, definition, category, difficulty, date_scheduled, is_published, hints');
+
+      if (dateMode !== 'all') {
+        if (dateMode === 'month') {
+          const [y, m] = monthValue.split('-').map(Number);
+          const first = new Date(y, m - 1, 1);
+          const last = new Date(y, m, 0);
+          q = q.gte('date_scheduled', first.toISOString().slice(0,10))
+               .lte('date_scheduled', last.toISOString().slice(0,10));
+        } else {
+          q = q.gte('date_scheduled', fmtYMD(fromDate))
+               .lte('date_scheduled', fmtYMD(toDate));
+        }
       }
-      if (Array.isArray(data)) return data as any[];
+
+      if (wantsCategory) q = q.eq('category', categoryFilter);
+      if (search) q = q.or(`word.ilike.%${search}%,definition.ilike.%${search}%`);
+      q = q.order('date_scheduled', { ascending: true });
+
+      const { data, error } = await q;
+      if (error) throw error;
+
+      let normalized = (data ?? []).map((r: any) => ({
+        id: r.id,
+        word: r.word,
+        definition: r.definition,
+        category: r.category,
+        difficulty: r.difficulty,
+        date_scheduled: r.date_scheduled,
+        is_published: !!r.is_published,
+        hints: Array.isArray(r.hints) ? r.hints : [],
+        plays: 0,
+        win_rate: 0,
+      })) as WordRow[];
+
+      if (!includeUnpublished) normalized = normalized.filter(w => w.is_published);
+
+      setWords(normalized);
+    } catch (e: any) {
+      console.error('[admin] load failed:', e);
+      setNotice({ type: 'error', msg: e.message || 'Failed to load' });
+    } finally {
+      setLoading(false);
     }
-    return null;
-  }
+  };
 
-const load = async () => {
-  setLoading(true);
-  try {
-    const wantsCategory = categoryFilter !== 'all';
-    const search = (searchTerm ?? '').trim();
+  // run loader on changes
+  useEffect(() => {
+    if (isAdmin) load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isAdmin, effFrom, effTo, includeUnpublished, categoryFilter, searchTerm]);
 
-    // Build direct SELECT (no RPC, no updated_at).
-    let q = supabase
-      .from('swirdle_words')
-      .select('id, word, definition, category, difficulty, date_scheduled, is_published, hints');
+  // KPIs
+  const totalAttempts = words.reduce((s, w) => s + (Number(w.plays) || 0), 0);
+  const publishedWords = words.filter((w) => w.is_published).length;
+  const avgWinRate = totalAttempts > 0
+    ? words.reduce((s, w) => s + ((Number(w.win_rate) || 0) * (Number(w.plays) || 0)), 0) / totalAttempts
+    : 0;
 
-    // Date filters from your current mode
-    if (dateMode !== 'all') {
-      if (dateMode === 'month') {
-        const [y, m] = monthValue.split('-').map(Number);
-        const first = new Date(y, m - 1, 1);
-        const last = new Date(y, m, 0);
-        q = q.gte('date_scheduled', first.toISOString().slice(0,10))
-             .lte('date_scheduled', last.toISOString().slice(0,10));
-      } else {
-        q = q.gte('date_scheduled', fmtYMD(fromDate))
-             .lte('date_scheduled', fmtYMD(toDate));
+  // save patch (robust to missing updated_at)
+  const savePatch = async (patch: Partial<WordRow>) => {
+    if (!selected) return;
+    setSaving(true);
+    try {
+      let payload: any = { ...patch, updated_at: new Date().toISOString() };
+      if ('hints' in payload && !Array.isArray(payload.hints)) payload.hints = [];
+
+      let { error } = await supabase.from('swirdle_words').update(payload).eq('id', selected.id);
+
+      if (error && /updated_at.*does not exist/i.test(error.message || '')) {
+        const { updated_at, ...retryPayload } = payload;
+        const res2 = await supabase.from('swirdle_words').update(retryPayload).eq('id', selected.id);
+        error = res2.error;
       }
+      if (error) throw error;
+
+      setWords((prev) => prev.map((w) => (w.id === selected.id ? { ...w, ...patch } : w)));
+      setSelected((p) => (p ? { ...p, ...patch } as WordRow : p));
+      setNotice({ type:'success', msg:'Saved' });
+    } catch (e:any) {
+      setNotice({ type:'error', msg:e.message || 'Save failed' });
+    } finally {
+      setSaving(false);
     }
+  };
 
-    if (wantsCategory) q = q.eq('category', categoryFilter);
-    if (search) q = q.or(`word.ilike.%${search}%,definition.ilike.%${search}%`);
+  const togglePublished = async (w: WordRow) => {
+    await savePatch({ is_published: !w.is_published });
+  };
 
-    q = q.order('date_scheduled', { ascending: true });
+  const shiftWindow = (days: number) => {
+    const f = new Date(fromDate); const t = new Date(toDate);
+    f.setDate(f.getDate() + days); t.setDate(t.getDate() + days);
+    setFromDate(f); setToDate(t);
+  };
 
-    const { data, error } = await q;
-    if (error) throw error;
+  const groupedByWeek = useMemo(() => {
+    const map = new Map<string, WordRow[]>();
+    const items = [...words].sort((a, b) => a.date_scheduled.localeCompare(b.date_scheduled));
+    for (const w of items) {
+      const d = parseYMD(w.date_scheduled);
+      const week = new Date(d); week.setDate(d.getDate() - d.getDay()); // week starting Sunday
+      const key = fmtYMD(week);
+      map.set(key, [...(map.get(key) || []), w]);
+    }
+    return Array.from(map.entries()).sort((a,b) => a[0].localeCompare(b[0]));
+  }, [words]);
 
-    let normalized = (data ?? []).map((r: any) => ({
-      id: r.id,
-      word: r.word,
-      definition: r.definition,
-      category: r.category,
-      difficulty: r.difficulty,
-      date_scheduled: r.date_scheduled,
-      is_published: !!r.is_published,
-      hints: Array.isArray(r.hints) ? r.hints : [],
-      plays: 0,
-      win_rate: 0,
-    })) as WordRow[];
-
-    if (!includeUnpublished) normalized = normalized.filter(w => w.is_published);
-
-    setWords(normalized);
-  } catch (e: any) {
-    console.error('[admin] load failed:', e);
-    setNotice({ type: 'error', msg: e.message || 'Failed to load' });
-  } finally {
-    setLoading(false);
+  // ----- gates -----
+  if (loadingGate) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="w-8 h-8 rounded-full border-2 border-gray-300 border-t-transparent animate-spin" />
+      </div>
+    );
   }
-};
-
   if (!isAdmin) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-50">
@@ -386,8 +443,10 @@ const load = async () => {
       ? `${monthValue}`
       : `${fmtYMD(fromDate)} → ${fmtYMD(toDate)}`;
 
+  // ----- UI -----
   return (
     <div className="min-h-screen bg-gray-50">
+      {/* Sticky header */}
       <div className="sticky top-0 z-20 bg-white/90 backdrop-blur border-b">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3 flex flex-wrap gap-3 items-center justify-between">
           <div>
@@ -419,6 +478,7 @@ const load = async () => {
         </div>
       </div>
 
+      {/* Filters + KPIs */}
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-6">
         {notice && (
           <div className={`mb-4 p-3 rounded border ${notice.type==='success' ? 'bg-green-50 border-green-200 text-green-800' : 'bg-red-50 border-red-200 text-red-800'}`}>
@@ -522,6 +582,7 @@ const load = async () => {
         </div>
       </div>
 
+      {/* Body */}
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pb-10">
         <div className="bg-white rounded-lg shadow overflow-hidden flex">
           <div className="flex-1">
@@ -627,6 +688,7 @@ const load = async () => {
           )}
         </div>
 
+        {/* Footer actions */}
         <div className="mt-4 flex flex-wrap gap-2">
           <button
             onClick={() => setSelected({
