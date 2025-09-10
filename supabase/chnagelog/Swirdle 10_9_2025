@@ -1,0 +1,89 @@
+supabase/chnagelog
+1) Supabase “Swirdle” schema – quick reference
+Tables & key columns
+
+swirdle_words
+
+id uuid PK
+
+word text
+
+definition text
+
+difficulty text
+
+category text
+
+hints jsonb (array of strings)
+
+date_scheduled date
+
+is_published boolean
+
+Uniqueness: one word per day
+UNIQUE (date_scheduled)
+
+swirdle_attempts
+
+id uuid PK
+
+user_id uuid → (FK users/profiles)
+
+word_id uuid → FK swirdle_words(id)
+
+guesses jsonb (array of strings, last element = last guess)
+
+attempts int
+
+completed boolean
+
+completed_at timestamptz
+
+created_at timestamptz DEFAULT now()
+
+(optional helpers we added/filled where available)
+
+played_at timestamptz (nullable; filled from completed_at or created_at)
+
+points int
+
+streak_after int
+
+Uniqueness: one row per (user, word)
+UNIQUE (user_id, word_id)
+
+user_swirdle_stats (per-user aggregate)
+
+user_id uuid PK
+
+games_played int
+
+wins int
+
+current_streak int
+
+max_streak int
+
+last_played date (Adelaide day)
+
+updated_at timestamptz
+
+Helpful indexes
+-- words
+CREATE INDEX IF NOT EXISTS sw_words_date_idx ON swirdle_words(date_scheduled);
+CREATE INDEX IF NOT EXISTS sw_words_pub_idx  ON swirdle_words(is_published);
+
+-- attempts
+CREATE INDEX IF NOT EXISTS sw_attempts_user_idx   ON swirdle_attempts(user_id);
+CREATE INDEX IF NOT EXISTS sw_attempts_word_idx   ON swirdle_attempts(word_id);
+CREATE INDEX IF NOT EXISTS sw_attempts_played_idx ON swirdle_attempts(COALESCE(played_at, completed_at, created_at));
+
+Data hygiene we ran
+
+Deduped swirdle_words on the same date_scheduled and kept a single id per day.
+
+Backfilled future empty days as draft rows:
+
+word = NULL, definition = NULL, hints = '[]'::jsonb, is_published = FALSE
+
+Left swirdle_attempts intact (except where we needed to choose a keep-row id in user collisions).
