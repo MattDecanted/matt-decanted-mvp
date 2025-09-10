@@ -266,6 +266,7 @@ const SwirdleAdmin: React.FC = () => {
   // dates
   const today = useMemo(() => new Date(), []);
   const [dateMode, setDateMode] = useState<DateMode>('all');
+    
   const [fromDate, setFromDate] = useState<Date>(() => {
     const d = new Date(); d.setDate(d.getDate() - 7); return d;
   });
@@ -310,8 +311,9 @@ const SwirdleAdmin: React.FC = () => {
       let q = supabase
         .from('swirdle_words')
         .select('id, word, definition, category, difficulty, date_scheduled, is_published, hints');
-// uncap rows (defensive; makes intent explicit)
-q = q.range(0, 9999);
+
+      // uncap rows (defensive; makes intent explicit)
+      q = q.range(0, 9999);
     
       if (dateMode !== 'all') {
         if (dateMode === 'month') {
@@ -612,7 +614,7 @@ q = q.range(0, 9999);
                           <div className="text-sm text-gray-700 line-clamp-3">{w.definition}</div>
                           <div className="mt-2 flex items-center justify-between">
                             <span className={`px-2 py-0.5 text-[11px] font-medium rounded-full ${getCategoryColor(w.category)}`}>{w.category.replace('_',' ')}</span>
-                            <div className="text-[11px] text-gray-500">{(w.hints||[]).length} hint{(w.hints||[]).length===1?'':'s'}</div>
+                            <div className="text-[11px] text-gray-500">{(w.hints||[]).length} hint{(w.hints||[]).length===1?'':''}s</div>
                           </div>
                           <div className="mt-2 flex items-center justify-between">
                             <div className="text-[11px] text-gray-500">{w.plays ?? 0} attempts</div>
