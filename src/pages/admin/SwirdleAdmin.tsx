@@ -266,7 +266,6 @@ const SwirdleAdmin: React.FC = () => {
   // dates
   const today = useMemo(() => new Date(), []);
   const [dateMode, setDateMode] = useState<DateMode>('all');
-    
   const [fromDate, setFromDate] = useState<Date>(() => {
     const d = new Date(); d.setDate(d.getDate() - 7); return d;
   });
@@ -314,7 +313,8 @@ const SwirdleAdmin: React.FC = () => {
 
       // uncap rows (defensive; makes intent explicit)
       q = q.range(0, 9999);
-    
+
+      // optional date filters (default is ALL)
       if (dateMode !== 'all') {
         if (dateMode === 'month') {
           const [y, m] = monthValue.split('-').map(Number);
@@ -335,6 +335,15 @@ const SwirdleAdmin: React.FC = () => {
       const { data, error } = await q;
       if (error) throw error;
 
+      // normalize hints (jsonb[] or text[] → string[])
+      const normHints = (v: any): string[] => {
+        if (Array.isArray(v)) return v.map(String);
+        if (typeof v === 'string') {
+          try { const p = JSON.parse(v); return Array.isArray(p) ? p.map(String) : []; } catch { return []; }
+        }
+        return [];
+      };
+
       let normalized = (data ?? []).map((r: any) => ({
         id: r.id,
         word: r.word,
@@ -343,12 +352,18 @@ const SwirdleAdmin: React.FC = () => {
         difficulty: r.difficulty,
         date_scheduled: r.date_scheduled,
         is_published: !!r.is_published,
-        hints: Array.isArray(r.hints) ? r.hints : [],
+        hints: normHints(r.hints),
         plays: 0,
         win_rate: 0,
       })) as WordRow[];
 
       if (!includeUnpublished) normalized = normalized.filter(w => w.is_published);
+
+      // final: ensure sort by date
+      normalized.sort((a, b) => a.date_scheduled.localeCompare(b.date_scheduled));
+
+      console.log('[admin] fetched rows:', normalized.length);
+      if (normalized[0]) console.log('[admin] first row:', normalized[0]);
 
       setWords(normalized);
     } catch (e: any) {
