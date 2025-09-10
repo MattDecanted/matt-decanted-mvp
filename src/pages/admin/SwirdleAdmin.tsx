@@ -265,7 +265,7 @@ const SwirdleAdmin: React.FC = () => {
 
   // dates
   const today = useMemo(() => new Date(), []);
-  const [dateMode, setDateMode] = useState<DateMode>('window');
+  const [dateMode, setDateMode] = useState<DateMode>('all');
   const [fromDate, setFromDate] = useState<Date>(() => {
     const d = new Date(); d.setDate(d.getDate() - 7); return d;
   });
@@ -310,7 +310,9 @@ const SwirdleAdmin: React.FC = () => {
       let q = supabase
         .from('swirdle_words')
         .select('id, word, definition, category, difficulty, date_scheduled, is_published, hints');
-
+// uncap rows (defensive; makes intent explicit)
+q = q.range(0, 9999);
+    
       if (dateMode !== 'all') {
         if (dateMode === 'month') {
           const [y, m] = monthValue.split('-').map(Number);
