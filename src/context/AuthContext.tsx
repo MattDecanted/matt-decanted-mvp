@@ -6,13 +6,18 @@ import { supabase } from "@/lib/supabase";
 type Profile = {
   id?: string | null;
   user_id?: string | null;
+  email?: string | null;
+  full_name?: string | null;
   alias?: string | null;
-  role?: string | null;
-  is_admin?: boolean | null;
   display_name?: string | null;
-  bio?: string | null;                // may not exist in your DB; kept optional
-  terms_accepted_at?: string | null;  // may exist
-  // Optional / nice-to-haves if present:
+
+  // 🔑 Admin bits your app checks:
+  role?: string | null;       // e.g. "admin"
+  is_admin?: boolean | null;  // boolean fallback
+
+  // Optional fields — tolerated if absent:
+  bio?: string | null;
+  terms_accepted_at?: string | null;
   country?: string | null;
   state?: string | null;
   points_total?: number | null;
@@ -20,13 +25,17 @@ type Profile = {
   score?: number | null;
   xp?: number | null;
   badge_level?: string | null;
+
+  created_at?: string | null;
+  updated_at?: string | null;
+
   [key: string]: any;
 };
 
 type AuthValue = {
   user: User | null;
   session: Session | null;
-  loading: boolean; // true until auth (and profile, if logged in) are loaded
+  loading: boolean;
   profile: Profile | null;
   signInWithEmail: (email: string) => Promise<void>;
   signOut: () => Promise<void>;
@@ -36,28 +45,25 @@ type AuthValue = {
 
 const AuthCtx = createContext<AuthValue | undefined>(undefined);
 
-/** Helper: robust upsert that removes unknown columns and retries. */
+/** Robust upsert that drops unknown columns and retries (handles drift across envs). */
 async function safeUpsertProfile(payload: Record<string, any>) {
   let tries = 0;
   let dataToSend: Record<string, any> = { ...payload };
 
+  // retry loop removes problematic columns if Postgres complains
   // eslint-disable-next-line no-constant-condition
   while (true) {
-    const { error } = await supabase.from("profiles").upsert(dataToSend); // no onConflict: let PK/unique handle it
+    const { error } = await supabase.from("profiles").upsert(dataToSend);
     if (!error) return;
 
     const msg = String(error.message || "");
-    // Try to detect the exact column name from common Postgres/Supabase error messages
     const m1 = msg.match(/column\s+"?([a-zA-Z0-9_]+)"?\s+does not exist/i);
     const m2 = msg.match(/could not find the '([a-zA-Z0-9_]+)'\s+column/i);
     const bad = (m1?.[1] || m2?.[1]) as string | undefined;
 
     if (!bad || !(bad in dataToSend) || tries++ > 8) {
-      // Give up if we can't identify the field reliably.
       throw error;
     }
-
-    // Drop the offending field and retry
     const { [bad]: _omit, ...rest } = dataToSend;
     dataToSend = rest;
   }
@@ -69,16 +75,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [profile, setProfile] = useState<Profile | null>(null);
   const [loading, setLoading] = useState(true);
 
-  // Fetch profile by id OR user_id (supports either schema), selecting * to avoid missing-column errors.
+  /** Fetch profile by either id OR user_id, tolerant of schema differences. */
   const fetchProfile = React.useCallback(async (uid: string) => {
     const { data, error } = await supabase
       .from("profiles")
-      .select("*")
+      .select("*") // keep * so we don't break if columns differ across envs
       .or(`id.eq.${uid},user_id.eq.${uid}`)
       .maybeSingle();
 
     if (error) {
-      // eslint-disable-next-line no-console
       console.warn("[AuthContext] profiles fetch error:", error.message);
       setProfile(null);
       return;
@@ -86,23 +91,29 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setProfile((data as Profile) ?? null);
   }, []);
 
-  // Boot: restore session, then (if logged in) load profile
+  /** Boot: hydrate session, then profile (if logged in). */
   useEffect(() => {
     let alive = true;
+
     (async () => {
-      const { data } = await supabase.auth.getSession();
-      if (!alive) return;
+      try {
+        const { data } = await supabase.auth.getSession();
+        if (!alive) return;
 
-      const sess = data.session ?? null;
-      setSession(sess);
-      setUser(sess?.user ?? null);
+        const sess = data.session ?? null;
+        const u = sess?.user ?? null;
 
-      if (sess?.user) {
-        await fetchProfile(sess.user.id);
-      } else {
-        setProfile(null);
+        setSession(sess);
+        setUser(u);
+
+        if (u) {
+          await fetchProfile(u.id);
+        } else {
+          setProfile(null);
+        }
+      } finally {
+        if (alive) setLoading(false);
       }
-      if (alive) setLoading(false);
     })();
 
     const { data: sub } = supabase.auth.onAuthStateChange(async (_event, newSession) => {
@@ -125,6 +136,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     };
   }, [fetchProfile]);
 
+  /** Magic-link sign-in. */
   async function signInWithEmail(email: string) {
     const { error } = await supabase.auth.signInWithOtp({
       email: email.trim(),
@@ -136,20 +148,22 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (error) throw error;
   }
 
+  /** Sign out and clear profile. */
   async function signOut() {
     await supabase.auth.signOut();
     setProfile(null);
   }
 
+  /** Force re-fetch of profile. */
   const refreshProfile = React.useCallback(async () => {
     if (user) await fetchProfile(user.id);
   }, [user, fetchProfile]);
 
+  /** Upsert (id + user_id) then refresh. */
   const upsertProfile = React.useCallback(
     async (patch: Partial<Profile>) => {
       if (!user) return;
 
-      // Try with both id and user_id so we work against either schema.
       const payload: Record<string, any> = {
         id: user.id,
         user_id: user.id,
@@ -167,7 +181,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       user,
       session,
       loading,
-      profile,
+      profile,            // <-- includes role / is_admin if present in DB
       signInWithEmail,
       signOut,
       refreshProfile,
