@@ -70,6 +70,45 @@ function emojiGrid(answer: string, guesses: string[]) {
     .join('\n');
 }
 
+// ---------- Free-play guard (1 free round per Adelaide day) ----------
+function useFreePlayGuard(gameKey: string) {
+  const { user } = useAuth();
+  const today = formatDateAdelaide();
+  const LS_KEY = `md_free_${gameKey}_${today}`;
+
+  function isUsed() {
+    try { return localStorage.getItem(LS_KEY) === '1'; } catch { return false; }
+  }
+  function markUsed() {
+    try { localStorage.setItem(LS_KEY, '1'); } catch {}
+  }
+  function promptSignin(message = 'Sign in to keep playing and save your points') {
+    const q = new URLSearchParams(window.location.search);
+    const next = `/swirdle${q.toString() ? `?${q.toString()}` : ''}`;
+    toast(message, {
+      action: {
+        label: 'Sign in',
+        onClick: () => {
+          window.location.href = `/signin?next=${encodeURIComponent(next)}`;
+        },
+      },
+    });
+  }
+
+  return { user, isUsed, markUsed, promptSignin };
+}
+
+// Keep locale in sync with ?lang= (harmless if not present)
+function useLangParamSync() {
+  useEffect(() => {
+    const q = new URLSearchParams(window.location.search);
+    const lang = q.get('lang');
+    if (lang) {
+      try { localStorage.setItem('md_locale', lang); } catch {}
+    }
+  }, []);
+}
+
 // =================== Inline service (DB I/O) ===================
 export type SwirdleWord = {
   id: string;
@@ -233,6 +272,9 @@ const Swirdle: React.FC = () => {
   const t = (_key: string, fallback?: string) => fallback ?? '';
 
   const { user } = useAuth();
+  const freePlay = useFreePlayGuard('swirdle');
+  useLangParamSync();
+
   const { refreshPoints } = usePoints();
 
   const [todaysWord, setTodaysWord] = useState<SwirdleWord | null>(null);
@@ -519,7 +561,7 @@ const Swirdle: React.FC = () => {
           p_type: 'HINT_PURCHASED',
           p_meta: { game: 'SWIRDLE', hint_index: hintIndex, cost: HINT_COST },
         });
-      } catch {/* ignore */}
+      } catch {/* ignore */ }
 
       await refreshPoints();
     } catch (e: any) {
@@ -544,6 +586,21 @@ const Swirdle: React.FC = () => {
     const newAttemptCount = currentAttempt + 1;
     setCurrentAttempt(newAttemptCount);
 
+    const completeAsGuest = (wonNow: boolean) => {
+      // Guest finishes a round
+      if (!freePlay.isUsed()) {
+        // First free play today → allow, but don’t save points
+        freePlay.markUsed();
+        toast('Nice! Create a free account to save your points.', {
+          action: { label: 'Sign in', onClick: () => freePlay.promptSignin() },
+        });
+      } else {
+        // Already used today → prompt sign-in
+        freePlay.promptSignin('Free play used for today. Sign in to keep playing and save your points.');
+      }
+      // No DB writes for guests (saveAttempt already guards on user?.id)
+    };
+
     if (guessUpper === answerUpper) {
       setGameWon(true);
       setGameComplete(true);
@@ -551,11 +608,17 @@ const Swirdle: React.FC = () => {
       if (user?.id) {
         saveAttempt({ completed: true, won: true, attempts: newAttemptCount });
         void handleWinAward(newAttemptCount);
+      } else {
+        completeAsGuest(true);
       }
     } else if (newAttemptCount === MAX_GUESSES) {
       setGameComplete(true);
       generateShareText(newAttemptCount, false);
-      if (user?.id) saveAttempt({ completed: true, won: false, attempts: newAttemptCount });
+      if (user?.id) {
+        saveAttempt({ completed: true, won: false, attempts: newAttemptCount });
+      } else {
+        completeAsGuest(false);
+      }
     } else {
       // Offer hints on attempts 3,4,5 (0,1,2 indexes)
       if ((newAttemptCount === 3 || newAttemptCount === 4 || newAttemptCount === 5) && todaysWord.hints?.length) {
@@ -831,7 +894,7 @@ const Swirdle: React.FC = () => {
                           setShowHintModal(true);
                         }}
                         disabled={purchaseBusy}
-                        className="text-xs px-2 py-1 rounded border bg-white hover:bg-gray-50"
+                        className="text-xs px-2 py-1 rounded border bg-green-50 border-green-500 text-green-700 hover:bg-green-100 disabled:opacity-60"
                       >
                         {purchaseBusy ? '...' : `Buy (-${HINT_COST} pts)`}
                       </button>
@@ -944,14 +1007,14 @@ const Swirdle: React.FC = () => {
                     <button
                       onClick={() => buyHint(pendingHintIndex)}
                       disabled={purchaseBusy}
-                      className="flex-1 bg-amber-600 hover:bg-amber-700 text-white py-2 px-4 rounded-lg font-medium transition-colors disabled:opacity-50"
+                      className="flex-1 bg-green-600 hover:bg-green-700 text-white py-2 px-4 rounded-lg font-medium transition-colors disabled:opacity-60"
                     >
                       {purchaseBusy ? 'Processing…' : `Buy Hint (-${HINT_COST} pts)`}
                     </button>
                   ) : (
                     <a
                       href="/signin"
-                      className="flex-1 bg-amber-600 hover:bg-amber-700 text-white py-2 px-4 rounded-lg font-medium text-center"
+                      className="flex-1 bg-green-600 hover:bg-green-700 text-white py-2 px-4 rounded-lg font-medium text-center"
                     >
                       Sign in to buy hint
                     </a>
