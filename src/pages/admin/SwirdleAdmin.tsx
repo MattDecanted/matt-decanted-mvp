@@ -211,7 +211,7 @@ const Inspector: React.FC<{
           <button
             onClick={save}
             disabled={saving}
-            className="px-4 py-2 rounded bg-black text-white disabled:opacity-50"
+            className="px-4 py-2 rounded bg-amber-600 text-white disabled:opacity-50"
           >
             {saving ? 'Saving…' : 'Save changes'}
           </button>
@@ -243,7 +243,7 @@ const HintEditor: React.FC<{ hints: string[]; onChange: (h: string[]) => void }>
           placeholder="Type a hint and press Add"
           className="flex-1 px-3 py-2 border rounded-lg"
         />
-        <button onClick={add} className="px-3 py-2 rounded bg-slate-800 text-white">Add</button>
+        <button onClick={add} className="px-3 py-2 rounded bg-amber-600 text-white">Add</button>
       </div>
       <div className="flex flex-wrap gap-2">
         {(hints || []).map((h, i) => (
@@ -260,12 +260,16 @@ const HintEditor: React.FC<{ hints: string[]; onChange: (h: string[]) => void }>
   );
 };
 
+type DateMode = 'window' | 'month' | 'all';
+
 const SwirdleAdmin: React.FC = () => {
   const { user } = useAuth();
   const { isAdmin, loadingGate } = useAdminGate(user?.id);
 
-  // window controls
+  // --- date controls
   const today = useMemo(() => new Date(), []);
+  const [dateMode, setDateMode] = useState<DateMode>('window');
+
   const [fromDate, setFromDate] = useState<Date>(() => {
     const d = new Date(); d.setDate(d.getDate() - 7); return d;
   });
@@ -273,7 +277,14 @@ const SwirdleAdmin: React.FC = () => {
     const d = new Date(); d.setDate(d.getDate() + 14); return d;
   });
 
-  // data
+  // month picker (YYYY-MM)
+  const curMonthStr = `${today.getFullYear()}-${String(today.getMonth()+1).padStart(2,'0')}`;
+  const [monthValue, setMonthValue] = useState<string>(curMonthStr);
+
+  // include unpublished?
+  const [includeUnpublished, setIncludeUnpublished] = useState<boolean>(true);
+
+  // --- data
   const [words, setWords] = useState<WordRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [view, setView] = useState<'schedule' | 'table'>('schedule');
@@ -286,21 +297,36 @@ const SwirdleAdmin: React.FC = () => {
   const formatDateLong = (iso: string) =>
     new Date(`${iso}T00:00:00`).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
 
+  // compute effective range from dateMode
+  const { effFrom, effTo } = useMemo(() => {
+    if (dateMode === 'all') return { effFrom: undefined as string|undefined, effTo: undefined as string|undefined };
+    if (dateMode === 'month') {
+      // monthValue is YYYY-MM
+      const [y, m] = monthValue.split('-').map(Number);
+      const first = new Date(y, m - 1, 1);
+      const last = new Date(y, m, 0); // day 0 of next month = last day of month
+      return { effFrom: fmtYMD(first), effTo: fmtYMD(last) };
+    }
+    // window
+    return { effFrom: fmtYMD(fromDate), effTo: fmtYMD(toDate) };
+  }, [dateMode, fromDate, toDate, monthValue]);
+
   const load = async () => {
     setLoading(true);
     try {
-      const params = {
-        _from: fmtYMD(fromDate),
-        _to: fmtYMD(toDate),
+      const params: any = {
         _search: (searchTerm ?? '').trim(),
         _category: categoryFilter === 'all' ? null : categoryFilter,
       };
+      if (effFrom) params._from = effFrom;
+      if (effTo) params._to = effTo;
+
       const data = await safeQuery(
         () => supabase.rpc('get_swirdle_words_with_stats_api', params),
         [] as any[]
       );
 
-      const normalized: WordRow[] = (data ?? []).map((r: any) => ({
+      let normalized: WordRow[] = (data ?? []).map((r: any) => ({
         id: r.id,
         word: r.word,
         definition: r.definition,
@@ -314,6 +340,14 @@ const SwirdleAdmin: React.FC = () => {
         created_at: r.created_at, updated_at: r.updated_at
       }));
 
+      // filter publication client-side if needed
+      if (!includeUnpublished) {
+        normalized = normalized.filter(w => w.is_published);
+      }
+
+      // always sort by date asc for consistent UI
+      normalized.sort((a,b) => a.date_scheduled.localeCompare(b.date_scheduled));
+
       setWords(normalized);
     } catch (e: any) {
       setNotice({ type:'error', msg: e.message || 'Failed to load' });
@@ -325,7 +359,7 @@ const SwirdleAdmin: React.FC = () => {
   useEffect(() => {
     if (isAdmin) load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isAdmin, fromDate, toDate, categoryFilter, searchTerm]);
+  }, [isAdmin, effFrom, effTo, includeUnpublished, categoryFilter, searchTerm]);
 
   const totalAttempts = words.reduce((s, w) => s + (Number(w.plays) || 0), 0);
   const publishedWords = words.filter((w) => w.is_published).length;
@@ -396,6 +430,13 @@ const SwirdleAdmin: React.FC = () => {
     );
   }
 
+  // label for header range
+  const headerRangeLabel = dateMode === 'all'
+    ? 'All time'
+    : dateMode === 'month'
+      ? `${monthValue}`
+      : `${fmtYMD(fromDate)} → ${fmtYMD(toDate)}`;
+
   // --- Main UI ---------------------------------------------------------------
   return (
     <div className="min-h-screen bg-gray-50">
@@ -405,21 +446,21 @@ const SwirdleAdmin: React.FC = () => {
           <div>
             <div className="font-bold text-lg">Swirdle Admin</div>
             <div className="text-xs text-gray-500">
-              {fmtYMD(fromDate)} → {fmtYMD(toDate)}
+              {headerRangeLabel}
             </div>
           </div>
 
           <div className="flex gap-2">
             <button
               onClick={() => setView('schedule')}
-              className={`px-3 py-2 rounded border text-sm flex items-center gap-1 ${view==='schedule' ? 'bg-black text-white' : 'bg-white'}`}
+              className={`px-3 py-2 rounded border text-sm flex items-center gap-1 ${view==='schedule' ? 'bg-amber-600 text-white' : 'bg-white'}`}
               title="Schedule view"
             >
               <LayoutGrid className="w-4 h-4" /> Schedule
             </button>
             <button
               onClick={() => setView('table')}
-              className={`px-3 py-2 rounded border text-sm flex items-center gap-1 ${view==='table' ? 'bg-black text-white' : 'bg-white'}`}
+              className={`px-3 py-2 rounded border text-sm flex items-center gap-1 ${view==='table' ? 'bg-amber-600 text-white' : 'bg-white'}`}
               title="Table view"
             >
               <Rows className="w-4 h-4" /> Table
@@ -439,7 +480,7 @@ const SwirdleAdmin: React.FC = () => {
           </div>
         )}
 
-        <div className="grid grid-cols-1 md:grid-cols-12 gap-3 mb-4">
+        <div className="grid grid-cols-1 md:grid-cols-12 gap-3 mb-3">
           <div className="md:col-span-4 relative">
             <Search className="w-4 h-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2" />
             <input
@@ -449,6 +490,7 @@ const SwirdleAdmin: React.FC = () => {
               onChange={(e) => setSearchTerm(e.target.value)}
             />
           </div>
+
           <div className="md:col-span-3">
             <select
               value={categoryFilter}
@@ -463,18 +505,55 @@ const SwirdleAdmin: React.FC = () => {
               <option value="general">General</option>
             </select>
           </div>
-          <div className="md:col-span-5 flex gap-2">
-            <button onClick={() => shiftWindow(-7)} className="px-3 py-2 border rounded">← Prev 7</button>
-            <button
-              onClick={() => {
-                setFromDate(new Date(new Date().setDate(new Date().getDate()-7)));
-                setToDate(new Date(new Date().setDate(new Date().getDate()+14)));
-              }}
+
+          {/* Date mode + controls */}
+          <div className="md:col-span-5 flex flex-wrap items-center gap-2">
+            <select
+              value={dateMode}
+              onChange={(e) => setDateMode(e.target.value as DateMode)}
               className="px-3 py-2 border rounded"
+              title="Date mode"
             >
-              Today window
-            </button>
-            <button onClick={() => shiftWindow(7)} className="px-3 py-2 border rounded">Next 7 →</button>
+              <option value="window">Window</option>
+              <option value="month">Month</option>
+              <option value="all">All time</option>
+            </select>
+
+            {dateMode === 'window' && (
+              <>
+                <button onClick={() => shiftWindow(-7)} className="px-3 py-2 border rounded">← Prev 7</button>
+                <button
+                  onClick={() => {
+                    setFromDate(new Date(new Date().setDate(new Date().getDate()-7)));
+                    setToDate(new Date(new Date().setDate(new Date().getDate()+14)));
+                  }}
+                  className="px-3 py-2 border rounded"
+                >
+                  Today window
+                </button>
+                <button onClick={() => shiftWindow(7)} className="px-3 py-2 border rounded">Next 7 →</button>
+              </>
+            )}
+
+            {dateMode === 'month' && (
+              <input
+                type="month"
+                value={monthValue}
+                onChange={(e) => setMonthValue(e.target.value)}
+                className="px-3 py-2 border rounded"
+                title="Pick month"
+              />
+            )}
+
+            <label className="inline-flex items-center gap-2 text-sm text-gray-700 ml-auto">
+              <input
+                type="checkbox"
+                className="rounded border-gray-300"
+                checked={includeUnpublished}
+                onChange={(e) => setIncludeUnpublished(e.target.checked)}
+              />
+              Include unpublished
+            </label>
           </div>
         </div>
 
@@ -516,10 +595,10 @@ const SwirdleAdmin: React.FC = () => {
                         <button
                           key={w.id}
                           onClick={() => setSelected(w)}
-                          className={`text-left border rounded-lg p-3 hover:shadow transition ${selected?.id===w.id ? 'ring-2 ring-blue-500' : ''}`}
+                          className={`text-left border rounded-lg p-3 bg-gray-50 hover:bg-white hover:shadow transition ${selected?.id===w.id ? 'ring-2 ring-amber-300' : ''}`}
                         >
                           <div className="flex items-center justify-between mb-1">
-                            <div className="font-bold uppercase tracking-wide">{w.word}</div>
+                            <div className="font-bold uppercase tracking-wide text-gray-900">{w.word}</div>
                             <span className={`px-2 py-0.5 text-[11px] font-medium rounded-full ${getDifficultyColor(w.difficulty)}`}>{w.difficulty}</span>
                           </div>
                           <div className="text-xs text-gray-500 mb-2">{formatDateLong(w.date_scheduled)}</div>
@@ -566,8 +645,8 @@ const SwirdleAdmin: React.FC = () => {
                     {words.map((w) => (
                       <tr key={w.id} className="hover:bg-gray-50 cursor-pointer" onClick={() => setSelected(w)}>
                         <td className="px-4 py-2">{w.date_scheduled}</td>
-                        <td className="px-4 py-2 font-semibold">{w.word}</td>
-                        <td className="px-4 py-2 max-w-md truncate">{w.definition}</td>
+                        <td className="px-4 py-2 font-semibold text-gray-900">{w.word}</td>
+                        <td className="px-4 py-2 max-w-md truncate text-gray-700">{w.definition}</td>
                         <td className="px-4 py-2">
                           <span className={`px-2 py-0.5 text-[11px] rounded ${getCategoryColor(w.category)}`}>{w.category.replace('_',' ')}</span>
                         </td>
@@ -618,13 +697,13 @@ const SwirdleAdmin: React.FC = () => {
               is_published: true,
               hints: []
             } as WordRow)}
-            className="bg-black text-white px-3 py-2 rounded text-sm flex items-center gap-2"
+            className="bg-amber-600 text-white px-3 py-2 rounded text-sm flex items-center gap-2"
           >
             <Plus className="w-4 h-4" /> New Word
           </button>
           <button
             onClick={() => document.getElementById('swirdle-import-input')?.click()}
-            className="bg-slate-800 text-white px-3 py-2 rounded text-sm flex items-center gap-2"
+            className="bg-gray-800 text-white px-3 py-2 rounded text-sm flex items-center gap-2"
           >
             <Upload className="w-4 h-4" /> Bulk Import
           </button>
