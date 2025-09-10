@@ -7,7 +7,6 @@ import {
   Target, TrendingUp, X, Plus, Upload, LayoutGrid, Rows
 } from 'lucide-react';
 
-// --- local helper to mimic safeQuery ----------------------------------------
 async function safeQuery<T>(
   fn: () => Promise<{ data: T | null; error: any }>,
   fallback: T
@@ -38,9 +37,9 @@ interface WordRow {
   is_published: boolean;
   hints: string[];
   plays?: number;
-  win_rate?: number; // 0..100
-  created_at?: string;
-  updated_at?: string;
+  win_rate?: number;
+  created_at?: string | null;
+  updated_at?: string | null;
 }
 
 const fmtYMD = (d: Date) => d.toISOString().slice(0, 10);
@@ -65,7 +64,6 @@ const getDifficultyColor = (d: string) => {
 };
 const getWinRateColor = (wr: number) => (wr >= 80 ? 'text-green-600' : wr >= 60 ? 'text-amber-600' : 'text-red-600');
 
-/** Admin gate: checks public.admins for this user_id */
 function useAdminGate(userId?: string) {
   const [isAdmin, setIsAdmin] = useState(false);
   const [loadingGate, setLoadingGate] = useState(true);
@@ -106,9 +104,7 @@ const Inspector: React.FC<{
   saving: boolean;
 }> = ({ word, onClose, onSave, saving }) => {
   const [local, setLocal] = useState<WordRow | null>(word);
-
   useEffect(() => setLocal(word), [word]);
-
   if (!local) return null;
 
   const set = <K extends keyof WordRow>(k: K, v: WordRow[K]) =>
@@ -266,25 +262,20 @@ const SwirdleAdmin: React.FC = () => {
   const { user } = useAuth();
   const { isAdmin, loadingGate } = useAdminGate(user?.id);
 
-  // --- date controls
+  // dates
   const today = useMemo(() => new Date(), []);
   const [dateMode, setDateMode] = useState<DateMode>('window');
-
   const [fromDate, setFromDate] = useState<Date>(() => {
     const d = new Date(); d.setDate(d.getDate() - 7); return d;
   });
   const [toDate, setToDate] = useState<Date>(() => {
     const d = new Date(); d.setDate(d.getDate() + 14); return d;
   });
-
-  // month picker (YYYY-MM)
   const curMonthStr = `${today.getFullYear()}-${String(today.getMonth()+1).padStart(2,'0')}`;
   const [monthValue, setMonthValue] = useState<string>(curMonthStr);
-
-  // include unpublished?
   const [includeUnpublished, setIncludeUnpublished] = useState<boolean>(true);
 
-  // --- data
+  // data
   const [words, setWords] = useState<WordRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [view, setView] = useState<'schedule' | 'table'>('schedule');
@@ -297,24 +288,18 @@ const SwirdleAdmin: React.FC = () => {
   const formatDateLong = (iso: string) =>
     new Date(`${iso}T00:00:00`).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
 
-  // compute effective range from dateMode
   const { effFrom, effTo } = useMemo(() => {
     if (dateMode === 'all') return { effFrom: undefined as string|undefined, effTo: undefined as string|undefined };
     if (dateMode === 'month') {
-      // monthValue is YYYY-MM
       const [y, m] = monthValue.split('-').map(Number);
       const first = new Date(y, m - 1, 1);
-      const last = new Date(y, m, 0); // day 0 of next month = last day of month
+      const last = new Date(y, m, 0);
       return { effFrom: fmtYMD(first), effTo: fmtYMD(last) };
     }
-    // window
     return { effFrom: fmtYMD(fromDate), effTo: fmtYMD(toDate) };
   }, [dateMode, fromDate, toDate, monthValue]);
 
-  // ---- RPC variant helper + fallback select --------------------------------
-  async function tryRpcVariants(
-    paramsList: Array<Record<string, any>>
-  ): Promise<any[] | null> {
+  async function tryRpcVariants(paramsList: Array<Record<string, any>>): Promise<any[] | null> {
     for (const params of paramsList) {
       const { data, error } = await supabase.rpc('get_swirdle_words_with_stats_api', params);
       if (error) {
@@ -329,33 +314,32 @@ const SwirdleAdmin: React.FC = () => {
   const load = async () => {
     setLoading(true);
     try {
-      // Build common filters for variants
       const wantsCategory = categoryFilter !== 'all';
       const search = (searchTerm ?? '').trim();
 
-      const variantParams: Array<Record<string, any>> = [];
-      const commonA = { _category: wantsCategory ? categoryFilter : null, _search: search || null };
-      const commonB = { p_category: wantsCategory ? categoryFilter : null, p_search: search || null };
-      const commonC = { category: wantsCategory ? categoryFilter : null, search: search || null };
+      const commonsA = { _category: wantsCategory ? categoryFilter : null, _search: search || null };
+      const commonsB = { p_category: wantsCategory ? categoryFilter : null, p_search: search || null };
+      const commonsC = { category: wantsCategory ? categoryFilter : null, search: search || null };
 
+      const variantParams: Array<Record<string, any>> = [];
       if (effFrom) {
-        variantParams.push({ ...commonA, _from: effFrom, _to: effTo });
-        variantParams.push({ ...commonB, p_from: effFrom, p_to: effTo });
-        variantParams.push({ ...commonC, from: effFrom, to: effTo });
+        variantParams.push({ ...commonsA, _from: effFrom, _to: effTo });
+        variantParams.push({ ...commonsB, p_from: effFrom, p_to: effTo });
+        variantParams.push({ ...commonsC, from: effFrom, to: effTo });
       } else {
-        variantParams.push({ ...commonA });
-        variantParams.push({ ...commonB });
-        variantParams.push({ ...commonC });
+        variantParams.push({ ...commonsA });
+        variantParams.push({ ...commonsB });
+        variantParams.push({ ...commonsC });
       }
 
-      // 1) Prefer RPC with multiple param-name variants
+      // 1) RPC first
       let raw = await tryRpcVariants(variantParams);
 
-      // 2) Fallback: direct select if RPC not available / filtered
+      // 2) Fallback: direct select (no created_at/updated_at to avoid column errors)
       if (!raw) {
         let q = supabase
           .from('swirdle_words')
-          .select('id, word, definition, category, difficulty, date_scheduled, is_published, hints, created_at, updated_at');
+          .select('id, word, definition, category, difficulty, date_scheduled, is_published, hints');
 
         if (effFrom) q = q.gte('date_scheduled', effFrom);
         if (effTo)   q = q.lte('date_scheduled', effTo);
@@ -383,14 +367,11 @@ const SwirdleAdmin: React.FC = () => {
         hints: Array.isArray(r.hints) ? r.hints : [],
         plays: Number(r.plays ?? 0),
         win_rate: r.win_rate == null ? 0 : (typeof r.win_rate === 'string' ? parseFloat(r.win_rate) : Number(r.win_rate)),
-        created_at: r.created_at,
-        updated_at: r.updated_at,
+        created_at: r.created_at ?? null,
+        updated_at: r.updated_at ?? null,
       }));
 
-      if (!includeUnpublished) {
-        normalized = normalized.filter(w => w.is_published);
-      }
-
+      if (!includeUnpublished) normalized = normalized.filter(w => w.is_published);
       normalized.sort((a, b) => a.date_scheduled.localeCompare(b.date_scheduled));
       setWords(normalized);
     } catch (e: any) {
@@ -416,11 +397,19 @@ const SwirdleAdmin: React.FC = () => {
     if (!selected) return;
     setSaving(true);
     try {
-      const payload: any = { ...patch, updated_at: new Date().toISOString() };
-      if ('hints' in payload && !Array.isArray(payload.hints)) {
-        payload.hints = [];
+      // attempt with updated_at first
+      let payload: any = { ...patch, updated_at: new Date().toISOString() };
+      if ('hints' in payload && !Array.isArray(payload.hints)) payload.hints = [];
+
+      let { error } = await supabase.from('swirdle_words').update(payload).eq('id', selected.id);
+
+      // if table doesn't have updated_at, retry without it
+      if (error && /column .*updated_at.* does not exist/i.test(error.message || '')) {
+        // remove and retry
+        const { updated_at, ...retryPayload } = payload;
+        const res2 = await supabase.from('swirdle_words').update(retryPayload).eq('id', selected.id);
+        error = res2.error;
       }
-      const { error } = await supabase.from('swirdle_words').update(payload).eq('id', selected.id);
       if (error) throw error;
 
       setWords((prev) => prev.map((w) => (w.id === selected.id ? { ...w, ...patch } : w)));
@@ -448,14 +437,13 @@ const SwirdleAdmin: React.FC = () => {
     const items = [...words].sort((a, b) => a.date_scheduled.localeCompare(b.date_scheduled));
     for (const w of items) {
       const d = parseYMD(w.date_scheduled);
-      const week = new Date(d); week.setDate(d.getDate() - d.getDay()); // Sun start
+      const week = new Date(d); week.setDate(d.getDate() - d.getDay());
       const key = fmtYMD(week);
       map.set(key, [...(map.get(key) || []), w]);
     }
     return Array.from(map.entries()).sort((a,b) => a[0].localeCompare(b[0]));
   }, [words]);
 
-  // --- Admin gate screens ----------------------------------------------------
   if (loadingGate) {
     return (
       <div className="min-h-screen flex items-center justify-center">
@@ -475,17 +463,14 @@ const SwirdleAdmin: React.FC = () => {
     );
   }
 
-  // label for header range
   const headerRangeLabel = dateMode === 'all'
     ? 'All time'
     : dateMode === 'month'
       ? `${monthValue}`
       : `${fmtYMD(fromDate)} → ${fmtYMD(toDate)}`;
 
-  // --- Main UI ---------------------------------------------------------------
   return (
     <div className="min-h-screen bg-gray-50">
-      {/* Sticky header */}
       <div className="sticky top-0 z-20 bg-white/90 backdrop-blur border-b">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3 flex flex-wrap gap-3 items-center justify-between">
           <div>
@@ -517,7 +502,6 @@ const SwirdleAdmin: React.FC = () => {
         </div>
       </div>
 
-      {/* Filters + KPIs */}
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-6">
         {notice && (
           <div className={`mb-4 p-3 rounded border ${notice.type==='success' ? 'bg-green-50 border-green-200 text-green-800' : 'bg-red-50 border-red-200 text-red-800'}`}>
@@ -551,7 +535,6 @@ const SwirdleAdmin: React.FC = () => {
             </select>
           </div>
 
-          {/* Date mode + controls */}
           <div className="md:col-span-5 flex flex-wrap items-center gap-2">
             <select
               value={dateMode}
@@ -622,7 +605,6 @@ const SwirdleAdmin: React.FC = () => {
         </div>
       </div>
 
-      {/* Body */}
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pb-10">
         <div className="bg-white rounded-lg shadow overflow-hidden flex">
           <div className="flex-1">
@@ -646,7 +628,7 @@ const SwirdleAdmin: React.FC = () => {
                             <div className="font-bold uppercase tracking-wide text-gray-900">{w.word}</div>
                             <span className={`px-2 py-0.5 text-[11px] font-medium rounded-full ${getDifficultyColor(w.difficulty)}`}>{w.difficulty}</span>
                           </div>
-                          <div className="text-xs text-gray-500 mb-2">{formatDateLong(w.date_scheduled)}</div>
+                          <div className="text-xs text-gray-500 mb-2">{w.date_scheduled && formatDateLong(w.date_scheduled)}</div>
                           <div className="text-sm text-gray-700 line-clamp-3">{w.definition}</div>
                           <div className="mt-2 flex items-center justify-between">
                             <span className={`px-2 py-0.5 text-[11px] font-medium rounded-full ${getCategoryColor(w.category)}`}>{w.category.replace('_',' ')}</span>
@@ -718,7 +700,6 @@ const SwirdleAdmin: React.FC = () => {
             )}
           </div>
 
-          {/* Inspector */}
           {selected && (
             <Inspector
               word={selected}
@@ -729,7 +710,6 @@ const SwirdleAdmin: React.FC = () => {
           )}
         </div>
 
-        {/* Footer actions */}
         <div className="mt-4 flex flex-wrap gap-2">
           <button
             onClick={() => setSelected({
