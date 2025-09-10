@@ -12,18 +12,36 @@ export const supabase: SupabaseClient = createClient(url, anon, {
   auth: {
     persistSession: true,       // keep user signed in (localStorage)
     autoRefreshToken: true,     // refresh JWT automatically
-    detectSessionInUrl: false,  // we'll manually parse the URL
+    detectSessionInUrl: false,  // we complete auth manually below
     // @ts-expect-error: 'flowType' exists in newer supabase-js; safe to include
-    flowType: "implicit",       // your current email magic-link style
+    flowType: "implicit",       // current email magic-link style
     storageKey: "md_auth_v1",   // namespaced storage key
   },
 });
 
-// Helpful runtime breadcrumb + console access for debugging
+// Helpful runtime breadcrumb + global console access for debugging
 if (typeof window !== "undefined") {
   // eslint-disable-next-line no-console
   console.log("[supabase.init]", { url, anon_prefix: anon?.slice(0, 6) });
-  (window as any).SB = supabase; // e.g. SB.auth.getSession() in DevTools
+
+  // Expose for devtools usage (both aliases):
+  (window as any).SB = supabase;
+  (window as any).supabase = supabase;
+
+  // Small helper kit for quick checks in the console:
+  (window as any).sw = {
+    whoami: async () => (await supabase.auth.getUser()).data.user,
+    wordsBetween: async (fromYmd: string, toYmd: string) =>
+      supabase
+        .from("swirdle_words")
+        .select("id, word, date_scheduled, is_published")
+        .gte("date_scheduled", fromYmd)
+        .lte("date_scheduled", toYmd)
+        .order("date_scheduled", { ascending: true })
+        .range(0, 9999),
+    sept: async () =>
+      (window as any).sw.wordsBetween("2025-09-01", "2025-09-30"),
+  };
 }
 
 /** True if current URL contains auth info we can consume. */
@@ -85,20 +103,19 @@ export async function exchangeCodeFromUrl(
   const code = u.searchParams.get("code");
   if (!code) return null;
 
-  // Some supabase-js versions expect the FULL URL, others accept just the code.
   let err1: any = null;
   let err2: any = null;
 
   // Try full URL first
   try {
-    const r1 = await supabase.auth.exchangeCodeForSession(u.href as any);
-    if (r1.error) throw r1.error;
+    const r1 = await (supabase.auth as any).exchangeCodeForSession(u.href);
+    if (r1?.error) throw r1.error;
   } catch (e) {
     err1 = e;
     // Fallback: try just the code
     try {
-      const r2 = await supabase.auth.exchangeCodeForSession(code as any);
-      if (r2.error) throw r2.error;
+      const r2 = await (supabase.auth as any).exchangeCodeForSession(code);
+      if (r2?.error) throw r2.error;
     } catch (e2) {
       err2 = e2;
     }
@@ -115,7 +132,7 @@ export async function exchangeCodeFromUrl(
   return data.session ?? null;
 }
 
-/** Try hash first (your current emails), then PKCE. Returns the session or null. */
+/** Try hash first (your current magic-link flow), then PKCE. */
 export async function completeAuthFromUrl(href?: string): Promise<Session | null> {
   const s1 = await setSessionFromHash(href);
   if (s1) return s1;
