@@ -311,22 +311,68 @@ const SwirdleAdmin: React.FC = () => {
     return { effFrom: fmtYMD(fromDate), effTo: fmtYMD(toDate) };
   }, [dateMode, fromDate, toDate, monthValue]);
 
+  // ---- RPC variant helper + fallback select --------------------------------
+  async function tryRpcVariants(
+    paramsList: Array<Record<string, any>>
+  ): Promise<any[] | null> {
+    for (const params of paramsList) {
+      const { data, error } = await supabase.rpc('get_swirdle_words_with_stats_api', params);
+      if (error) {
+        console.warn('[admin] RPC variant failed:', error?.message, params);
+        continue;
+      }
+      if (Array.isArray(data)) return data as any[];
+    }
+    return null;
+  }
+
   const load = async () => {
     setLoading(true);
     try {
-      const params: any = {
-        _search: (searchTerm ?? '').trim(),
-        _category: categoryFilter === 'all' ? null : categoryFilter,
-      };
-      if (effFrom) params._from = effFrom;
-      if (effTo) params._to = effTo;
+      // Build common filters for variants
+      const wantsCategory = categoryFilter !== 'all';
+      const search = (searchTerm ?? '').trim();
 
-      const data = await safeQuery(
-        () => supabase.rpc('get_swirdle_words_with_stats_api', params),
-        [] as any[]
-      );
+      const variantParams: Array<Record<string, any>> = [];
+      const commonA = { _category: wantsCategory ? categoryFilter : null, _search: search || null };
+      const commonB = { p_category: wantsCategory ? categoryFilter : null, p_search: search || null };
+      const commonC = { category: wantsCategory ? categoryFilter : null, search: search || null };
 
-      let normalized: WordRow[] = (data ?? []).map((r: any) => ({
+      if (effFrom) {
+        variantParams.push({ ...commonA, _from: effFrom, _to: effTo });
+        variantParams.push({ ...commonB, p_from: effFrom, p_to: effTo });
+        variantParams.push({ ...commonC, from: effFrom, to: effTo });
+      } else {
+        variantParams.push({ ...commonA });
+        variantParams.push({ ...commonB });
+        variantParams.push({ ...commonC });
+      }
+
+      // 1) Prefer RPC with multiple param-name variants
+      let raw = await tryRpcVariants(variantParams);
+
+      // 2) Fallback: direct select if RPC not available / filtered
+      if (!raw) {
+        let q = supabase
+          .from('swirdle_words')
+          .select('id, word, definition, category, difficulty, date_scheduled, is_published, hints, created_at, updated_at');
+
+        if (effFrom) q = q.gte('date_scheduled', effFrom);
+        if (effTo)   q = q.lte('date_scheduled', effTo);
+        if (wantsCategory) q = q.eq('category', categoryFilter);
+        if (search) q = q.or(`word.ilike.%${search}%,definition.ilike.%${search}%`);
+
+        const { data, error } = await q.order('date_scheduled', { ascending: true });
+        if (error) throw error;
+
+        raw = (data ?? []).map((r: any) => ({
+          ...r,
+          plays: 0,
+          win_rate: 0,
+        })) as any[];
+      }
+
+      let normalized: WordRow[] = (raw ?? []).map((r: any) => ({
         id: r.id,
         word: r.word,
         definition: r.definition,
@@ -337,20 +383,19 @@ const SwirdleAdmin: React.FC = () => {
         hints: Array.isArray(r.hints) ? r.hints : [],
         plays: Number(r.plays ?? 0),
         win_rate: r.win_rate == null ? 0 : (typeof r.win_rate === 'string' ? parseFloat(r.win_rate) : Number(r.win_rate)),
-        created_at: r.created_at, updated_at: r.updated_at
+        created_at: r.created_at,
+        updated_at: r.updated_at,
       }));
 
-      // filter publication client-side if needed
       if (!includeUnpublished) {
         normalized = normalized.filter(w => w.is_published);
       }
 
-      // always sort by date asc for consistent UI
-      normalized.sort((a,b) => a.date_scheduled.localeCompare(b.date_scheduled));
-
+      normalized.sort((a, b) => a.date_scheduled.localeCompare(b.date_scheduled));
       setWords(normalized);
     } catch (e: any) {
-      setNotice({ type:'error', msg: e.message || 'Failed to load' });
+      console.error('[admin] load failed:', e);
+      setNotice({ type: 'error', msg: e.message || 'Failed to load' });
     } finally {
       setLoading(false);
     }
