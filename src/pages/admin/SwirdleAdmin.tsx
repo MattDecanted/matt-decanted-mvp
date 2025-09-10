@@ -311,146 +311,63 @@ const SwirdleAdmin: React.FC = () => {
     return null;
   }
 
-  const load = async () => {
-    setLoading(true);
-    try {
-      const wantsCategory = categoryFilter !== 'all';
-      const search = (searchTerm ?? '').trim();
+const load = async () => {
+  setLoading(true);
+  try {
+    const wantsCategory = categoryFilter !== 'all';
+    const search = (searchTerm ?? '').trim();
 
-      const commonsA = { _category: wantsCategory ? categoryFilter : null, _search: search || null };
-      const commonsB = { p_category: wantsCategory ? categoryFilter : null, p_search: search || null };
-      const commonsC = { category: wantsCategory ? categoryFilter : null, search: search || null };
+    // Build direct SELECT (no RPC, no updated_at).
+    let q = supabase
+      .from('swirdle_words')
+      .select('id, word, definition, category, difficulty, date_scheduled, is_published, hints');
 
-      const variantParams: Array<Record<string, any>> = [];
-      if (effFrom) {
-        variantParams.push({ ...commonsA, _from: effFrom, _to: effTo });
-        variantParams.push({ ...commonsB, p_from: effFrom, p_to: effTo });
-        variantParams.push({ ...commonsC, from: effFrom, to: effTo });
+    // Date filters from your current mode
+    if (dateMode !== 'all') {
+      if (dateMode === 'month') {
+        const [y, m] = monthValue.split('-').map(Number);
+        const first = new Date(y, m - 1, 1);
+        const last = new Date(y, m, 0);
+        q = q.gte('date_scheduled', first.toISOString().slice(0,10))
+             .lte('date_scheduled', last.toISOString().slice(0,10));
       } else {
-        variantParams.push({ ...commonsA });
-        variantParams.push({ ...commonsB });
-        variantParams.push({ ...commonsC });
+        q = q.gte('date_scheduled', fmtYMD(fromDate))
+             .lte('date_scheduled', fmtYMD(toDate));
       }
-
-      // 1) RPC first
-      let raw = await tryRpcVariants(variantParams);
-
-      // 2) Fallback: direct select (no created_at/updated_at to avoid column errors)
-      if (!raw) {
-        let q = supabase
-          .from('swirdle_words')
-          .select('id, word, definition, category, difficulty, date_scheduled, is_published, hints');
-
-        if (effFrom) q = q.gte('date_scheduled', effFrom);
-        if (effTo)   q = q.lte('date_scheduled', effTo);
-        if (wantsCategory) q = q.eq('category', categoryFilter);
-        if (search) q = q.or(`word.ilike.%${search}%,definition.ilike.%${search}%`);
-
-        const { data, error } = await q.order('date_scheduled', { ascending: true });
-        if (error) throw error;
-
-        raw = (data ?? []).map((r: any) => ({
-          ...r,
-          plays: 0,
-          win_rate: 0,
-        })) as any[];
-      }
-
-      let normalized: WordRow[] = (raw ?? []).map((r: any) => ({
-        id: r.id,
-        word: r.word,
-        definition: r.definition,
-        category: r.category,
-        difficulty: r.difficulty,
-        date_scheduled: r.date_scheduled,
-        is_published: !!r.is_published,
-        hints: Array.isArray(r.hints) ? r.hints : [],
-        plays: Number(r.plays ?? 0),
-        win_rate: r.win_rate == null ? 0 : (typeof r.win_rate === 'string' ? parseFloat(r.win_rate) : Number(r.win_rate)),
-        created_at: r.created_at ?? null,
-        updated_at: r.updated_at ?? null,
-      }));
-
-      if (!includeUnpublished) normalized = normalized.filter(w => w.is_published);
-      normalized.sort((a, b) => a.date_scheduled.localeCompare(b.date_scheduled));
-      setWords(normalized);
-    } catch (e: any) {
-      console.error('[admin] load failed:', e);
-      setNotice({ type: 'error', msg: e.message || 'Failed to load' });
-    } finally {
-      setLoading(false);
     }
-  };
 
-  useEffect(() => {
-    if (isAdmin) load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isAdmin, effFrom, effTo, includeUnpublished, categoryFilter, searchTerm]);
+    if (wantsCategory) q = q.eq('category', categoryFilter);
+    if (search) q = q.or(`word.ilike.%${search}%,definition.ilike.%${search}%`);
 
-  const totalAttempts = words.reduce((s, w) => s + (Number(w.plays) || 0), 0);
-  const publishedWords = words.filter((w) => w.is_published).length;
-  const avgWinRate = totalAttempts > 0
-    ? words.reduce((s, w) => s + ((Number(w.win_rate) || 0) * (Number(w.plays) || 0)), 0) / totalAttempts
-    : 0;
+    q = q.order('date_scheduled', { ascending: true });
 
-  const savePatch = async (patch: Partial<WordRow>) => {
-    if (!selected) return;
-    setSaving(true);
-    try {
-      // attempt with updated_at first
-      let payload: any = { ...patch, updated_at: new Date().toISOString() };
-      if ('hints' in payload && !Array.isArray(payload.hints)) payload.hints = [];
+    const { data, error } = await q;
+    if (error) throw error;
 
-      let { error } = await supabase.from('swirdle_words').update(payload).eq('id', selected.id);
+    let normalized = (data ?? []).map((r: any) => ({
+      id: r.id,
+      word: r.word,
+      definition: r.definition,
+      category: r.category,
+      difficulty: r.difficulty,
+      date_scheduled: r.date_scheduled,
+      is_published: !!r.is_published,
+      hints: Array.isArray(r.hints) ? r.hints : [],
+      plays: 0,
+      win_rate: 0,
+    })) as WordRow[];
 
-      // if table doesn't have updated_at, retry without it
-      if (error && /column .*updated_at.* does not exist/i.test(error.message || '')) {
-        // remove and retry
-        const { updated_at, ...retryPayload } = payload;
-        const res2 = await supabase.from('swirdle_words').update(retryPayload).eq('id', selected.id);
-        error = res2.error;
-      }
-      if (error) throw error;
+    if (!includeUnpublished) normalized = normalized.filter(w => w.is_published);
 
-      setWords((prev) => prev.map((w) => (w.id === selected.id ? { ...w, ...patch } : w)));
-      setSelected((p) => (p ? { ...p, ...patch } as WordRow : p));
-      setNotice({ type:'success', msg:'Saved' });
-    } catch (e:any) {
-      setNotice({ type:'error', msg:e.message || 'Save failed' });
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const togglePublished = async (w: WordRow) => {
-    await savePatch({ is_published: !w.is_published });
-  };
-
-  const shiftWindow = (days: number) => {
-    const f = new Date(fromDate); const t = new Date(toDate);
-    f.setDate(f.getDate() + days); t.setDate(t.getDate() + days);
-    setFromDate(f); setToDate(t);
-  };
-
-  const groupedByWeek = useMemo(() => {
-    const map = new Map<string, WordRow[]>();
-    const items = [...words].sort((a, b) => a.date_scheduled.localeCompare(b.date_scheduled));
-    for (const w of items) {
-      const d = parseYMD(w.date_scheduled);
-      const week = new Date(d); week.setDate(d.getDate() - d.getDay());
-      const key = fmtYMD(week);
-      map.set(key, [...(map.get(key) || []), w]);
-    }
-    return Array.from(map.entries()).sort((a,b) => a[0].localeCompare(b[0]));
-  }, [words]);
-
-  if (loadingGate) {
-    return (
-      <div className="min-h-screen flex items-center justify-center">
-        <div className="w-8 h-8 rounded-full border-2 border-gray-300 border-t-transparent animate-spin" />
-      </div>
-    );
+    setWords(normalized);
+  } catch (e: any) {
+    console.error('[admin] load failed:', e);
+    setNotice({ type: 'error', msg: e.message || 'Failed to load' });
+  } finally {
+    setLoading(false);
   }
+};
+
   if (!isAdmin) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-50">
